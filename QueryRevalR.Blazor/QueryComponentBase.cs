@@ -1,0 +1,112 @@
+﻿using System.Runtime.CompilerServices;
+using Microsoft.AspNetCore.Components;
+
+namespace QueryRevalR.Blazor;
+
+public abstract class QueryComponentBase : ComponentBase, IDisposable
+{
+    [Inject] protected QueryClient? Client { get; set; } = null;
+    [Inject] protected IServiceProvider ServiceProvider { get; set; }
+    [Inject] protected QueryPluginsPipeline Pipeline { get; set; }
+
+    private readonly Dictionary<string, IDisposable> _observerSlots = new();
+    private bool _isDisposed;
+
+    protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions,
+        CancellationTokenSource cts,
+        [CallerLineNumber] int line = 0,
+        [CallerMemberName] string member = "") where TKey : ITuple
+    {
+        string slotId = $"query_{member}_{line}";
+
+        if (_observerSlots.TryGetValue(slotId, out var existing))
+        {
+            var obs = (QueryObserver<TKey, TRes>)existing;
+            obs.OnSuccess = queryOptions.OnSuccess;
+            obs.OnError = queryOptions.OnError;
+            obs.OnSettled = queryOptions.OnSettled;
+
+            if (obs.Query.Key.Equals(queryOptions.Key))
+            {
+                obs.Enabled = queryOptions.Enabled;
+                return obs.Query;
+            }
+
+            obs.Dispose();
+        }
+
+        Pipeline.HandleQueryOptions(queryOptions);
+
+        var prerenderState = new QueryState<TKey, TRes>(
+            queryOptions.Key,
+            queryOptions.Handler,
+            new CacheOptions(TimeSpan.Zero),
+            ServiceProvider);
+
+        var state = Client?.GetOrCreateQuery(
+                queryOptions.Key,
+                queryOptions.Handler,
+                queryOptions.CacheOptions ?? new CacheOptions(TimeSpan.Zero)
+            ) ?? prerenderState
+            ;
+
+        var observer = new QueryObserver<TKey, TRes>(
+            state,
+            onStateChanged: () => { InvokeAsync(StateHasChanged); },
+            queryOptions.Enabled,
+            cts,
+            queryOptions.FetchOptions ?? new FetchOptions()
+        );
+
+        observer.OnSuccess = queryOptions.OnSuccess;
+        observer.OnError = queryOptions.OnError;
+        observer.OnSettled = queryOptions.OnSettled;
+
+        _observerSlots[slotId] = observer;
+        observer.RunIfStale();
+
+        return state;
+    }
+
+    protected MutationState<TParams, TRes> UseMutation<TParams, TRes>(
+        MutationOptions<TParams, TRes> mutation,
+        [CallerLineNumber] int line = 0,
+        [CallerMemberName] string member = "")
+    {
+        string slotId = $"mutation_{member}_{line}";
+
+        if (_observerSlots.TryGetValue(slotId, out var existing))
+        {
+            var obs = (MutationObserver<TParams, TRes>)existing;
+            return obs.State;
+        }
+
+        var state = new MutationState<TParams, TRes>(mutation.Handler, ServiceProvider);
+
+        var observer = new MutationObserver<TParams, TRes>(
+            state,
+            onStateChanged: () => { InvokeAsync(StateHasChanged); }
+        );
+
+        _observerSlots[slotId] = observer;
+        return state;
+    }
+
+    public virtual void Dispose()
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        _isDisposed = true;
+
+        foreach (var obs in _observerSlots.Values)
+        {
+            obs.Dispose();
+        }
+
+        _observerSlots.Clear();
+    }
+}

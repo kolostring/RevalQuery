@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <Authors>kolostring</Authors>
+        <Description>A high-performance, Result-oriented data fetching and state management library for .NET. Heavily inspired by TanStack Query, featuring strongly-typed Trie-based caching, stateless handlers, and built-in support for CQRS architectures.</Description>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <RepositoryUrl>https://github.com/kolostring/QueryRevalR</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageTags>dotnet;state-management;cache;tanstack-query;cqrs;result-pattern;data-fetching</PackageTags>
+        <Copyright>Copyright © 2026 kolostring</Copyright>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <MinVerTagPrefix>v</MinVerTagPrefix>
+    </PropertyGroup>
+    
+
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="\"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="MinVer" Version="7.0.0">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+    </ItemGroup>
+</Project>

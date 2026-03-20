@@ -1,0 +1,34 @@
+name: Build and Ship BlazorQ
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # CRITICAL: MinVer needs the full history and tags
+          fetch-tags: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Diagnostic - Check Git Tags
+        run: |
+          git tag --list
+          git log -n 1 --format="%H"
+          git describe --tags --always
+
+      - name: Build and Pack
+        # MinVer automatically injects the version into 'dotnet pack'
+        run: dotnet pack -c Release --output ./dist /p:MinVerVerbosity=detailed
+
+      - name: Push to NuGet
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: dotnet nuget push ./dist/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
