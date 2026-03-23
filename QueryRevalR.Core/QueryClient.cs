@@ -8,15 +8,13 @@ public class QueryClient
     private readonly CacheNode _cacheTrie = new(0);
     private readonly QueryGarbageCollector _gc = new();
     private readonly IServiceProvider _serviceProvider;
+    private readonly QueryRevalROptions _options;
 
-    private readonly CacheOptions _defaultCacheOptions = new(
-        GcTime: TimeSpan.FromMinutes(5)
-    );
-
-    public QueryClient(IServiceProvider serviceProvider)
+    public QueryClient(IServiceProvider serviceProvider, QueryRevalROptions options)
     {
         _serviceProvider = serviceProvider;
         _gc.OnEvictionRequired += HandleEviction;
+        _options = options;
     }
 
     public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
@@ -45,7 +43,7 @@ public class QueryClient
         var newState = new QueryState<TKey, TRes>(
             keySegments,
             handler,
-            cacheOptions ?? _defaultCacheOptions,
+            cacheOptions ?? _options.CacheOptions,
             _serviceProvider
         );
         _stateLookup[lookupKey] = newState;

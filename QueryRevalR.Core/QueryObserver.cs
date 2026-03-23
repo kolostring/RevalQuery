@@ -10,7 +10,7 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
     public Func<QueryError, Task>? OnError { get; set; }
     public Func<QueryResult<TRes>, Task>? OnSettled { get; set; }
 
-    private readonly FetchOptions _options;
+    private readonly CoreFetchOptions _options;
     private bool _enabled;
 
     public bool Enabled
@@ -32,33 +32,43 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
     private bool _isDisposed;
 
     public QueryObserver(
+        QueryRevalROptions queryRevalROptions,
         QueryState<TKey, TRes> query,
         Action onStateChanged,
         bool enabled,
         CancellationTokenSource cts,
-        FetchOptions options
+        FetchOptions? options
     )
     {
         Query = query;
         _onStateChanged = onStateChanged;
         _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
         _enabled = enabled;
-        _options = options with
+
+        var defaultOptions = queryRevalROptions.FetchOptions;
+        if (options == null)
         {
-            RetryDelay = options.RetryDelay ?? (attemptIndex => TimeSpan.FromMilliseconds(
-                Math.Min(1000 * Math.Pow(2, attemptIndex), 30000)
-            ))
-        };
+            _options = defaultOptions;
+        }
+        else
+        {
+            _options = options.PatchNullFields(defaultOptions);
+        }
 
         Query.OnChanged += HandleChange;
         Query.OnInvalidated += HandleInvalidation;
         Query.IncrementObservers();
-        StartPolling(options.RefetchInterval);
+        StartPolling(_options.RefetchInterval);
     }
 
     private void StartPolling(TimeSpan? interval)
     {
-        if (interval == null || interval <= TimeSpan.Zero || _isDisposed)
+        if (interval == null)
+        {
+            throw new ArgumentNullException(nameof(interval));
+        }
+
+        if (interval <= TimeSpan.Zero || _isDisposed)
         {
             return;
         }
@@ -95,7 +105,7 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         if (!Enabled) return;
 
         var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
-        if (elapsedTimeSinceUpdate > (_options.StaleTime ?? TimeSpan.Zero))
+        if (elapsedTimeSinceUpdate > _options.StaleTime)
         {
             _ = Run();
         }

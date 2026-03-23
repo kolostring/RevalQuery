@@ -8,7 +8,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 {
     [Inject] protected QueryClient? Client { get; set; } = null;
     [Inject] protected IServiceProvider ServiceProvider { get; set; }
-    [Inject] protected QueryPluginsPipeline Pipeline { get; set; }
+    [Inject] protected QueryRevalROptions QueryRevalROptions { get; set; }
 
     private readonly Dictionary<string, IDisposable> _observerSlots = new();
     private bool _isDisposed;
@@ -19,7 +19,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "") where TKey : ITuple
     {
-        string slotId = $"query_{member}_{line}";
+        var slotId = $"query_{member}_{line}";
 
         if (_observerSlots.TryGetValue(slotId, out var existing))
         {
@@ -37,7 +37,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             obs.Dispose();
         }
 
-        Pipeline.HandleQueryOptions(queryOptions);
+        QueryRevalROptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
         var prerenderState = new QueryState<TKey, TRes>(
             queryOptions.Key,
@@ -53,11 +53,12 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             ;
 
         var observer = new QueryObserver<TKey, TRes>(
+            QueryRevalROptions,
             state,
             onStateChanged: () => { InvokeAsync(StateHasChanged); },
             queryOptions.Enabled,
             cts,
-            queryOptions.FetchOptions ?? new FetchOptions()
+            queryOptions.FetchOptions
         );
 
         observer.OnSuccess = queryOptions.OnSuccess;
