@@ -1,4 +1,4 @@
-﻿namespace QueryRevalR;
+﻿namespace QueryRevalR.Core;
 
 public interface IObservableQueryState
 {

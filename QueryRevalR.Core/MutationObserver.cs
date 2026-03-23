@@ -1,5 +1,5 @@
 ﻿
-namespace QueryRevalR;
+namespace QueryRevalR.Core;
 
 public sealed class MutationObserver<TParams, TResponse> : IDisposable
 {

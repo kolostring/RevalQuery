@@ -1,6 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 
-namespace QueryRevalR;
+namespace QueryRevalR.Core;
 
 public class QueryGarbageCollector
 {

@@ -1,4 +1,4 @@
-namespace QueryRevalR;
+namespace QueryRevalR.Core;
 
 public abstract record QueryResult<T>
 {

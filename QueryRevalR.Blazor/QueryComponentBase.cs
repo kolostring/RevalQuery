@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Components;
+using QueryRevalR.Core;
 
 namespace QueryRevalR.Blazor;
 

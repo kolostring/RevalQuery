@@ -1,4 +1,4 @@
-﻿namespace QueryRevalR;
+﻿namespace QueryRevalR.Core;
 
 public sealed class MutationHandlerExecutionContext<TParams>
 {

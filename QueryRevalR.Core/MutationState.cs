@@ -1,4 +1,4 @@
-﻿namespace QueryRevalR;
+﻿namespace QueryRevalR.Core;
 
 public sealed class MutationState<TParams, TResponse>(
     Func<MutationHandlerExecutionContext<TParams>, Task<QueryResult<TResponse>>> handler,
