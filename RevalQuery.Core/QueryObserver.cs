@@ -124,18 +124,15 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
             if (!isCancelled && Query.IsSuccess && OnSuccess is not null)
             {
                 await OnSuccess.Invoke(Query.Data!);
-                HandleChange();
             }
             else if (!isCancelled && Query.IsError && OnError is not null)
             {
                 await OnError.Invoke(Query.Error!);
-                HandleChange();
             }
 
             if (!isCancelled && OnSettled is not null)
             {
-                await OnSettled(Query.Res!);
-                HandleChange();
+                await OnSettled.Invoke(Query.Res!);
             }
         }
     }
