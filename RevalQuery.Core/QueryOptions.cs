@@ -36,7 +36,7 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
         _onError = action;
         return this;
     }
-    
+
     public QueryOptionsBuilder<TKey, TRes> OnSettled(Func<QueryResult<TRes>, Task> action)
     {
         _onSettled = action;
@@ -61,7 +61,7 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
         return this;
     }
 
-    private QueryOptions<TKey, TRes> Build() => new(
+    public QueryOptions<TKey, TRes> Build() => new(
         key,
         handler,
         _onSuccess,
