@@ -1,5 +1,5 @@
 ﻿@using CachingDemo.Client.Services
-@page "/search-bar"
+@page "/search-bar-debounced"
 @attribute [StreamRendering]
 @rendermode InteractiveWebAssembly
 @implements IDisposable
@@ -66,30 +66,37 @@
             await _runningCts.CancelAsync();
             _runningCts.Dispose();
         }
-        
+
         var currentCts = new CancellationTokenSource();
         _runningCts = currentCts;
 
-        ErrorMessage = null;
-
-        IsLoading = true;
         try
         {
-            Suggestions = await SearchService.SearchAsync(term, _runningCts.Token);
+            await Task.Delay(300, currentCts.Token);
+
+            IsLoading = true;
+            ErrorMessage = null;
+            StateHasChanged();
+
+            var results = await SearchService.SearchAsync(term, currentCts.Token);
+
+            if (currentCts == _runningCts)
+            {
+                Suggestions = results;
+            }
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            if (currentCts == _runningCts) ErrorMessage = ex.Message;
         }
         finally
         {
-            if (!currentCts.Token.IsCancellationRequested)
+            if (currentCts == _runningCts)
             {
                 IsLoading = false;
-                // Or will get stuck
                 StateHasChanged();
             }
         }
