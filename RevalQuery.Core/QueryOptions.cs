@@ -1,6 +1,8 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public static class QueryOptionsFactory
 {
@@ -53,7 +55,13 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
         return this;
     }
 
-    public QueryOptions<TKey, TRes> Build() => new(
+    public QueryOptionsBuilder<TKey, TRes> WithCacheOptions(CacheOptions cacheOptions)
+    {
+        _cacheOptions = cacheOptions;
+        return this;
+    }
+
+    private QueryOptions<TKey, TRes> Build() => new(
         key,
         handler,
         _onSuccess,

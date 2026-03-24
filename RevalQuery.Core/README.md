@@ -1,8 +1,8 @@
-﻿# QueryRevalR.Core
+﻿# RevalQuery.Core
 
 **Core library for type-safe, result-oriented async data fetching and caching.**
 
-Used by QueryRevalR.Blazor.
+Used by RevalQuery.Blazor.
 
 Main features:
 - QueryClient

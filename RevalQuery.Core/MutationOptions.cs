@@ -1,4 +1,7 @@
-﻿namespace QueryRevalR.Core;
+﻿using System;
+using System.Threading.Tasks;
+
+namespace RevalQuery.Core;
 
 public static class MutationOptionsFactory
 {

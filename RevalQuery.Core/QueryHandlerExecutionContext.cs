@@ -1,6 +1,8 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Runtime.CompilerServices;
+using System.Threading;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public sealed class QueryHandlerExecutionContext<TKey> where TKey : ITuple
 {

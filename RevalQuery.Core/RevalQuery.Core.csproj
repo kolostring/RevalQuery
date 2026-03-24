@@ -7,7 +7,7 @@
         <Authors>kolostring</Authors>
         <Description>A high-performance, Result-oriented data fetching and state management library for .NET. Heavily inspired by TanStack Query, featuring strongly-typed Trie-based caching, stateless handlers, and built-in support for CQRS architectures.</Description>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <RepositoryUrl>https://github.com/kolostring/QueryRevalR</RepositoryUrl>
+        <RepositoryUrl>https://github.com/kolostring/RevalQuery</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>dotnet;state-management;cache;tanstack-query;cqrs;result-pattern;data-fetching</PackageTags>
         <Copyright>Copyright © 2026 kolostring</Copyright>

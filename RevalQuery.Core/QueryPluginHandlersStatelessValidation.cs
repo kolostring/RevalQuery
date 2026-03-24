@@ -1,7 +1,8 @@
-﻿using System.Reflection;
+﻿using System;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public sealed class QueryPluginHandlersStatelessValidation : IQueryPlugin
 {

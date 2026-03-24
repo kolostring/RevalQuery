@@ -1,4 +1,6 @@
-﻿namespace QueryRevalR.Core;
+﻿using System;
+
+namespace RevalQuery.Core;
 
 public sealed record CacheOptions(TimeSpan GcTime)
 {

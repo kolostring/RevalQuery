@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="RevalQuery.Blazor/RevalQuery.Blazor.csproj" />
+  <Project Path="RevalQuery.Core/RevalQuery.Core.csproj" />
+</Solution>

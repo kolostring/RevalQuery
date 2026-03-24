@@ -1,6 +1,6 @@
-﻿namespace QueryRevalR.Core;
+﻿namespace RevalQuery.Core;
 
-public class QueryRevalROptions
+public class RevalQueryOptions
 {
     public QueryPluginsPipeline QueryPluginsPipeline { get; set; } = new([]);
 

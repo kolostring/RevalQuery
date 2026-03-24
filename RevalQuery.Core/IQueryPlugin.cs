@@ -1,6 +1,7 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Runtime.CompilerServices;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public interface IQueryPlugin
 {

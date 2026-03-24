@@ -1,4 +1,6 @@
-﻿namespace QueryRevalR.Core;
+﻿using System;
+
+namespace RevalQuery.Core;
 
 public interface IQueryState<TResponse> : IObservableQueryState
 {

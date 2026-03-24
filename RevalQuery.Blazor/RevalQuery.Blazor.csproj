@@ -7,7 +7,7 @@
         <Authors>kolostring</Authors>
         <Description>A high-performance, Result-oriented data fetching and state management library for Blazor. Heavily inspired by TanStack Query, featuring strongly-typed Trie-based caching, stateless handlers, and built-in support for CQRS architectures.</Description>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <RepositoryUrl>https://github.com/kolostring/QueryRevalR</RepositoryUrl>
+        <RepositoryUrl>https://github.com/kolostring/RevalQuery</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>blazor;dotnet;state-management;cache;tanstack-query;cqrs;result-pattern;wasm;blazor-server;data-fetching</PackageTags>
         <Copyright>Copyright © 2026 kolostring</Copyright>
@@ -16,7 +16,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\QueryRevalR.Core\QueryRevalR.Core.csproj" />
+      <ProjectReference Include="..\RevalQuery.Core\RevalQuery.Core.csproj" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">

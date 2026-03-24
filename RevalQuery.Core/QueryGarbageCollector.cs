@@ -1,6 +1,11 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public class QueryGarbageCollector
 {
@@ -12,7 +17,7 @@ public class QueryGarbageCollector
     public QueryGarbageCollector(TimeSpan? gcInterval = null)
     {
         _gcInterval = gcInterval ?? TimeSpan.FromMinutes(1);
-        StartAsync();
+        _ = StartAsync();
     }
 
     public void RegisterForEviction(ITuple key, CacheOptions cacheOptions)

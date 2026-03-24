@@ -1,6 +1,9 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
 {
@@ -32,7 +35,7 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
     private bool _isDisposed;
 
     public QueryObserver(
-        QueryRevalROptions queryRevalROptions,
+        RevalQueryOptions RevalQueryOptions,
         QueryState<TKey, TRes> query,
         Action onStateChanged,
         bool enabled,
@@ -45,7 +48,7 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
         _enabled = enabled;
 
-        var defaultOptions = queryRevalROptions.FetchOptions;
+        var defaultOptions = RevalQueryOptions.FetchOptions;
         if (options == null)
         {
             _options = defaultOptions;

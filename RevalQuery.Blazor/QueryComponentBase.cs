@@ -1,14 +1,14 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Components;
-using QueryRevalR.Core;
+using RevalQuery.Core;
 
-namespace QueryRevalR.Blazor;
+namespace RevalQuery.Blazor;
 
 public abstract class QueryComponentBase : ComponentBase, IDisposable
 {
     [Inject] protected QueryClient? Client { get; set; } = null;
     [Inject] protected IServiceProvider ServiceProvider { get; set; }
-    [Inject] protected QueryRevalROptions QueryRevalROptions { get; set; }
+    [Inject] protected RevalQueryOptions RevalQueryOptions { get; set; }
 
     private readonly Dictionary<string, IDisposable> _observerSlots = new();
     private bool _isDisposed;
@@ -37,7 +37,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             obs.Dispose();
         }
 
-        QueryRevalROptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+        RevalQueryOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
         var prerenderState = new QueryState<TKey, TRes>(
             queryOptions.Key,
@@ -53,7 +53,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             ;
 
         var observer = new QueryObserver<TKey, TRes>(
-            QueryRevalROptions,
+            RevalQueryOptions,
             state,
             onStateChanged: () => { InvokeAsync(StateHasChanged); },
             queryOptions.Enabled,

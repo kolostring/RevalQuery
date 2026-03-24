@@ -1,6 +1,9 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public enum QueryStatus
 {

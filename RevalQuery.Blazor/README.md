@@ -1,4 +1,4 @@
-﻿# QueryRevalR
+﻿# RevalQuery
 
 **A high-performance, Result-oriented data fetching library for Blazor.**
 

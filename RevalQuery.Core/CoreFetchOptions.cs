@@ -1,4 +1,6 @@
-﻿namespace QueryRevalR.Core;
+﻿using System;
+
+namespace RevalQuery.Core;
 
 public record CoreFetchOptions(
     TimeSpan RefetchInterval,

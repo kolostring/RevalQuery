@@ -1,6 +1,9 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 
-namespace QueryRevalR.Core;
+namespace RevalQuery.Core;
 
 public class QueryClient
 {
@@ -8,9 +11,9 @@ public class QueryClient
     private readonly CacheNode _cacheTrie = new(0);
     private readonly QueryGarbageCollector _gc = new();
     private readonly IServiceProvider _serviceProvider;
-    private readonly QueryRevalROptions _options;
+    private readonly RevalQueryOptions _options;
 
-    public QueryClient(IServiceProvider serviceProvider, QueryRevalROptions options)
+    public QueryClient(IServiceProvider serviceProvider, RevalQueryOptions options)
     {
         _serviceProvider = serviceProvider;
         _gc.OnEvictionRequired += HandleEviction;
