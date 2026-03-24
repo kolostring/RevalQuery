@@ -85,10 +85,10 @@ public sealed class QueryState<TKey, TResponse>(
                 CancellationToken = ct
             };
             _result = await handler(ctx);
+            _lastUpdatedAt = DateTimeOffset.UtcNow;
         }
         finally
         {
-            _lastUpdatedAt = DateTimeOffset.UtcNow;
             _status = QueryStatus.Idle;
         }
 
