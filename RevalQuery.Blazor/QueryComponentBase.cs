@@ -15,7 +15,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
     protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
         QueryOptionsBuilder<TKey, TRes> queryBuilder,
-        CancellationTokenSource cts,
+        CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "") where TKey : ITuple
     {
@@ -24,7 +24,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
     protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions,
-        CancellationTokenSource cts,
+        CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "") where TKey : ITuple
     {

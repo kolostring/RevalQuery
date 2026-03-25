@@ -66,7 +66,7 @@ public sealed class QueryState<TKey, TResponse>(
 
     public DateTimeOffset LastUpdatedAt => _lastUpdatedAt;
 
-    public async Task Run(CancellationToken ct)
+    public async Task Run(CancellationToken? ct)
     {
         if (IsFetching)
         {

@@ -1,7 +1,4 @@
-﻿using System;
-using System.Runtime.CompilerServices;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System.Runtime.CompilerServices;
 
 namespace RevalQuery.Core;
 
@@ -30,7 +27,8 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         }
     }
 
-    private readonly CancellationTokenSource _linkedCts;
+    private readonly CancellationTokenSource _obsCts = new();
+    private readonly CancellationTokenSource? _queryCts = null;
     private readonly Action _onStateChanged;
     private bool _isDisposed;
 
@@ -39,13 +37,13 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         QueryState<TKey, TRes> query,
         Action onStateChanged,
         bool enabled,
-        CancellationTokenSource cts,
+        CancellationTokenSource? cts,
         FetchOptions? options
     )
     {
         Query = query;
         _onStateChanged = onStateChanged;
-        _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+        _queryCts = cts;
         _enabled = enabled;
 
         var defaultOptions = RevalQueryOptions.FetchOptions;
@@ -64,13 +62,8 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         StartPolling(_options.RefetchInterval);
     }
 
-    private void StartPolling(TimeSpan? interval)
+    private void StartPolling(TimeSpan interval)
     {
-        if (interval == null)
-        {
-            throw new ArgumentNullException(nameof(interval));
-        }
-
         if (interval <= TimeSpan.Zero || _isDisposed)
         {
             return;
@@ -78,12 +71,12 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
 
         _ = Task.Run(async () =>
         {
-            while (!_isDisposed && !_linkedCts.IsCancellationRequested)
+            while (!_isDisposed && !_obsCts.IsCancellationRequested)
             {
-                await Task.Delay(interval.Value, _linkedCts.Token);
+                await Task.Delay(interval, _obsCts.Token);
                 _ = Run();
             }
-        }, _linkedCts.Token);
+        }, _obsCts.Token);
     }
 
     private void HandleChange()
@@ -119,7 +112,7 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         if (Query.CanFetch && Enabled)
         {
             await RunQueryWithRetry();
-            bool isCancelled = _linkedCts.IsCancellationRequested;
+            bool isCancelled = _queryCts?.IsCancellationRequested ?? false;
 
             if (!isCancelled && Query.IsSuccess && OnSuccess is not null)
             {
@@ -143,12 +136,12 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
         {
             if (attempt > 0)
             {
-                await Task.Delay(_options.RetryDelay!(attempt - 1), _linkedCts.Token);
+                await Task.Delay(_options.RetryDelay!(attempt - 1), _obsCts.Token);
             }
 
-            await Query.Run(_linkedCts.Token);
+            await Query.Run(_queryCts?.Token);
 
-            if (Query.IsSuccess || _linkedCts.IsCancellationRequested)
+            if (Query.IsSuccess || _obsCts.IsCancellationRequested || (_queryCts?.IsCancellationRequested ?? false))
                 break;
         }
     }
@@ -160,11 +153,12 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
             return;
         }
 
-        _linkedCts.Cancel();
-        _linkedCts.Dispose();
+        _obsCts.Cancel();
+        _obsCts.Dispose();
 
         _isDisposed = true;
         Query.OnChanged -= HandleChange;
+        Query.OnInvalidated -= HandleInvalidation;
         Query.DecrementObservers();
     }
 }
