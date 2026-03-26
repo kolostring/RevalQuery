@@ -2,9 +2,9 @@
 
 public static class SearchService
 {
-    public static async Task<List<string>> SearchAsync(string term, CancellationToken ct)
+    public static async Task<List<string>> SearchAsync(string term, CancellationToken? ct = null)
     {
-        Console.WriteLine("Request searching for " + term);
+        Console.WriteLine($"Request searching for \"{term}\"");
         string[] data = ["Apple", "Apricot", "Artichoke", "Asparagus", "Avocado", 
             "Banana", "Basil", "Beetroot", "Blackberry", "Blueberry", 
             "Broccoli", "Brussels Sprout", "Cabbage", "Cantaloupe", "Carrot", 
@@ -21,7 +21,7 @@ public static class SearchService
             "Pumpkin", "Quince", "Radish", "Raspberry", "Rhubarb", 
             "Spinach", "Strawberry", "Tomato", "Turnip", "Watermelon"];
         // Simulate Network Latency
-        await Task.Delay(1000, ct);
+        await Task.Delay(1000, ct ?? new());
 
         // Simulate a random API Failure (10% chance)
         if (Random.Shared.Next(1, 11) == 1)
@@ -29,9 +29,12 @@ public static class SearchService
 
         if (string.IsNullOrWhiteSpace(term)) return data.ToList();
 
-        return data
+        var res = data
             .Where(x => x.Contains(term, StringComparison.OrdinalIgnoreCase))
             .Take(5)
             .ToList();
+
+        Console.WriteLine($"Response for '{term}':\n" + string.Join(", ", res));
+        return res;
     }
 }
