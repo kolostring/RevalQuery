@@ -31,7 +31,7 @@
             }
         </ul>
     }
-    else if(!Suggestions.IsFetching)
+    else if (!Suggestions.IsFetching)
     {
         <p><em>Nothing to show</em></p>
     }
@@ -39,7 +39,6 @@
 
 @code {
     private string SearchTerm { get; set; } = string.Empty;
-    private CancellationTokenSource ComponentCts { get; } = new();
 
     IQueryState<List<string>> Suggestions => UseQuery
     (QueryOptionsFactory.Create
@@ -47,11 +46,10 @@
             ("search", SearchTerm),
             async static
                 ctx =>
-                QueryResult.Success(await SearchService.SearchAsync(ctx.Key.Item2, ctx.CancellationToken))
-        ).WithFetchOptions(new(
-            StaleTime: TimeSpan.FromMinutes(5)
-        )),
-        ComponentCts
+            {
+                var res = await SearchService.SearchAsync(ctx.Key.SearchTerm);
+                return QueryResult.Success(res);
+            }
+        )
     );
-
 }
