@@ -26,7 +26,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         return UseQuery(options.Build(), cts, line, member);
     }
 
-    private QueryState<TKey, TRes> UseQuery<TKey, TRes>(
+    protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions,
         CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
