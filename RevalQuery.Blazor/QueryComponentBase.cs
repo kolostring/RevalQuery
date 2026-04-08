@@ -14,15 +14,19 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
     private bool _isDisposed;
 
     protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
-        QueryOptionsBuilder<TKey, TRes> queryBuilder,
+        TKey key,
+        Func<QueryHandlerExecutionContext<TKey>, Task<QueryResult<TRes>>> handler,
+        Action<QueryOptionsBuilder<TKey, TRes>>? configure = null,
         CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "") where TKey : ITuple
     {
-        return UseQuery(queryBuilder.Build(), cts, line, member);
+        var options = QueryOptionsFactory.Create(key, handler);
+        configure?.Invoke(options);
+        return UseQuery(options.Build(), cts, line, member);
     }
 
-    protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
+    private QueryState<TKey, TRes> UseQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions,
         CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
@@ -81,7 +85,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
     }
 
     protected MutationState<TParams, TRes> UseMutation<TParams, TRes>(
-        MutationOptions<TParams, TRes> mutation,
+        Func<MutationHandlerExecutionContext<TParams>, Task<QueryResult<TRes>>> handler,
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "")
     {
@@ -93,7 +97,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             return obs.State;
         }
 
-        var state = new MutationState<TParams, TRes>(mutation.Handler, ServiceProvider);
+        var state = new MutationState<TParams, TRes>(handler, ServiceProvider);
 
         var observer = new MutationObserver<TParams, TRes>(
             state,

@@ -1,14 +1,4 @@
-﻿using System;
-using System.Threading.Tasks;
-
-namespace RevalQuery.Core;
-
-public static class MutationOptionsFactory
-{
-    public static MutationOptions<TInput, TRes> Create<TInput, TRes>(
-        Func<MutationHandlerExecutionContext<TInput>, Task<QueryResult<TRes>>> handler)
-        => new(handler);
-}
+﻿namespace RevalQuery.Core;
 
 public sealed record MutationOptions<TInput, TRes>(
     Func<MutationHandlerExecutionContext<TInput>, Task<QueryResult<TRes>>> Handler

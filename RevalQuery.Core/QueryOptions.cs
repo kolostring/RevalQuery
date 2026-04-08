@@ -1,6 +1,4 @@
-﻿using System;
-using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
+﻿using System.Runtime.CompilerServices;
 
 namespace RevalQuery.Core;
 
@@ -43,19 +41,21 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
         return this;
     }
 
-    public QueryOptionsBuilder<TKey, TRes> SetEnabled(bool enabled)
+    public QueryOptionsBuilder<TKey, TRes> Enabled(bool enabled)
     {
         _enabled = enabled;
         return this;
     }
 
-    public QueryOptionsBuilder<TKey, TRes> WithFetchOptions(FetchOptions fetchOptions)
+    public QueryOptionsBuilder<TKey, TRes> ConfigureFetch(Action<FetchOptionsBuilder> configure)
     {
-        _fetchOptions = fetchOptions;
+        var builder = new FetchOptionsBuilder(_fetchOptions);
+        configure(builder);
+        _fetchOptions = builder.Build();
         return this;
     }
 
-    public QueryOptionsBuilder<TKey, TRes> WithCacheOptions(CacheOptions cacheOptions)
+    public QueryOptionsBuilder<TKey, TRes> CacheOptions(CacheOptions cacheOptions)
     {
         _cacheOptions = cacheOptions;
         return this;
