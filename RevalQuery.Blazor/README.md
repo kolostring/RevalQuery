@@ -42,31 +42,28 @@ the closure from capturing component-level variables and ensures the compiler he
 
 ```csharp
 private IQueryState<BasketItem?> quantityQuery => UseQuery(
-    
-    QueryOptionsFactory.Create
-    (
-        key: ("basket-count", itemId),
-        
-        handler: static async ctx =>
+    key: ("basket-count", itemId),
+
+    handler: static async ctx =>
         {
             // Access services via the context ServiceProvider
             var basketService = ctx.ServiceProvider.GetRequiredService<IBasketService>();
             var item = await basketService.GetItem(ctx.Key.itemId);
             return QueryResult.Success(item);
         },
-        
-        onSuccess: async (basketItem) =>
-        {
-            Console.WriteLine($"Fetched quantity: {basketItem?.Quantity}");
-        },
-        
-        enabled: OperatingSystem.IsBrowser() // Only fetch on the client side
-    ), 
-    cancellationTokenSource
+    
+    configure: options => options
+        .OnSuccess(
+            async (basketItem) =>
+            {
+                Console.WriteLine($"Fetched quantity: {basketItem?.Quantity}");
+            }
+        )
+        .Enabled(OperatingSystem.IsBrowser()) // Only fetch on the client side
 );
 ```
 
-> **💡 Pro Tip:** For better reusability and cleaner components, define your `QueryOptions` in a static factory class (
+> **💡 Pro Tip:** For better reusability and cleaner components, define your `QueryOptions` in a static factory class by using the `QueryOptionsFactory.Create` method(
 > e.g., `BasketQueries.GetItemOptions(itemId)`).
 
 ### Stateless Validation (Highly Recommended)
