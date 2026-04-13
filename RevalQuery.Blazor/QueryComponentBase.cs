@@ -15,7 +15,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
     protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
         TKey key,
-        Func<QueryHandlerExecutionContext<TKey>, Task<QueryResult<TRes>>> handler,
+        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler,
         Action<QueryOptionsBuilder<TKey, TRes>>? configure = null,
         CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
@@ -37,8 +37,8 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         if (_observerSlots.TryGetValue(slotId, out var existing))
         {
             var obs = (QueryObserver<TKey, TRes>)existing;
-            obs.OnSuccess = queryOptions.OnSuccess;
-            obs.OnError = queryOptions.OnError;
+            obs.OnResolved = queryOptions.OnSuccess;
+            obs.OnException = queryOptions.OnError;
             obs.OnSettled = queryOptions.OnSettled;
 
             if (obs.Query.Key.Equals(queryOptions.Key))
@@ -74,8 +74,8 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             queryOptions.FetchOptions
         );
 
-        observer.OnSuccess = queryOptions.OnSuccess;
-        observer.OnError = queryOptions.OnError;
+        observer.OnResolved = queryOptions.OnSuccess;
+        observer.OnException = queryOptions.OnError;
         observer.OnSettled = queryOptions.OnSettled;
 
         _observerSlots[slotId] = observer;
@@ -85,7 +85,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
     }
 
     protected MutationState<TParams, TRes> UseMutation<TParams, TRes>(
-        Func<MutationHandlerExecutionContext<TParams>, Task<QueryResult<TRes>>> handler,
+        Func<MutationHandlerExecutionContext<TParams>, Task<TRes>> handler,
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "")
     {

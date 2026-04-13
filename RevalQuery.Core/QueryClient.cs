@@ -22,7 +22,7 @@ public class QueryClient
 
     public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
         TKey keySegments,
-        Func<QueryHandlerExecutionContext<TKey>, Task<QueryResult<TRes>>> handler,
+        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler,
         CacheOptions? cacheOptions
     ) where TKey : ITuple
     {

@@ -6,32 +6,32 @@ public static class QueryOptionsFactory
 {
     public static QueryOptionsBuilder<TKey, TRes> Create<TKey, TRes>(
         TKey key,
-        Func<QueryHandlerExecutionContext<TKey>, Task<QueryResult<TRes>>> handler)
+        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler)
         where TKey : ITuple
         => new(key, handler);
 }
 
 public sealed class QueryOptionsBuilder<TKey, TRes>(
     TKey key,
-    Func<QueryHandlerExecutionContext<TKey>, Task<QueryResult<TRes>>> handler)
+    Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler)
     where TKey : ITuple
 {
-    private Func<TRes, Task>? _onSuccess;
-    private Func<QueryError, Task>? _onError;
+    private Func<TRes, Task>? _onResolved;
+    private Func<Exception, Task>? _onException;
     private Func<QueryResult<TRes>, Task>? _onSettled;
     private bool _enabled = true;
     private FetchOptions _fetchOptions = new();
     private CacheOptions? _cacheOptions;
 
-    public QueryOptionsBuilder<TKey, TRes> OnSuccess(Func<TRes, Task> action)
+    public QueryOptionsBuilder<TKey, TRes> OnResolved(Func<TRes, Task> action)
     {
-        _onSuccess = action;
+        _onResolved = action;
         return this;
     }
 
-    public QueryOptionsBuilder<TKey, TRes> OnError(Func<QueryError, Task> action)
+    public QueryOptionsBuilder<TKey, TRes> OnException(Func<Exception, Task> action)
     {
-        _onError = action;
+        _onException = action;
         return this;
     }
 
@@ -64,8 +64,8 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
     public QueryOptions<TKey, TRes> Build() => new(
         key,
         handler,
-        _onSuccess,
-        _onError,
+        _onResolved,
+        _onException,
         _onSettled,
         _enabled,
         _fetchOptions,
@@ -78,9 +78,9 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
 
 public sealed record QueryOptions<TKey, TRes>(
     TKey Key,
-    Func<QueryHandlerExecutionContext<TKey>, Task<QueryResult<TRes>>> Handler,
+    Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> Handler,
     Func<TRes, Task>? OnSuccess = null,
-    Func<QueryError, Task>? OnError = null,
+    Func<Exception, Task>? OnError = null,
     Func<QueryResult<TRes>, Task>? OnSettled = null,
     bool Enabled = true,
     FetchOptions? FetchOptions = null,

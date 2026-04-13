@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace RevalQuery.Core;
 
 public sealed class MutationState<TParams, TResponse>(
-    Func<MutationHandlerExecutionContext<TParams>, Task<QueryResult<TResponse>>> handler,
+    Func<MutationHandlerExecutionContext<TParams>, Task<TResponse>> handler,
     IServiceProvider serviceProvider
 )
 {
@@ -15,7 +15,7 @@ public sealed class MutationState<TParams, TResponse>(
     public event Action? OnChanged;
 
     public TResponse? Data => _result is QueryResult<TResponse>.Success s ? s.Value : default;
-    public QueryError? Error => _result is QueryResult<TResponse>.Failure f ? f.Error : null;
+    public Exception? Error => _result is QueryResult<TResponse>.Failure f ? f.Exception : null;
 
     public bool IsIdle => _runningMutationsQuantity == 0;
     public bool IsFetching => _runningMutationsQuantity > 0;
@@ -40,7 +40,7 @@ public sealed class MutationState<TParams, TResponse>(
         }
         catch (Exception ex)
         {
-            _result = new QueryResult<TResponse>.Failure(new QueryError("Mutation.Exception", ex.Message));
+            _result = ex;
         }
         finally
         {

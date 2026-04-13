@@ -5,7 +5,7 @@ namespace RevalQuery.Core;
 public interface IQueryState<TResponse> : IObservableQueryState
 {
     TResponse? Data { get; }
-    QueryError? Error { get; }
+    Exception? Error { get; }
 
     void SetData(TResponse data);
 
@@ -13,8 +13,8 @@ public interface IQueryState<TResponse> : IObservableQueryState
     bool IsFetching { get; }
     bool IsLoading { get; }
     bool IsPending { get; }
-    bool IsError { get; }
-    bool IsSuccess { get; }
+    bool IsException { get; }
+    bool IsResolved { get; }
     bool CanFetch { get; }
 
     DateTimeOffset LastUpdatedAt { get; }

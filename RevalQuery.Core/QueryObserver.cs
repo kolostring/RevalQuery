@@ -6,8 +6,8 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
 {
     public QueryState<TKey, TRes> Query { get; }
 
-    public Func<TRes, Task>? OnSuccess { get; set; }
-    public Func<QueryError, Task>? OnError { get; set; }
+    public Func<TRes, Task>? OnResolved { get; set; }
+    public Func<Exception, Task>? OnException { get; set; }
     public Func<QueryResult<TRes>, Task>? OnSettled { get; set; }
 
     private readonly CoreFetchOptions _options;
@@ -114,13 +114,13 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
             await RunQueryWithRetry();
             bool isCancelled = _queryCts?.IsCancellationRequested ?? false;
 
-            if (!isCancelled && Query.IsSuccess && OnSuccess is not null)
+            if (!isCancelled && Query.IsResolved && OnResolved is not null)
             {
-                await OnSuccess.Invoke(Query.Data!);
+                await OnResolved.Invoke(Query.Data!);
             }
-            else if (!isCancelled && Query.IsError && OnError is not null)
+            else if (!isCancelled && Query.IsException && OnException is not null)
             {
-                await OnError.Invoke(Query.Error!);
+                await OnException.Invoke(Query.Error!);
             }
 
             if (!isCancelled && OnSettled is not null)
@@ -141,7 +141,7 @@ public sealed class QueryObserver<TKey, TRes> : IDisposable where TKey : ITuple
 
             await Query.Run(_queryCts?.Token);
 
-            if (Query.IsSuccess || _obsCts.IsCancellationRequested || (_queryCts?.IsCancellationRequested ?? false))
+            if (Query.IsResolved || _obsCts.IsCancellationRequested || (_queryCts?.IsCancellationRequested ?? false))
                 break;
         }
     }
