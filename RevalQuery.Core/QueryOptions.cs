@@ -16,30 +16,9 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
     Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler)
     where TKey : ITuple
 {
-    private Func<TRes, Task>? _onResolved;
-    private Func<Exception, Task>? _onException;
-    private Func<QueryResult<TRes>, Task>? _onSettled;
     private bool _enabled = true;
     private FetchOptions _fetchOptions = new();
     private CacheOptions? _cacheOptions;
-
-    public QueryOptionsBuilder<TKey, TRes> OnResolved(Func<TRes, Task> action)
-    {
-        _onResolved = action;
-        return this;
-    }
-
-    public QueryOptionsBuilder<TKey, TRes> OnException(Func<Exception, Task> action)
-    {
-        _onException = action;
-        return this;
-    }
-
-    public QueryOptionsBuilder<TKey, TRes> OnSettled(Func<QueryResult<TRes>, Task> action)
-    {
-        _onSettled = action;
-        return this;
-    }
 
     public QueryOptionsBuilder<TKey, TRes> Enabled(bool enabled)
     {
@@ -64,9 +43,6 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
     public QueryOptions<TKey, TRes> Build() => new(
         key,
         handler,
-        _onResolved,
-        _onException,
-        _onSettled,
         _enabled,
         _fetchOptions,
         _cacheOptions
@@ -79,9 +55,6 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
 public sealed record QueryOptions<TKey, TRes>(
     TKey Key,
     Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> Handler,
-    Func<TRes, Task>? OnSuccess = null,
-    Func<Exception, Task>? OnError = null,
-    Func<QueryResult<TRes>, Task>? OnSettled = null,
     bool Enabled = true,
     FetchOptions? FetchOptions = null,
     CacheOptions? CacheOptions = null

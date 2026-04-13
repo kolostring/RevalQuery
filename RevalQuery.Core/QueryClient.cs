@@ -1,13 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
+﻿using System.Runtime.CompilerServices;
 
 namespace RevalQuery.Core;
 
 public class QueryClient
 {
-    private readonly Dictionary<int, IObservableQueryState> _stateLookup = new();
+    private readonly Dictionary<int, IQueryState> _stateLookup = new();
+    private readonly Dictionary<int, IDisposable> _workerLookup = new();
     private readonly CacheNode _cacheTrie = new(0);
     private readonly QueryGarbageCollector _gc = new();
     private readonly IServiceProvider _serviceProvider;
@@ -23,6 +21,7 @@ public class QueryClient
     public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
         TKey keySegments,
         Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler,
+        FetchOptions? fetchOptions,
         CacheOptions? cacheOptions
     ) where TKey : ITuple
     {
@@ -43,11 +42,13 @@ public class QueryClient
 
         GetOrCreateCacheInstance(keySegments);
 
+        var sanitizedFetchOptions = (fetchOptions ?? new FetchOptions()).PatchNullFields(_options.FetchOptions);
+
         var newState = new QueryState<TKey, TRes>(
             keySegments,
             handler,
             cacheOptions ?? _options.CacheOptions,
-            _serviceProvider
+            sanitizedFetchOptions
         );
         _stateLookup[lookupKey] = newState;
 
@@ -74,17 +75,74 @@ public class QueryClient
         }
     }
 
-    public IObservableQueryState? FindQuery(ITuple keySegments)
+    public IQueryState? FindQuery(ITuple keySegments)
     {
         int lookupKey = GetHash(keySegments).ToHashCode();
         return _stateLookup.GetValueOrDefault(lookupKey);
     }
 
-    public ICollection<IObservableQueryState> FindQueries(ITuple keySegments)
+    public ICollection<IQueryState> FindQueries(ITuple keySegments)
     {
         var node = PeekCacheInstance(keySegments);
 
         return node != null ? RecursiveQueriesRetrieval(node) : [];
+    }
+
+    public QueryObserver Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
+        where TKey : ITuple
+    {
+        _options.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        var prerenderState = new QueryState<TKey, TRes>(
+            queryOptions.Key,
+            queryOptions.Handler,
+            _options.CacheOptions,
+            _options.FetchOptions
+        );
+
+        var state = GetOrCreateQuery(
+            queryOptions.Key,
+            queryOptions.Handler,
+            queryOptions.FetchOptions,
+            queryOptions.CacheOptions ?? new CacheOptions(TimeSpan.Zero)
+        ) ?? prerenderState;
+
+        var observer = new QueryObserver(
+            state,
+            onStateHasChanged
+        );
+
+        EnsureWorkerIsRunning(state);
+
+        return observer;
+    }
+
+    private void EnsureWorkerIsRunning<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    {
+        int lookupKey = GetHash(state.Key).ToHashCode();
+
+        if (_workerLookup.TryGetValue(lookupKey, out var worker))
+        {
+            ((QueryWorker<TKey, TRes>)worker).RunIfStale();
+            return;
+        }
+
+        var newWorker = new QueryWorker<TKey, TRes>(
+            _serviceProvider,
+            state,
+            null
+        );
+
+        _workerLookup[lookupKey] = newWorker;
+
+        state.OnLastSubscriberRemoved += (_, _) =>
+        {
+            if (_workerLookup.Remove(lookupKey, out var worker))
+            {
+                worker.Dispose();
+            }
+        };
+        newWorker.RunIfStale();
     }
 
     private void HandleEviction(ITuple key)
@@ -139,10 +197,10 @@ public class QueryClient
         }
     }
 
-    private ICollection<IObservableQueryState> RecursiveQueriesRetrieval(
+    private ICollection<IQueryState> RecursiveQueriesRetrieval(
         CacheNode node)
     {
-        List<IObservableQueryState> retrieved = [];
+        List<IQueryState> retrieved = [];
 
         var state = _stateLookup.GetValueOrDefault(node.KeyHashCode);
         if (state != null)

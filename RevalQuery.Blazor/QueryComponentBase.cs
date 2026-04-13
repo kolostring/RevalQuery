@@ -8,12 +8,11 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 {
     [Inject] protected QueryClient? Client { get; set; } = null;
     [Inject] protected IServiceProvider ServiceProvider { get; set; }
-    [Inject] protected RevalQueryOptions RevalQueryOptions { get; set; }
 
     private readonly Dictionary<string, IDisposable> _observerSlots = new();
     private bool _isDisposed;
 
-    protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
+    protected IQueryState<TRes> UseQuery<TKey, TRes>(
         TKey key,
         Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler,
         Action<QueryOptionsBuilder<TKey, TRes>>? configure = null,
@@ -26,7 +25,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         return UseQuery(options.Build(), cts, line, member);
     }
 
-    protected QueryState<TKey, TRes> UseQuery<TKey, TRes>(
+    protected IQueryState<TRes> UseQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions,
         CancellationTokenSource? cts = null,
         [CallerLineNumber] int line = 0,
@@ -36,52 +35,22 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
         if (_observerSlots.TryGetValue(slotId, out var existing))
         {
-            var obs = (QueryObserver<TKey, TRes>)existing;
-            obs.OnResolved = queryOptions.OnSuccess;
-            obs.OnException = queryOptions.OnError;
-            obs.OnSettled = queryOptions.OnSettled;
+            var obs = (QueryObserver)existing;
+            var query = (QueryState<TKey, TRes>)obs.Query;
 
-            if (obs.Query.Key.Equals(queryOptions.Key))
+            if (query.Key.Equals(queryOptions.Key))
             {
-                obs.Enabled = queryOptions.Enabled;
-                return obs.Query;
+                return query;
             }
 
             obs.Dispose();
         }
 
-        RevalQueryOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
-
-        var prerenderState = new QueryState<TKey, TRes>(
-            queryOptions.Key,
-            queryOptions.Handler,
-            new CacheOptions(TimeSpan.Zero),
-            ServiceProvider);
-
-        var state = Client?.GetOrCreateQuery(
-                queryOptions.Key,
-                queryOptions.Handler,
-                queryOptions.CacheOptions ?? new CacheOptions(TimeSpan.Zero)
-            ) ?? prerenderState
-            ;
-
-        var observer = new QueryObserver<TKey, TRes>(
-            RevalQueryOptions,
-            state,
-            onStateChanged: () => { InvokeAsync(StateHasChanged); },
-            queryOptions.Enabled,
-            cts,
-            queryOptions.FetchOptions
-        );
-
-        observer.OnResolved = queryOptions.OnSuccess;
-        observer.OnException = queryOptions.OnError;
-        observer.OnSettled = queryOptions.OnSettled;
+        var observer = Client!.Subscribe(queryOptions, () => { InvokeAsync(StateHasChanged); });
 
         _observerSlots[slotId] = observer;
-        observer.RunIfStale();
 
-        return state;
+        return (IQueryState<TRes>)observer.Query;
     }
 
     protected MutationState<TParams, TRes> UseMutation<TParams, TRes>(
