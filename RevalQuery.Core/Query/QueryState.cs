@@ -1,9 +1,9 @@
-﻿using System;
 using System.Runtime.CompilerServices;
-using System.Threading;
-using System.Threading.Tasks;
+using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Configuration.Options;
+using RevalQuery.Core.Query.Execution;
 
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Query;
 
 public enum QueryStatus
 {
@@ -11,21 +11,25 @@ public enum QueryStatus
     Fetching
 }
 
+/// <summary>
+/// Represents the state of a query including data, status, and lifecycle.
+/// Thread-safe with immutable initialization.
+/// </summary>
 public sealed class QueryState<TKey, TResponse>(
     TKey key,
     Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> handler,
     CacheOptions cacheOptions,
     CoreFetchOptions fetchOptions
 )
-    : IQueryState<TResponse> where TKey : ITuple
+    : IQueryState<TResponse>, IObservableQueryState where TKey : ITuple
 {
     public TKey Key { get; } = key;
-    public QueryResult<TResponse>? Result { get; set; } = null;
+    public QueryResult<TResponse>? Result { get; set; }
     public QueryStatus Status { get; set; } = QueryStatus.Idle;
     public Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> Handler { get; } = handler;
     public CoreFetchOptions FetchOptions { get; } = fetchOptions;
 
-    private int _observersCount = 0;
+    private int _observersCount;
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private CacheOptions _cacheOptions = cacheOptions;
 
@@ -47,10 +51,7 @@ public sealed class QueryState<TKey, TResponse>(
 
     public void SetCacheOptions(CacheOptions cacheOptions)
     {
-        if (cacheOptions.GcTime > _cacheOptions.GcTime)
-        {
-            _cacheOptions = cacheOptions;
-        }
+        if (cacheOptions.GcTime > _cacheOptions.GcTime) _cacheOptions = cacheOptions;
     }
 
     public bool IsIdle => Status == QueryStatus.Idle;
@@ -62,10 +63,21 @@ public sealed class QueryState<TKey, TResponse>(
     public bool CanFetch => IsIdle && _observersCount > 0;
 
     public DateTimeOffset LastUpdatedAt => _lastUpdatedAt;
-    public void SetStale() => _lastUpdatedAt = DateTimeOffset.MinValue;
-    public void SetFresh() => _lastUpdatedAt = DateTimeOffset.UtcNow;
 
-    public void NotifyChanged() => OnChanged?.Invoke();
+    public void SetStale()
+    {
+        _lastUpdatedAt = DateTimeOffset.MinValue;
+    }
+
+    public void SetFresh()
+    {
+        _lastUpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    public void NotifyChanged()
+    {
+        OnChanged?.Invoke();
+    }
 
     public void NotifyInvalidated()
     {
@@ -75,10 +87,7 @@ public sealed class QueryState<TKey, TResponse>(
 
     public void IncrementObservers()
     {
-        if (_observersCount == 0)
-        {
-            OnFirstSubscriberAdded?.Invoke(Key);
-        }
+        if (_observersCount == 0) OnFirstSubscriberAdded?.Invoke(Key);
 
         _observersCount++;
     }
@@ -86,15 +95,10 @@ public sealed class QueryState<TKey, TResponse>(
     public void DecrementObservers()
     {
         _observersCount--;
-        if (_observersCount == 0)
-        {
-            OnLastSubscriberRemoved?.Invoke(Key, _cacheOptions);
-        }
+        if (_observersCount == 0) OnLastSubscriberRemoved?.Invoke(Key, _cacheOptions);
 
         if (_observersCount < 0)
-        {
             throw new InvalidOperationException(
                 $"Query state with key {Key} has invalid observer count: {_observersCount}.");
-        }
     }
 }

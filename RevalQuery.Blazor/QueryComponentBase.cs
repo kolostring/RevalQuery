@@ -1,13 +1,20 @@
-﻿using System.Runtime.CompilerServices;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Components;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Mutation;
+using RevalQuery.Core.Mutation.Execution;
+using RevalQuery.Core.Query;
+using RevalQuery.Core.Query.Execution;
+using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Blazor;
 
 public abstract class QueryComponentBase : ComponentBase, IDisposable
 {
-    [Inject] protected QueryClient? Client { get; set; } = null;
-    [Inject] protected IServiceProvider ServiceProvider { get; set; }
+    [Inject] [NotNull] protected QueryClient? Client { get; set; }
+    [Inject] [NotNull] protected IServiceProvider? ServiceProvider { get; set; }
 
     private readonly Dictionary<string, IDisposable> _observerSlots = new();
     private bool _isDisposed;
@@ -20,7 +27,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "") where TKey : ITuple
     {
-        var options = QueryOptionsFactory.Create(key, handler);
+        var options = QueryOptions.Create(key, handler);
         configure?.Invoke(options);
         return UseQuery(options.Build(), cts, line, member);
     }
@@ -46,7 +53,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             obs.Dispose();
         }
 
-        var observer = Client!.Subscribe(queryOptions, () => { InvokeAsync(StateHasChanged); });
+        var observer = Client.Subscribe(queryOptions, () => { InvokeAsync(StateHasChanged); });
 
         _observerSlots[slotId] = observer;
 
@@ -58,7 +65,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         [CallerLineNumber] int line = 0,
         [CallerMemberName] string member = "")
     {
-        string slotId = $"mutation_{member}_{line}";
+        var slotId = $"mutation_{member}_{line}";
 
         if (_observerSlots.TryGetValue(slotId, out var existing))
         {
@@ -70,7 +77,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
         var observer = new MutationObserver<TParams, TRes>(
             state,
-            onStateChanged: () => { InvokeAsync(StateHasChanged); }
+            () => { InvokeAsync(StateHasChanged); }
         );
 
         _observerSlots[slotId] = observer;
@@ -92,5 +99,6 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
         }
 
         _observerSlots.Clear();
+        GC.SuppressFinalize(this);
     }
 }

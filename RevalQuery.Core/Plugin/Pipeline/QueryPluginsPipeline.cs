@@ -1,10 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
+using RevalQuery.Core.Abstractions.Plugin;
+using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Plugin.Pipeline;
 
+/// <summary>
+/// Manages the plugin pipeline for query initialization.
+/// Uses middleware pattern for composable behavior.
+/// </summary>
 public sealed class QueryPluginsPipeline(IEnumerable<IQueryPlugin> plugins)
 {
     public QueryOptions<TKey, TRes> HandleQueryOptions<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
@@ -14,7 +17,6 @@ public sealed class QueryPluginsPipeline(IEnumerable<IQueryPlugin> plugins)
         foreach (var plugin in plugins.Reverse())
         {
             var localNext = pipeline;
-
             pipeline = (opt) => plugin.OnQueryInitialize(opt, localNext);
         }
 

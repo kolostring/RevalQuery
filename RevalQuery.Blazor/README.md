@@ -15,8 +15,7 @@ Register the core services in your `Program.cs`.
 ```csharp
 //Program.cs
 
-builder.Services.AddScoped<QueryClient>();
-builder.Services.AddSingleton<QueryPluginsPipeline>();
+builder.Services.AddRevalQuery();
 ```
 
 ---
@@ -49,7 +48,7 @@ private IQueryState<BasketItem?> quantityQuery => UseQuery(
             // Access services via the context ServiceProvider
             var basketService = ctx.ServiceProvider.GetRequiredService<IBasketService>();
             var item = await basketService.GetItem(ctx.Key.itemId);
-            return QueryResult.Success(item);
+            return item;
         },
     
     configure: options => options
@@ -106,19 +105,6 @@ private IMutationState<string, Task> addItemMutation => UseMutation(
     ) 
 );
 ```
-
----
-
-## 🛠 Features
-
-### Callbacks & Lifecycle
-
-Queries support lifecycle callbacks (`onSuccess`, `onError`, `onSettled`). These allow you to trigger
-side effects—like Toast notifications or logging—without polluting your UI logic.
-
-### Multi-Targeting
-
-BlazorQ is built to target **.NET 8**, **.NET 9** and **.NET 10** (2026 Ready).
 
 ---
 

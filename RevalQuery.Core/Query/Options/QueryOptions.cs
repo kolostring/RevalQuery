@@ -1,14 +1,20 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
+using RevalQuery.Core.Configuration.Options;
+using RevalQuery.Core.Query.Execution;
 
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Query.Options;
 
-public static class QueryOptionsFactory
+public sealed record QueryOptions<TKey, TRes>(
+    TKey Key,
+    Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> Handler,
+    FetchOptions? FetchOptions = null,
+    CacheOptions? CacheOptions = null
+) where TKey : ITuple;
+
+public abstract class QueryOptions
 {
-    public static QueryOptionsBuilder<TKey, TRes> Create<TKey, TRes>(
-        TKey key,
-        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler)
-        where TKey : ITuple
-        => new(key, handler);
+    public static QueryOptionsBuilder<TKey, TRes> Create<TKey, TRes>(TKey key,
+        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler) where TKey : ITuple => new(key, handler);
 }
 
 public sealed class QueryOptionsBuilder<TKey, TRes>(
@@ -43,7 +49,6 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
     public QueryOptions<TKey, TRes> Build() => new(
         key,
         handler,
-        _enabled,
         _fetchOptions,
         _cacheOptions
     );
@@ -51,11 +56,3 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
     public static implicit operator QueryOptions<TKey, TRes>(QueryOptionsBuilder<TKey, TRes> builder)
         => builder.Build();
 }
-
-public sealed record QueryOptions<TKey, TRes>(
-    TKey Key,
-    Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> Handler,
-    bool Enabled = true,
-    FetchOptions? FetchOptions = null,
-    CacheOptions? CacheOptions = null
-) where TKey : ITuple;

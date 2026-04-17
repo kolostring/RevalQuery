@@ -1,10 +1,8 @@
-﻿using System;
-
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Configuration.Options;
 
 public sealed record CacheOptions(TimeSpan GcTime)
 {
     public static CacheOptions Default => new(
-        GcTime: TimeSpan.FromMinutes(5)
+        TimeSpan.FromMinutes(5)
     );
 };

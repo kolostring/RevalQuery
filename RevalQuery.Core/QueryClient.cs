@@ -1,21 +1,42 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
+using RevalQuery.Core.Abstractions.Caching;
+using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Caching.Eviction;
+using RevalQuery.Core.Caching.Key;
+using RevalQuery.Core.Caching.Storage;
+using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Configuration.Options;
+using RevalQuery.Core.Query;
+using RevalQuery.Core.Query.Execution;
+using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Core;
 
-public class QueryClient
+/// <summary>
+/// Main entry point for query management.
+/// Coordinates state management, caching, and worker orchestration.
+/// </summary>
+public sealed class QueryClient
 {
     private readonly Dictionary<int, IQueryState> _stateLookup = new();
     private readonly Dictionary<int, IDisposable> _workerLookup = new();
-    private readonly CacheNode _cacheTrie = new(0);
-    private readonly QueryGarbageCollector _gc = new();
+    private readonly ICacheStorage _cacheStorage;
+    private readonly ICacheEvictionPolicy _evictionPolicy;
     private readonly IServiceProvider _serviceProvider;
-    private readonly RevalQueryOptions _options;
+    private readonly RevalQueryOptions _defaultOptions;
 
-    public QueryClient(IServiceProvider serviceProvider, RevalQueryOptions options)
+    public QueryClient(
+        IServiceProvider serviceProvider,
+        RevalQueryOptions defaultOptions,
+        ICacheStorage? cacheStorage = null,
+        ICacheEvictionPolicy? evictionPolicy = null
+    )
     {
         _serviceProvider = serviceProvider;
-        _gc.OnEvictionRequired += HandleEviction;
-        _options = options;
+        _cacheStorage = cacheStorage ?? new TrieCacheStorage();
+        _evictionPolicy = evictionPolicy ?? new TtlQueryGarbageCollector();
+        _evictionPolicy.OnEvictionRequired += HandleEviction;
+        _defaultOptions = defaultOptions;
     }
 
     public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
@@ -25,7 +46,7 @@ public class QueryClient
         CacheOptions? cacheOptions
     ) where TKey : ITuple
     {
-        int lookupKey = GetHash(keySegments).ToHashCode();
+        var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
         var state = _stateLookup.GetValueOrDefault(lookupKey);
         if (state != null)
         {
@@ -40,64 +61,63 @@ public class QueryClient
                 $"Expected {typeof(TRes).Name} but found {state.GetType().GenericTypeArguments[0].Name}.");
         }
 
-        GetOrCreateCacheInstance(keySegments);
+        _cacheStorage.GetOrCreateNode(keySegments);
 
-        var sanitizedFetchOptions = (fetchOptions ?? new FetchOptions()).PatchNullFields(_options.FetchOptions);
+        var sanitizedFetchOptions = (fetchOptions ?? new FetchOptions()).PatchNullFields(_defaultOptions.FetchOptions);
 
         var newState = new QueryState<TKey, TRes>(
             keySegments,
             handler,
-            cacheOptions ?? _options.CacheOptions,
+            cacheOptions ?? _defaultOptions.CacheOptions,
             sanitizedFetchOptions
         );
         _stateLookup[lookupKey] = newState;
 
-        WireQueryStateWithGarbageCollector(newState);
+        WireQueryStateWithEvictionPolicy(newState);
 
         return newState;
     }
 
     public void Invalidate(ITuple keySegments)
     {
-        var node = PeekCacheInstance(keySegments);
-        if (node != null)
-        {
-            NotifyInvalidationRecursive(node);
-        }
+        var node = _cacheStorage.PeekNode(keySegments);
+        if (node != null) NotifyInvalidationRecursive(node);
     }
 
     public void Invalidate(string key)
     {
-        var node = PeekCacheInstance(key);
-        if (node != null)
-        {
-            NotifyInvalidationRecursive(node);
-        }
+        var node = _cacheStorage.PeekNode(key);
+        if (node != null) NotifyInvalidationRecursive(node);
     }
 
     public IQueryState? FindQuery(ITuple keySegments)
     {
-        int lookupKey = GetHash(keySegments).ToHashCode();
+        var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
         return _stateLookup.GetValueOrDefault(lookupKey);
     }
 
     public ICollection<IQueryState> FindQueries(ITuple keySegments)
     {
-        var node = PeekCacheInstance(keySegments);
+        var node = _cacheStorage.PeekNode(keySegments);
+        if (node == null) return [];
 
-        return node != null ? RecursiveQueriesRetrieval(node) : [];
+        var childNodes = _cacheStorage.GetChildNodes(node);
+
+        return childNodes.Select(child => _stateLookup.GetValueOrDefault(child.KeyHashCode))
+            .OfType<IQueryState>()
+            .ToList();
     }
 
     public QueryObserver Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
         where TKey : ITuple
     {
-        _options.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+        _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
         var prerenderState = new QueryState<TKey, TRes>(
             queryOptions.Key,
             queryOptions.Handler,
-            _options.CacheOptions,
-            _options.FetchOptions
+            _defaultOptions.CacheOptions,
+            _defaultOptions.FetchOptions
         );
 
         var state = GetOrCreateQuery(
@@ -119,7 +139,7 @@ public class QueryClient
 
     private void EnsureWorkerIsRunning<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
-        int lookupKey = GetHash(state.Key).ToHashCode();
+        var lookupKey = CacheKeyCalculator.GetHashCode(state.Key);
 
         if (_workerLookup.TryGetValue(lookupKey, out var worker))
         {
@@ -137,106 +157,18 @@ public class QueryClient
 
         state.OnLastSubscriberRemoved += (_, _) =>
         {
-            if (_workerLookup.Remove(lookupKey, out var worker))
-            {
-                worker.Dispose();
-            }
+            if (_workerLookup.Remove(lookupKey, out var removedWorker)) removedWorker.Dispose();
         };
         newWorker.RunIfStale();
     }
 
     private void HandleEviction(ITuple key)
     {
-        var hash = GetHash(key).ToHashCode();
+        var hash = CacheKeyCalculator.GetHashCode(key);
         _stateLookup.Remove(hash);
-        bool nodeFoundAndDeleted = PruneRecursive(_cacheTrie, key, 0);
+        var nodeFoundAndDeleted = _cacheStorage.PruneNode(key);
 
-        if (!nodeFoundAndDeleted)
-        {
-            throw new InvalidOperationException($"Couldn't delete node with key {key}");
-        }
-    }
-
-    private bool PruneRecursive(CacheNode current, ITuple key, int keyIndex)
-    {
-        if (keyIndex >= key.Length)
-        {
-            return current.Children.Count == 0 && !_stateLookup.ContainsKey(current.KeyHashCode);
-        }
-
-        var segment = key[keyIndex]?.ToString() ?? "null";
-
-        if (!current.Children.TryGetValue(segment, out var child)) return false;
-
-        bool shouldDeleteChild = PruneRecursive(child, key, keyIndex + 1);
-
-        if (!shouldDeleteChild) return false;
-
-        current.Children.Remove(segment);
-
-        return current.Children.Count == 0 && !_stateLookup.ContainsKey(current.KeyHashCode);
-    }
-
-    private void GetOrCreateCacheInstance(ITuple keySegments)
-    {
-        var current = _cacheTrie;
-        var hashCode = new HashCode();
-
-        for (int i = 0; i < keySegments.Length; i++)
-        {
-            string segment = keySegments[i]?.ToString() ?? "null";
-            hashCode.Add(keySegments[i]);
-
-            if (!current.Children.TryGetValue(segment, out CacheNode? value))
-            {
-                value = new CacheNode(hashCode.ToHashCode());
-                current.Children[segment] = value;
-            }
-
-            current = value;
-        }
-    }
-
-    private ICollection<IQueryState> RecursiveQueriesRetrieval(
-        CacheNode node)
-    {
-        List<IQueryState> retrieved = [];
-
-        var state = _stateLookup.GetValueOrDefault(node.KeyHashCode);
-        if (state != null)
-        {
-            retrieved.Add(state);
-        }
-
-        foreach (var child in node.Children)
-        {
-            retrieved.AddRange(RecursiveQueriesRetrieval(child.Value));
-        }
-
-        return retrieved;
-    }
-
-    private CacheNode? PeekCacheInstance(ITuple keySegments)
-    {
-        var current = _cacheTrie;
-        for (int i = 0; i < keySegments.Length; i++)
-        {
-            string segment = keySegments[i]?.ToString() ?? "null";
-
-            if (!current.Children.TryGetValue(segment, out CacheNode? value))
-            {
-                return null;
-            }
-
-            current = value;
-        }
-
-        return current;
-    }
-
-    private CacheNode? PeekCacheInstance(string key)
-    {
-        return _cacheTrie.Children.GetValueOrDefault(key);
+        if (!nodeFoundAndDeleted) throw new InvalidOperationException($"Couldn't delete node with key {key}");
     }
 
     private void NotifyInvalidationRecursive(CacheNode node)
@@ -244,34 +176,14 @@ public class QueryClient
         var state = _stateLookup.GetValueOrDefault(node.KeyHashCode);
         state?.NotifyInvalidated();
 
-        foreach (var child in node.Children.Values)
-        {
-            NotifyInvalidationRecursive(child);
-        }
+        foreach (var child in node.Children.Values) NotifyInvalidationRecursive(child);
     }
 
-    private static HashCode GetHash(ITuple key)
-    {
-        var hash = new HashCode();
-
-        for (int i = 0; i < key.Length; i++)
-        {
-            hash.Add(key[i]);
-        }
-
-        return hash;
-    }
-
-    private sealed class CacheNode(int keyHashCode)
-    {
-        public int KeyHashCode { get; init; } = keyHashCode;
-        public Dictionary<string, CacheNode> Children { get; set; } = new();
-    }
-
-    private void WireQueryStateWithGarbageCollector<TKey, TResponse>(QueryState<TKey, TResponse> state)
+    private void WireQueryStateWithEvictionPolicy<TKey, TResponse>(QueryState<TKey, TResponse> state)
         where TKey : ITuple
     {
-        state.OnFirstSubscriberAdded += key => _gc.CancelEviction(key);
-        state.OnLastSubscriberRemoved += (key, cacheOptions) => _gc.RegisterForEviction(key, cacheOptions);
+        state.OnFirstSubscriberAdded += key => _evictionPolicy.CancelEviction(key);
+        state.OnLastSubscriberRemoved +=
+            (key, cacheOptions) => _evictionPolicy.RegisterForEviction(key, cacheOptions.GcTime);
     }
 }

@@ -1,26 +1,34 @@
 using System.Runtime.CompilerServices;
+using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Query.Execution;
 
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Query;
 
+/// <summary>
+/// Orchestrates query execution with polling, invalidation handling, and lifecycle management.
+/// </summary>
 public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly IQueryRetryPolicy _retryPolicy;
 
     private QueryState<TKey, TRes> Query { get; }
 
     private readonly CancellationTokenSource _runnerCts = new();
-    private readonly CancellationTokenSource? _queryCts = null;
+    private readonly CancellationTokenSource? _queryCts;
     private bool _isDisposed;
 
     public QueryWorker(
         IServiceProvider serviceProvider,
         QueryState<TKey, TRes> query,
-        CancellationTokenSource? cts
+        CancellationTokenSource? cts,
+        IQueryRetryPolicy? retryPolicy = null
     )
     {
         _serviceProvider = serviceProvider;
         Query = query;
         _queryCts = cts;
+        _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
 
         Query.OnInvalidated += HandleInvalidation;
         Query.IncrementObservers();
@@ -30,10 +38,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private void StartPolling()
     {
         var interval = Query.FetchOptions.RefetchInterval;
-        if (interval <= TimeSpan.Zero || _isDisposed)
-        {
-            return;
-        }
+        if (interval <= TimeSpan.Zero || _isDisposed) return;
 
         _ = Task.Run(async () =>
         {
@@ -48,7 +53,6 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private void HandleInvalidation()
     {
         if (_isDisposed) return;
-
         _ = Run();
     }
 
@@ -56,54 +60,44 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     {
         var staleTime = Query.FetchOptions.StaleTime;
         var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
-        if (elapsedTimeSinceUpdate > staleTime)
-        {
-            _ = Run();
-        }
+        if (elapsedTimeSinceUpdate > staleTime) _ = Run();
     }
 
     private async Task Run()
     {
-        if (!Query.CanFetch || Query.IsFetching)
-        {
-            return;
-        }
+        if (!Query.CanFetch || Query.IsFetching) return;
 
         var options = Query.FetchOptions;
 
         Query.Status = QueryStatus.Fetching;
         Query.NotifyChanged();
 
-        var ctx = new QueryHandlerExecutionContext<TKey>()
+        var ctx = new QueryHandlerExecutionContext<TKey>
         {
             Key = Query.Key,
             ServiceProvider = _serviceProvider,
             CancellationToken = _queryCts?.Token
         };
 
-        for (int attempt = 0; attempt <= options.Retry; attempt++)
+        try
         {
-            try
+            Query.Result = await _retryPolicy.ExecuteWithRetryAsync<TKey, TRes>(
+                () => Query.Handler(ctx),
+                options.Retry,
+                options.RetryDelay,
+                _runnerCts.Token
+            );
+            Query.SetFresh();
+        }
+        catch (Exception ex)
+        {
+            if (_runnerCts.IsCancellationRequested)
             {
-                if (attempt > 0)
-                {
-                    await Task.Delay(options.RetryDelay!(attempt - 1), _runnerCts.Token);
-                }
-
-                Query.Result = await Query.Handler(ctx);
                 Query.SetFresh();
-                break;
+                Query.Result = null;
             }
-            catch (Exception ex)
+            else
             {
-                if (_runnerCts.IsCancellationRequested)
-                {
-                    Query.SetFresh();
-                    Query.Result = null;
-                }
-
-                if (_runnerCts.IsCancellationRequested || (_queryCts?.IsCancellationRequested ?? false))
-                    break;
                 Query.Result = ex;
             }
         }
@@ -114,10 +108,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     public void Dispose()
     {
-        if (_isDisposed)
-        {
-            return;
-        }
+        if (_isDisposed) return;
 
         _runnerCts.Cancel();
         _runnerCts.Dispose();

@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Configuration.Options;
 
 public record CoreFetchOptions(
     TimeSpan RefetchInterval,
@@ -10,10 +8,10 @@ public record CoreFetchOptions(
 )
 {
     public static CoreFetchOptions Default => new(
-        RefetchInterval: TimeSpan.Zero,
-        StaleTime: TimeSpan.Zero,
-        Retry: 3,
-        RetryDelay: attempt
+        TimeSpan.Zero,
+        TimeSpan.Zero,
+        3,
+        attempt
             => TimeSpan.FromMilliseconds(Math.Min(1000 * Math.Pow(2, attempt), 30000))
     );
 };

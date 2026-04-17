@@ -5,6 +5,7 @@
 Used by RevalQuery.Blazor.
 
 Main features:
+
 - QueryClient
 - QueryResult
 - QueryOptions

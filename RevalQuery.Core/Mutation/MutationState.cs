@@ -1,9 +1,11 @@
-﻿using System;
-using System.Threading;
-using System.Threading.Tasks;
+using RevalQuery.Core.Mutation.Execution;
 
-namespace RevalQuery.Core;
+namespace RevalQuery.Core.Mutation;
 
+/// <summary>
+/// Represents the state of a mutation including data, status, and lifecycle.
+/// Supports concurrent mutations tracking.
+/// </summary>
 public sealed class MutationState<TParams, TResponse>(
     Func<MutationHandlerExecutionContext<TParams>, Task<TResponse>> handler,
     IServiceProvider serviceProvider
@@ -51,7 +53,10 @@ public sealed class MutationState<TParams, TResponse>(
         return _result;
     }
 
-    private void NotifyChanged() => OnChanged?.Invoke();
+    private void NotifyChanged()
+    {
+        OnChanged?.Invoke();
+    }
 
     public void Reset()
     {

@@ -1,17 +1,19 @@
-﻿using System;
+namespace RevalQuery.Core.Abstractions.Query;
 
-namespace RevalQuery.Core;
-
+/// <summary>
+/// Base interface for query state.
+/// Defines common lifecycle and notification events.
+/// </summary>
 public interface IQueryState
 {
-    public event Action? OnChanged;
-    public event Action? OnInvalidated;
+    event Action? OnInvalidated;
 
-    void IncrementObservers();
-    void DecrementObservers();
     void NotifyInvalidated();
 }
 
+/// <summary>
+/// Generic query state interface with data access.
+/// </summary>
 public interface IQueryState<TData> : IQueryState
 {
     TData? Data { get; }
