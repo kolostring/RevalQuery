@@ -17,6 +17,11 @@ public class QueryPluginHandlersStatelessValidation : IQueryPlugin
     {
         if (queryOptions.Handler == null) throw new InvalidOperationException("Query handler cannot be null");
 
+        if (!queryOptions.Handler.Method.IsStatic)
+            throw new InvalidOperationException(
+                $"Query handler for key {queryOptions.Key} must be a static method to ensure stateless execution. " +
+                "Instance methods or closures are not allowed.");
+
         return next(queryOptions);
     }
 }

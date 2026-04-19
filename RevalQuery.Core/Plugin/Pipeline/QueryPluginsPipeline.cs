@@ -8,13 +8,20 @@ namespace RevalQuery.Core.Plugin.Pipeline;
 /// Manages the plugin pipeline for query initialization.
 /// Uses middleware pattern for composable behavior.
 /// </summary>
-public sealed class QueryPluginsPipeline(IEnumerable<IQueryPlugin> plugins)
+public sealed class QueryPluginsPipeline(IEnumerable<IQueryPlugin>? initialPlugins = null)
 {
+    private readonly List<IQueryPlugin> _plugins = new(initialPlugins ?? []);
+
+    public void Add(IQueryPlugin plugin)
+    {
+        _plugins.Add(plugin);
+    }
+
     public QueryOptions<TKey, TRes> HandleQueryOptions<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
         Func<QueryOptions<TKey, TRes>, QueryOptions<TKey, TRes>> pipeline = (opt) => opt;
-        foreach (var plugin in plugins.Reverse())
+        foreach (var plugin in _plugins.AsEnumerable().Reverse())
         {
             var localNext = pipeline;
             pipeline = (opt) => plugin.OnQueryInitialize(opt, localNext);
