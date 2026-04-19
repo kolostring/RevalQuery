@@ -40,7 +40,6 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
 
         Query.OnInvalidated += HandleInvalidation;
-        Query.IncrementObservers();
         StartPolling();
     }
 
@@ -122,6 +121,5 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
         _isDisposed = true;
         Query.OnInvalidated -= HandleInvalidation;
-        Query.DecrementObservers();
     }
 }
