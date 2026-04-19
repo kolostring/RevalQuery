@@ -1,7 +1,11 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Caching;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Caching.Key;
+using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Configuration.Options;
+using RevalQuery.Core.Query;
 
 namespace RevalQuery.Core.Caching.Eviction;
 
@@ -9,23 +13,22 @@ namespace RevalQuery.Core.Caching.Eviction;
 /// Time-to-live based garbage collection policy for cached queries.
 /// Evicts entries after their configured cache lifetime expires.
 /// </summary>
-public sealed class TtlQueryGarbageCollector(TimeSpan? gcInterval = null) : ICacheEvictionPolicy, IAsyncDisposable
+public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) : ICacheEvictionPolicy, IAsyncDisposable
 {
     private readonly ConcurrentDictionary<int, EvictionToken> _deathRow = new();
-    private readonly TimeSpan _gcInterval = gcInterval ?? TimeSpan.FromMinutes(1);
     private CancellationTokenSource _cancellationTokenSource = new();
     private Task _collectionTask = Task.CompletedTask;
 
     public event Action<ITuple>? OnEvictionRequired;
 
-    public void RegisterForEviction(ITuple key, TimeSpan gcTime)
+    public void RegisterForEviction<TKey, TResponse>(QueryState<TKey, TResponse> queryState) where TKey : ITuple
     {
-        var hashCode = CacheKeyCalculator.GetHashCode(key);
+        var hashCode = CacheKeyCalculator.GetHashCode(queryState.Key);
         var token = new EvictionToken
         {
-            Key = key,
+            Key = queryState.Key,
             KeyHashCode = hashCode,
-            Expiry = DateTime.UtcNow.Add(gcTime)
+            Expiry = DateTime.UtcNow.Add(EnsureCacheOptions(queryState.CacheOptions).GcTime)
         };
 
         _deathRow[hashCode] = token;
@@ -49,7 +52,7 @@ public sealed class TtlQueryGarbageCollector(TimeSpan? gcInterval = null) : ICac
 
     public async Task StopAsync()
     {
-        _cancellationTokenSource.Cancel();
+        await _cancellationTokenSource.CancelAsync();
         try
         {
             await _collectionTask;
@@ -71,7 +74,7 @@ public sealed class TtlQueryGarbageCollector(TimeSpan? gcInterval = null) : ICac
         while (!ct.IsCancellationRequested)
             try
             {
-                await Task.Delay(_gcInterval, ct);
+                await Task.Delay(defaultOptions.CacheOptions.GcInterval, ct);
                 CollectExpiredEntries();
             }
             catch (OperationCanceledException)
@@ -102,5 +105,10 @@ public sealed class TtlQueryGarbageCollector(TimeSpan? gcInterval = null) : ICac
             .ToList();
 
         foreach (var hashCode in toRemove) _deathRow.TryRemove(hashCode, out _);
+    }
+
+    private CoreCacheOptions EnsureCacheOptions(CacheOptions? cacheOptions)
+    {
+        return defaultOptions.CacheOptions.Apply(cacheOptions);
     }
 }

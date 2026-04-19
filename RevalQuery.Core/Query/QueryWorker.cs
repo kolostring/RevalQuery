@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Execution;
 
 namespace RevalQuery.Core.Query;
@@ -11,6 +13,10 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IQueryRetryPolicy _retryPolicy;
+    private readonly RevalQueryOptions _revalQueryOptions;
+
+    private CoreFetchOptions EnsuredFetchOptions => _revalQueryOptions.FetchOptions.Apply(Query.FetchOptions);
+    private CoreRetryOptions EnsuredRetryOptions => _revalQueryOptions.RetryOptions.Apply(Query.RetryOptions);
 
     private QueryState<TKey, TRes> Query { get; }
 
@@ -19,6 +25,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private bool _isDisposed;
 
     public QueryWorker(
+        RevalQueryOptions revalQueryOptions,
         IServiceProvider serviceProvider,
         QueryState<TKey, TRes> query,
         CancellationTokenSource? cts,
@@ -26,6 +33,8 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     )
     {
         _serviceProvider = serviceProvider;
+        _revalQueryOptions = revalQueryOptions;
+
         Query = query;
         _queryCts = cts;
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
@@ -37,7 +46,8 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     private void StartPolling()
     {
-        var interval = Query.FetchOptions.RefetchInterval;
+        var interval = EnsuredFetchOptions.RefetchInterval;
+
         if (interval <= TimeSpan.Zero || _isDisposed) return;
 
         _ = Task.Run(async () =>
@@ -58,7 +68,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     public void RunIfStale()
     {
-        var staleTime = Query.FetchOptions.StaleTime;
+        var staleTime = EnsuredFetchOptions.StaleTime;
         var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
         if (elapsedTimeSinceUpdate > staleTime) _ = Run();
     }
@@ -66,8 +76,6 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private async Task Run()
     {
         if (!Query.CanFetch || Query.IsFetching) return;
-
-        var options = Query.FetchOptions;
 
         Query.Status = QueryStatus.Fetching;
         Query.NotifyChanged();
@@ -83,8 +91,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         {
             Query.Result = await _retryPolicy.ExecuteWithRetryAsync<TKey, TRes>(
                 () => Query.Handler(ctx),
-                options.Retry,
-                options.RetryDelay,
+                EnsuredRetryOptions,
                 _runnerCts.Token
             );
             Query.SetFresh();

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Configuration.Options;
 
 namespace RevalQuery.Core.Query.Execution;
 
@@ -10,11 +11,12 @@ public sealed class ExponentialBackoffRetryPolicy : IQueryRetryPolicy
 {
     public async Task<TResponse> ExecuteWithRetryAsync<TKey, TResponse>(
         Func<Task<TResponse>> handler,
-        int maxAttempts,
-        Func<int, TimeSpan> retryDelayCalculator,
+        CoreRetryOptions retryOptions,
         CancellationToken cancellationToken = default
     ) where TKey : ITuple
     {
+        var maxAttempts = retryOptions.Retry;
+        var retryDelayCalculator = retryOptions.RetryDelay;
         for (var attempt = 0; attempt <= maxAttempts; attempt++)
             try
             {

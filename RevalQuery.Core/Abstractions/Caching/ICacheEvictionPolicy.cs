@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Query;
 
 namespace RevalQuery.Core.Abstractions.Caching;
 
@@ -9,9 +11,9 @@ namespace RevalQuery.Core.Abstractions.Caching;
 public interface ICacheEvictionPolicy
 {
     /// <summary>
-    /// Registers a key for potential eviction.
+    /// Registers a state for potential eviction.
     /// </summary>
-    void RegisterForEviction(ITuple key, TimeSpan gcTime);
+    void RegisterForEviction<TKey, TResponse>(QueryState<TKey, TResponse> queryState) where TKey : ITuple;
 
     /// <summary>
     /// Cancels pending eviction for a key.

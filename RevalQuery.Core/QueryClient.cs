@@ -34,7 +34,7 @@ public sealed class QueryClient
     {
         _serviceProvider = serviceProvider;
         _cacheStorage = cacheStorage ?? new TrieCacheStorage();
-        _evictionPolicy = evictionPolicy ?? new TtlQueryGarbageCollector();
+        _evictionPolicy = evictionPolicy ?? new TtlQueryGarbageCollector(defaultOptions);
         _evictionPolicy.OnEvictionRequired += HandleEviction;
         _defaultOptions = defaultOptions;
     }
@@ -43,6 +43,7 @@ public sealed class QueryClient
         TKey keySegments,
         Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler,
         FetchOptions? fetchOptions,
+        RetryOptions? retryOptions,
         CacheOptions? cacheOptions
     ) where TKey : ITuple
     {
@@ -50,11 +51,7 @@ public sealed class QueryClient
         var state = _stateLookup.GetValueOrDefault(lookupKey);
         if (state != null)
         {
-            if (state is QueryState<TKey, TRes> cachedState)
-            {
-                if (cacheOptions != null) cachedState.SetCacheOptions(cacheOptions);
-                return cachedState;
-            }
+            if (state is QueryState<TKey, TRes> cachedState) return cachedState;
 
             throw new InvalidOperationException(
                 $"Key collision at {string.Join("/", keySegments)}. " +
@@ -63,13 +60,12 @@ public sealed class QueryClient
 
         _cacheStorage.GetOrCreateNode(keySegments);
 
-        var sanitizedFetchOptions = (fetchOptions ?? new FetchOptions()).PatchNullFields(_defaultOptions.FetchOptions);
-
         var newState = new QueryState<TKey, TRes>(
             keySegments,
             handler,
-            cacheOptions ?? _defaultOptions.CacheOptions,
-            sanitizedFetchOptions
+            fetchOptions,
+            retryOptions,
+            cacheOptions
         );
         _stateLookup[lookupKey] = newState;
 
@@ -113,19 +109,13 @@ public sealed class QueryClient
     {
         _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        var prerenderState = new QueryState<TKey, TRes>(
-            queryOptions.Key,
-            queryOptions.Handler,
-            _defaultOptions.CacheOptions,
-            _defaultOptions.FetchOptions
-        );
-
         var state = GetOrCreateQuery(
             queryOptions.Key,
             queryOptions.Handler,
             queryOptions.FetchOptions,
-            queryOptions.CacheOptions ?? new CacheOptions(TimeSpan.Zero)
-        ) ?? prerenderState;
+            queryOptions.RetryOptions,
+            queryOptions.CacheOptions
+        );
 
         var observer = new QueryObserver(
             state,
@@ -148,6 +138,7 @@ public sealed class QueryClient
         }
 
         var newWorker = new QueryWorker<TKey, TRes>(
+            _defaultOptions,
             _serviceProvider,
             state,
             null
@@ -155,7 +146,7 @@ public sealed class QueryClient
 
         _workerLookup[lookupKey] = newWorker;
 
-        state.OnLastSubscriberRemoved += (_, _) =>
+        state.OnLastSubscriberRemoved += (_) =>
         {
             if (_workerLookup.Remove(lookupKey, out var removedWorker)) removedWorker.Dispose();
         };
@@ -179,11 +170,11 @@ public sealed class QueryClient
         foreach (var child in node.Children.Values) NotifyInvalidationRecursive(child);
     }
 
-    private void WireQueryStateWithEvictionPolicy<TKey, TResponse>(QueryState<TKey, TResponse> state)
+    private void WireQueryStateWithEvictionPolicy<TKey, TResponse>(QueryState<TKey, TResponse> stateToWire)
         where TKey : ITuple
     {
-        state.OnFirstSubscriberAdded += key => _evictionPolicy.CancelEviction(key);
-        state.OnLastSubscriberRemoved +=
-            (key, cacheOptions) => _evictionPolicy.RegisterForEviction(key, cacheOptions.GcTime);
+        stateToWire.OnFirstSubscriberAdded += key => _evictionPolicy.CancelEviction(key);
+        stateToWire.OnLastSubscriberRemoved +=
+            state => _evictionPolicy.RegisterForEviction(state);
     }
 }

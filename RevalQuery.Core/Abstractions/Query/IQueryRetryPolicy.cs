@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using RevalQuery.Core.Configuration.Options;
 
 namespace RevalQuery.Core.Abstractions.Query;
 
@@ -13,8 +14,7 @@ public interface IQueryRetryPolicy
     /// </summary>
     Task<TResponse> ExecuteWithRetryAsync<TKey, TResponse>(
         Func<Task<TResponse>> handler,
-        int maxAttempts,
-        Func<int, TimeSpan> retryDelayCalculator,
+        CoreRetryOptions retryOptions,
         CancellationToken cancellationToken = default
     ) where TKey : ITuple;
 }

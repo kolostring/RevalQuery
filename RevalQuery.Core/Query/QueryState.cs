@@ -18,8 +18,9 @@ public enum QueryStatus
 public sealed class QueryState<TKey, TResponse>(
     TKey key,
     Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> handler,
-    CacheOptions cacheOptions,
-    CoreFetchOptions fetchOptions
+    FetchOptions? fetchOptions,
+    RetryOptions? retryOptions,
+    CacheOptions? cacheOptions
 )
     : IQueryState<TResponse>, IObservableQueryState where TKey : ITuple
 {
@@ -27,15 +28,16 @@ public sealed class QueryState<TKey, TResponse>(
     public QueryResult<TResponse>? Result { get; set; }
     public QueryStatus Status { get; set; } = QueryStatus.Idle;
     public Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> Handler { get; } = handler;
-    public CoreFetchOptions FetchOptions { get; } = fetchOptions;
+    public FetchOptions? FetchOptions { get; set; } = fetchOptions;
+    public RetryOptions? RetryOptions { get; set; } = retryOptions;
+    public CacheOptions? CacheOptions { get; set; } = cacheOptions;
 
     private int _observersCount;
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
-    private CacheOptions _cacheOptions = cacheOptions;
 
     public event Action? OnChanged;
     public event Action? OnInvalidated;
-    public event Action<TKey, CacheOptions>? OnLastSubscriberRemoved;
+    public event Action<QueryState<TKey, TResponse>>? OnLastSubscriberRemoved;
     public event Action<TKey>? OnFirstSubscriberAdded;
 
     public TResponse? Data => Result is QueryResult<TResponse>.Success s ? s.Value : default;
@@ -47,11 +49,6 @@ public sealed class QueryState<TKey, TResponse>(
         Status = QueryStatus.Idle;
         _lastUpdatedAt = DateTimeOffset.UtcNow;
         NotifyChanged();
-    }
-
-    public void SetCacheOptions(CacheOptions cacheOptions)
-    {
-        if (cacheOptions.GcTime > _cacheOptions.GcTime) _cacheOptions = cacheOptions;
     }
 
     public bool IsIdle => Status == QueryStatus.Idle;
@@ -95,7 +92,7 @@ public sealed class QueryState<TKey, TResponse>(
     public void DecrementObservers()
     {
         _observersCount--;
-        if (_observersCount == 0) OnLastSubscriberRemoved?.Invoke(Key, _cacheOptions);
+        if (_observersCount == 0) OnLastSubscriberRemoved?.Invoke(this);
 
         if (_observersCount < 0)
             throw new InvalidOperationException(

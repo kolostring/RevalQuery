@@ -8,13 +8,14 @@ public sealed record QueryOptions<TKey, TRes>(
     TKey Key,
     Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> Handler,
     FetchOptions? FetchOptions = null,
+    RetryOptions? RetryOptions = null,
     CacheOptions? CacheOptions = null
 ) where TKey : ITuple;
 
 public abstract class QueryOptions
 {
     public static QueryOptionsBuilder<TKey, TRes> Create<TKey, TRes>(TKey key,
-        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler) where TKey : ITuple => new(key, handler);
+        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler) where TKey : ITuple => new QueryOptionsBuilder<TKey, TRes>(key, handler);
 }
 
 public sealed class QueryOptionsBuilder<TKey, TRes>(
@@ -24,7 +25,8 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
 {
     private bool _enabled = true;
     private FetchOptions _fetchOptions = new();
-    private CacheOptions? _cacheOptions;
+    private RetryOptions _retryOptions = new();
+    private CacheOptions _cacheOptions = new();
 
     public QueryOptionsBuilder<TKey, TRes> Enabled(bool enabled)
     {
@@ -40,19 +42,32 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
         return this;
     }
 
-    public QueryOptionsBuilder<TKey, TRes> CacheOptions(CacheOptions cacheOptions)
+    public QueryOptionsBuilder<TKey, TRes> ConfigureRetry(Action<RetryOptionsBuilder> configure)
     {
-        _cacheOptions = cacheOptions;
+        var builder = new RetryOptionsBuilder(_retryOptions);
+        configure(builder);
+        _retryOptions = builder.Build();
         return this;
     }
 
-    public QueryOptions<TKey, TRes> Build() => new(
-        key,
-        handler,
-        _fetchOptions,
-        _cacheOptions
-    );
+    public QueryOptionsBuilder<TKey, TRes> ConfigureCache(Action<CacheOptionsBuilder> configure)
+    {
+        var builder = new CacheOptionsBuilder(_cacheOptions);
+        configure(builder);
+        _cacheOptions = builder.Build();
+        return this;
+    }
 
-    public static implicit operator QueryOptions<TKey, TRes>(QueryOptionsBuilder<TKey, TRes> builder)
-        => builder.Build();
+    public QueryOptions<TKey, TRes> Build()
+    {
+        return new QueryOptions<TKey, TRes>(
+            key,
+            handler,
+            _fetchOptions,
+            _retryOptions,
+            _cacheOptions
+        );
+    }
+
+    public static implicit operator QueryOptions<TKey, TRes>(QueryOptionsBuilder<TKey, TRes> builder) => builder.Build();
 }

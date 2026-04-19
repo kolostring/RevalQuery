@@ -11,6 +11,7 @@ public class RevalQueryOptions
 {
     public QueryPluginsPipeline QueryPluginsPipeline { get; set; } = new([]);
 
-    public CacheOptions CacheOptions { get; set; } = CacheOptions.Default;
+    public CoreCacheOptions CacheOptions { get; set; } = CoreCacheOptions.Default;
     public CoreFetchOptions FetchOptions { get; set; } = CoreFetchOptions.Default;
+    public CoreRetryOptions RetryOptions { get; set; } = CoreRetryOptions.Default;
 }
