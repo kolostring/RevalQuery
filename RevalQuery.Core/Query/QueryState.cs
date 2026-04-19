@@ -37,6 +37,7 @@ public sealed class QueryState<TKey, TResponse>(
 
     public event Action? OnChanged;
     public event Action? OnInvalidated;
+    public event Action? OnCancelRequested;
     public event Action<QueryState<TKey, TResponse>>? OnLastSubscriberRemoved;
     public event Action<TKey>? OnFirstSubscriberAdded;
 
@@ -80,6 +81,11 @@ public sealed class QueryState<TKey, TResponse>(
     {
         _lastUpdatedAt = DateTimeOffset.MinValue;
         OnInvalidated?.Invoke();
+    }
+
+    public void Cancel()
+    {
+        OnCancelRequested?.Invoke();
     }
 
     public void IncrementObservers()

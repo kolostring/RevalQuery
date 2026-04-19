@@ -18,7 +18,10 @@ public interface IQueryState
     DateTimeOffset LastUpdatedAt { get; }
 
     event Action? OnInvalidated;
+    event Action? OnCancelRequested;
+
     void NotifyInvalidated();
+    void Cancel();
 }
 
 /// <summary>

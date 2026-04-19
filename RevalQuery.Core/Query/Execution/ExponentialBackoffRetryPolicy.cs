@@ -17,12 +17,16 @@ public sealed class ExponentialBackoffRetryPolicy : IQueryRetryPolicy
     {
         var maxAttempts = retryOptions.Retry;
         var retryDelayCalculator = retryOptions.RetryDelay;
-        for (var attempt = 0; attempt <= maxAttempts; attempt++)
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
             try
             {
-                if (attempt <= 0) return await handler();
-                var delay = retryDelayCalculator(attempt - 1);
-                await Task.Delay(delay, cancellationToken);
+                if (attempt > 1)
+                {
+                    var delay = retryDelayCalculator(attempt - 1);
+                    await Task.Delay(delay, cancellationToken);
+                }
 
                 return await handler();
             }
@@ -30,8 +34,9 @@ public sealed class ExponentialBackoffRetryPolicy : IQueryRetryPolicy
             {
                 // Continue to next attempt
             }
+        }
 
-        // Should never reach here, but for completeness
-        return await handler();
+        // Final attempt failed, exception propagates from last handler call inside the loop
+        throw new InvalidOperationException("Retry policy failed to return result.");
     }
 }

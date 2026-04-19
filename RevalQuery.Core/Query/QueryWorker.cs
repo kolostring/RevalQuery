@@ -21,7 +21,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private QueryState<TKey, TRes> Query { get; }
 
     private readonly CancellationTokenSource _runnerCts = new();
-    private readonly CancellationTokenSource? _queryCts;
+    private CancellationTokenSource? _currentFetchCts;
     private bool _isDisposed;
 
     public QueryWorker(
@@ -36,11 +36,16 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         _revalQueryOptions = revalQueryOptions;
 
         Query = query;
-        _queryCts = cts;
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
 
         Query.OnInvalidated += HandleInvalidation;
+        Query.OnCancelRequested += CancelCurrentFetch;
         StartPolling();
+    }
+
+    private void CancelCurrentFetch()
+    {
+        _currentFetchCts?.Cancel();
     }
 
     private void StartPolling()
@@ -79,11 +84,14 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         Query.Status = QueryStatus.Fetching;
         Query.NotifyChanged();
 
+        _currentFetchCts = new CancellationTokenSource();
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_runnerCts.Token, _currentFetchCts.Token);
+
         var ctx = new QueryHandlerExecutionContext<TKey>
         {
             Key = Query.Key,
             ServiceProvider = _serviceProvider,
-            CancellationToken = _queryCts?.Token
+            CancellationToken = linkedCts.Token
         };
 
         try
@@ -91,21 +99,22 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             Query.Result = await _retryPolicy.ExecuteWithRetryAsync<TKey, TRes>(
                 () => Query.Handler(ctx),
                 EnsuredRetryOptions,
-                _runnerCts.Token
+                linkedCts.Token
             );
             Query.SetFresh();
         }
+        catch (OperationCanceledException)
+        {
+            // Reset to idle, keep previous result if any
+        }
         catch (Exception ex)
         {
-            if (_runnerCts.IsCancellationRequested)
-            {
-                Query.SetFresh();
-                Query.Result = null;
-            }
-            else
-            {
-                Query.Result = ex;
-            }
+            Query.Result = ex;
+        }
+        finally
+        {
+            _currentFetchCts.Dispose();
+            _currentFetchCts = null;
         }
 
         Query.Status = QueryStatus.Idle;
@@ -116,6 +125,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     {
         if (_isDisposed) return;
 
+        Query.OnCancelRequested -= CancelCurrentFetch;
         _runnerCts.Cancel();
         _runnerCts.Dispose();
 
