@@ -83,7 +83,7 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
             }
     }
 
-    private void CollectExpiredEntries()
+    public void CollectExpiredEntries()
     {
         var now = DateTime.UtcNow;
         var expired = _deathRow
