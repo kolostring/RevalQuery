@@ -5,9 +5,7 @@ using RevalQuery.Core.Caching.Eviction;
 using RevalQuery.Core.Caching.Key;
 using RevalQuery.Core.Caching.Storage;
 using RevalQuery.Core.Configuration;
-using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query;
-using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Core;
@@ -40,13 +38,15 @@ public sealed class QueryClient
     }
 
     public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
-        TKey keySegments,
-        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler,
-        FetchOptions? fetchOptions,
-        RetryOptions? retryOptions,
-        CacheOptions? cacheOptions
+        QueryOptions<TKey, TRes> queryOptions
     ) where TKey : ITuple
     {
+        var keySegments = queryOptions.Key;
+        var handler = queryOptions.Handler;
+        var fetchOptions = queryOptions.FetchOptions;
+        var retryOptions = queryOptions.RetryOptions;
+        var cacheOptions = queryOptions.CacheOptions;
+
         var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
         var state = _stateLookup.GetValueOrDefault(lookupKey);
         if (state != null)
@@ -80,17 +80,22 @@ public sealed class QueryClient
         if (node != null) NotifyInvalidationRecursive(node);
     }
 
-    public void Invalidate(string key)
+    public void Invalidate(string key) => Invalidate(ValueTuple.Create(key));
+
+    public void Cancel(ITuple keySegments)
     {
-        var node = _cacheStorage.PeekNode(key);
-        if (node != null) NotifyInvalidationRecursive(node);
+        FindQuery(keySegments)?.Cancel();
     }
+
+    public void Cancel(string key) => Cancel(ValueTuple.Create(key));
 
     public IQueryState? FindQuery(ITuple keySegments)
     {
         var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
         return _stateLookup.GetValueOrDefault(lookupKey);
     }
+
+    public IQueryState? FindQuery(string key) => FindQuery(ValueTuple.Create(key));
 
     public ICollection<IQueryState> FindQueries(ITuple keySegments)
     {
@@ -104,17 +109,15 @@ public sealed class QueryClient
             .ToList();
     }
 
+    public ICollection<IQueryState> FindQueries(string key) => FindQueries(ValueTuple.Create(key));
+
     public QueryObserver<TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
         where TKey : ITuple
     {
         _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
         var state = GetOrCreateQuery(
-            queryOptions.Key,
-            queryOptions.Handler,
-            queryOptions.FetchOptions,
-            queryOptions.RetryOptions,
-            queryOptions.CacheOptions
+            queryOptions
         );
 
         var observer = new QueryObserver<TRes>(

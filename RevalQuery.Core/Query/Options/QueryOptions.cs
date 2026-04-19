@@ -9,13 +9,17 @@ public sealed record QueryOptions<TKey, TRes>(
     Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> Handler,
     FetchOptions? FetchOptions = null,
     RetryOptions? RetryOptions = null,
-    CacheOptions? CacheOptions = null
+    CacheOptions? CacheOptions = null,
+    bool Enabled = true
 ) where TKey : ITuple;
 
 public abstract class QueryOptions
 {
     public static QueryOptionsBuilder<TKey, TRes> Create<TKey, TRes>(TKey key,
-        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler) where TKey : ITuple => new QueryOptionsBuilder<TKey, TRes>(key, handler);
+        Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler) where TKey : ITuple => new(key, handler);
+
+    public static QueryOptionsBuilder<ValueTuple<string>, TRes> Create<TRes>(string key,
+        Func<QueryHandlerExecutionContext<ValueTuple<string>>, Task<TRes>> handler) => new(ValueTuple.Create(key), handler);
 }
 
 public sealed class QueryOptionsBuilder<TKey, TRes>(
@@ -23,16 +27,10 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
     Func<QueryHandlerExecutionContext<TKey>, Task<TRes>> handler)
     where TKey : ITuple
 {
-    private bool _enabled = true;
     private FetchOptions _fetchOptions = new();
     private RetryOptions _retryOptions = new();
     private CacheOptions _cacheOptions = new();
-
-    public QueryOptionsBuilder<TKey, TRes> Enabled(bool enabled)
-    {
-        _enabled = enabled;
-        return this;
-    }
+    private bool _enabled = true;
 
     public QueryOptionsBuilder<TKey, TRes> ConfigureFetch(Action<FetchOptionsBuilder> configure)
     {
@@ -58,6 +56,12 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
         return this;
     }
 
+    public QueryOptionsBuilder<TKey, TRes> Enabled(bool enabled)
+    {
+        _enabled = enabled;
+        return this;
+    }
+
     public QueryOptions<TKey, TRes> Build()
     {
         return new QueryOptions<TKey, TRes>(
@@ -65,7 +69,8 @@ public sealed class QueryOptionsBuilder<TKey, TRes>(
             handler,
             _fetchOptions,
             _retryOptions,
-            _cacheOptions
+            _cacheOptions,
+            _enabled
         );
     }
 
