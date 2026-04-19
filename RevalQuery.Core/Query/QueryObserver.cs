@@ -2,12 +2,12 @@ using RevalQuery.Core.Abstractions.Query;
 
 namespace RevalQuery.Core.Query;
 
-public class QueryObserver : IDisposable
+public sealed class QueryObserver<TRes> : IDisposable
 {
-    public IObservableQueryState Query { get; }
+    public IQueryState<TRes> Query { get; }
     private readonly Action _onStateHasChanged;
 
-    public QueryObserver(IObservableQueryState query, Action onStateHasChanged)
+    public QueryObserver(IQueryState<TRes> query, Action onStateHasChanged)
     {
         Query = query;
         _onStateHasChanged = onStateHasChanged;

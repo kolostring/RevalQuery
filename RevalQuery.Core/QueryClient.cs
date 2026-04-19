@@ -104,7 +104,7 @@ public sealed class QueryClient
             .ToList();
     }
 
-    public QueryObserver Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
+    public QueryObserver<TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
         where TKey : ITuple
     {
         _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
@@ -117,7 +117,7 @@ public sealed class QueryClient
             queryOptions.CacheOptions
         );
 
-        var observer = new QueryObserver(
+        var observer = new QueryObserver<TRes>(
             state,
             onStateHasChanged
         );

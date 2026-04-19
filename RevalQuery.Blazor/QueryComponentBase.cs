@@ -13,8 +13,8 @@ namespace RevalQuery.Blazor;
 
 public abstract class QueryComponentBase : ComponentBase, IDisposable
 {
-    [Inject] [NotNull] protected QueryClient? Client { get; set; }
-    [Inject] [NotNull] protected IServiceProvider? ServiceProvider { get; set; }
+    [Inject][NotNull] protected QueryClient? Client { get; set; }
+    [Inject][NotNull] protected IServiceProvider? ServiceProvider { get; set; }
 
     private readonly Dictionary<string, IDisposable> _observerSlots = new();
     private bool _isDisposed;
@@ -42,7 +42,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
         if (_observerSlots.TryGetValue(slotId, out var existing))
         {
-            var obs = (QueryObserver)existing;
+            var obs = (QueryObserver<TRes>)existing;
             var query = (QueryState<TKey, TRes>)obs.Query;
 
             if (query.Key.Equals(queryOptions.Key))
@@ -57,7 +57,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
         _observerSlots[slotId] = observer;
 
-        return (IQueryState<TRes>)observer.Query;
+        return observer.Query;
     }
 
     protected MutationState<TParams, TRes> UseMutation<TParams, TRes>(
