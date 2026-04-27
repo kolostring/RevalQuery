@@ -122,7 +122,8 @@ public sealed class QueryClient
 
         var observer = new QueryObserver<TRes>(
             state,
-            onStateHasChanged
+            onStateHasChanged,
+            queryOptions.Enabled
         );
 
         EnsureWorkerIsRunning(state);

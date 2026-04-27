@@ -7,14 +7,17 @@ namespace RevalQuery.Core.Query;
 
 public enum QueryStatus
 {
+    Pending,
+    Resolved,
+    Exception
+}
+
+public enum FetchStatus
+{
     Idle,
     Fetching
 }
 
-/// <summary>
-/// Represents the state of a query including data, status, and lifecycle.
-/// Thread-safe with immutable initialization.
-/// </summary>
 public sealed class QueryState<TKey, TResponse>(
     TKey key,
     Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> handler,
@@ -22,17 +25,18 @@ public sealed class QueryState<TKey, TResponse>(
     RetryOptions? retryOptions,
     CacheOptions? cacheOptions
 )
-    : IQueryState<TResponse>, IObservableQueryState where TKey : ITuple
+    : IQueryState<TResponse> where TKey : ITuple
 {
     public TKey Key { get; } = key;
     public QueryResult<TResponse>? Result { get; set; }
-    public QueryStatus Status { get; set; } = QueryStatus.Idle;
+    public QueryStatus Status { get; set; } = QueryStatus.Pending;
+    public FetchStatus FetchStatus { get; set; } = FetchStatus.Idle;
     public Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> Handler { get; } = handler;
     public FetchOptions? FetchOptions { get; set; } = fetchOptions;
     public RetryOptions? RetryOptions { get; set; } = retryOptions;
     public CacheOptions? CacheOptions { get; set; } = cacheOptions;
 
-    private int _observersCount;
+    private readonly List<IQueryObserver> _observers = [];
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
 
     public event Action? OnChanged;
@@ -47,18 +51,26 @@ public sealed class QueryState<TKey, TResponse>(
     public void SetData(TResponse data)
     {
         Result = new QueryResult<TResponse>.Success(data);
-        Status = QueryStatus.Idle;
+        Status = QueryStatus.Resolved;
         _lastUpdatedAt = DateTimeOffset.UtcNow;
         NotifyChanged();
     }
 
-    public bool IsIdle => Status == QueryStatus.Idle;
-    public bool IsFetching => Status == QueryStatus.Fetching;
-    public bool IsPending => Result == null;
+    public void SetError(Exception error)
+    {
+        Result = new QueryResult<TResponse>.Failure(error);
+        Status = QueryStatus.Exception;
+        NotifyChanged();
+    }
+
+    public bool IsPending => Status == QueryStatus.Pending;
+    public bool IsException => Status == QueryStatus.Exception;
+    public bool IsResolved => Status == QueryStatus.Resolved;
+    public bool IsFetching => FetchStatus == FetchStatus.Fetching;
+    public bool IsIdle => FetchStatus == FetchStatus.Idle;
     public bool IsLoading => IsFetching && IsPending;
-    public bool IsException => IsIdle && Result is QueryResult<TResponse>.Failure;
-    public bool IsResolved => IsIdle && Result is QueryResult<TResponse>.Success;
-    public bool CanFetch => IsIdle && _observersCount > 0;
+    public bool IsEnabled => _observers.Count > 0 && _observers.Any(o => o.Enabled);
+    public bool CanFetch => FetchStatus == FetchStatus.Idle && IsEnabled;
 
     public DateTimeOffset LastUpdatedAt => _lastUpdatedAt;
 
@@ -88,20 +100,17 @@ public sealed class QueryState<TKey, TResponse>(
         OnCancelRequested?.Invoke();
     }
 
-    public void IncrementObservers()
+    public void Subscribe(IQueryObserver observer)
     {
-        if (_observersCount == 0) OnFirstSubscriberAdded?.Invoke(Key);
+        if (_observers.Count == 0) OnFirstSubscriberAdded?.Invoke(Key);
+        _observers.Add(observer);
 
-        _observersCount++;
     }
 
-    public void DecrementObservers()
+    public void Unsubscribe(IQueryObserver observer)
     {
-        _observersCount--;
-        if (_observersCount == 0) OnLastSubscriberRemoved?.Invoke(this);
+        _observers.Remove(observer);
 
-        if (_observersCount < 0)
-            throw new InvalidOperationException(
-                $"Query state with key {Key} has invalid observer count: {_observersCount}.");
+        if (_observers.Count == 0) OnLastSubscriberRemoved?.Invoke(this);
     }
 }

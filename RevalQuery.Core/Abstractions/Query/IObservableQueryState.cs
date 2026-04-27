@@ -3,6 +3,6 @@
 public interface IObservableQueryState
 {
     event Action? OnChanged;
-    void IncrementObservers();
-    void DecrementObservers();
+    void Subscribe(IQueryObserver observer);
+    void Unsubscribe(IQueryObserver observer);
 }

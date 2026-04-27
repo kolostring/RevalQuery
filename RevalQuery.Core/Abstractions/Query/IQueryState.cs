@@ -9,6 +9,7 @@ public interface IQueryState
 
     bool IsIdle { get; }
     bool IsFetching { get; }
+    bool IsEnabled { get; }
     bool IsLoading { get; }
     bool IsPending { get; }
     bool IsException { get; }

@@ -81,7 +81,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     {
         if (!Query.CanFetch || Query.IsFetching) return;
 
-        Query.Status = QueryStatus.Fetching;
+        Query.FetchStatus = FetchStatus.Fetching;
         Query.NotifyChanged();
 
         _currentFetchCts = new CancellationTokenSource();
@@ -102,6 +102,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
                 linkedCts.Token
             );
             Query.SetFresh();
+            Query.Status = QueryStatus.Resolved;
         }
         catch (OperationCanceledException)
         {
@@ -110,6 +111,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         catch (Exception ex)
         {
             Query.Result = ex;
+            Query.Status = QueryStatus.Exception;
         }
         finally
         {
@@ -117,7 +119,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             _currentFetchCts = null;
         }
 
-        Query.Status = QueryStatus.Idle;
+        Query.FetchStatus = FetchStatus.Idle;
         Query.NotifyChanged();
     }
 
