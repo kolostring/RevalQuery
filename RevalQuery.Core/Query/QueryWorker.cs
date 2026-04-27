@@ -96,7 +96,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
         try
         {
-            Query.Result = await _retryPolicy.ExecuteWithRetryAsync<TKey, TRes>(
+            Query.Data = await _retryPolicy.ExecuteWithRetryAsync<TKey, TRes>(
                 () => Query.Handler(ctx),
                 EnsuredRetryOptions,
                 linkedCts.Token
@@ -110,7 +110,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         }
         catch (Exception ex)
         {
-            Query.Result = ex;
+            Query.Exception = ex;
             Query.Status = QueryStatus.Exception;
         }
         finally

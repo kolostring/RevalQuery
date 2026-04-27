@@ -28,7 +28,8 @@ public sealed class QueryState<TKey, TResponse>(
     : IQueryState<TResponse> where TKey : ITuple
 {
     public TKey Key { get; } = key;
-    public QueryResult<TResponse>? Result { get; set; }
+    public TResponse? Data { get; set; }
+    public Exception? Exception { get; set; }
     public QueryStatus Status { get; set; } = QueryStatus.Pending;
     public FetchStatus FetchStatus { get; set; } = FetchStatus.Idle;
     public Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> Handler { get; } = handler;
@@ -44,24 +45,6 @@ public sealed class QueryState<TKey, TResponse>(
     public event Action? OnCancelRequested;
     public event Action<QueryState<TKey, TResponse>>? OnLastSubscriberRemoved;
     public event Action<TKey>? OnFirstSubscriberAdded;
-
-    public TResponse? Data => Result is QueryResult<TResponse>.Success s ? s.Value : default;
-    public Exception? Error => Result is QueryResult<TResponse>.Failure f ? f.Exception : null;
-
-    public void SetData(TResponse data)
-    {
-        Result = new QueryResult<TResponse>.Success(data);
-        Status = QueryStatus.Resolved;
-        _lastUpdatedAt = DateTimeOffset.UtcNow;
-        NotifyChanged();
-    }
-
-    public void SetError(Exception error)
-    {
-        Result = new QueryResult<TResponse>.Failure(error);
-        Status = QueryStatus.Exception;
-        NotifyChanged();
-    }
 
     public bool IsPending => Status == QueryStatus.Pending;
     public bool IsException => Status == QueryStatus.Exception;

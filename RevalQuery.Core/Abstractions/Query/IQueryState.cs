@@ -30,8 +30,6 @@ public interface IQueryState
 /// </summary>
 public interface IQueryState<TData> : IQueryState, IObservableQueryState
 {
-    TData? Data { get; }
-    Exception? Error { get; }
-
-    void SetData(TData data);
+    TData? Data { get; set; }
+    Exception? Exception { get; set; }
 }
