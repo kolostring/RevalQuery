@@ -1,4 +1,7 @@
+using RevalQuery.Core.Abstractions;
+using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Mutation.Execution;
+using RevalQuery.Core.Query.Execution;
 
 namespace RevalQuery.Core.Mutation;
 
@@ -8,9 +11,13 @@ namespace RevalQuery.Core.Mutation;
 /// </summary>
 public sealed class MutationState<TParams, TResponse>(
     Func<MutationHandlerExecutionContext<TParams>, Task<TResponse>> handler,
-    IServiceProvider serviceProvider
+    IServiceProvider serviceProvider,
+    RetryOptions? retryOptions = null
 )
 {
+    private readonly IRetryPolicy _retryPolicy = new ExponentialBackoffRetryPolicy();
+    private readonly CoreRetryOptions _retryOpts = CoreRetryOptions.Default.Apply(retryOptions);
+
     private QueryResult<TResponse>? _result;
     private int _runningMutationsQuantity = 0;
 
@@ -38,7 +45,15 @@ public sealed class MutationState<TParams, TResponse>(
                 CancellationToken = ct
             };
 
-            _result = await handler(ctx);
+            _result = await _retryPolicy.ExecuteWithRetryAsync(
+                () => handler(ctx),
+                _retryOpts,
+                ct
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            _result = QueryResult.Success<TResponse>(default!);
         }
         catch (Exception ex)
         {

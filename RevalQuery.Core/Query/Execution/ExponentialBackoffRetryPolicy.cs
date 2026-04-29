@@ -1,5 +1,4 @@
-using System.Runtime.CompilerServices;
-using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Abstractions;
 using RevalQuery.Core.Configuration.Options;
 
 namespace RevalQuery.Core.Query.Execution;
@@ -7,13 +6,13 @@ namespace RevalQuery.Core.Query.Execution;
 /// <summary>
 /// Default retry policy with exponential backoff strategy.
 /// </summary>
-public sealed class ExponentialBackoffRetryPolicy : IQueryRetryPolicy
+public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
 {
-    public async Task<TResponse> ExecuteWithRetryAsync<TKey, TResponse>(
+    public async Task<TResponse> ExecuteWithRetryAsync<TResponse>(
         Func<Task<TResponse>> handler,
         CoreRetryOptions retryOptions,
         CancellationToken cancellationToken = default
-    ) where TKey : ITuple
+    )
     {
         var maxAttempts = retryOptions.Retry;
         var retryDelayCalculator = retryOptions.RetryDelay;
@@ -36,7 +35,6 @@ public sealed class ExponentialBackoffRetryPolicy : IQueryRetryPolicy
             }
         }
 
-        // Final attempt failed, exception propagates from last handler call inside the loop
         throw new InvalidOperationException("Retry policy failed to return result.");
     }
 }

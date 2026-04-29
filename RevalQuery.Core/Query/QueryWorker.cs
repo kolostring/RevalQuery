@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Abstractions;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Execution;
@@ -12,7 +12,7 @@ namespace RevalQuery.Core.Query;
 public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly IQueryRetryPolicy _retryPolicy;
+    private readonly IRetryPolicy _retryPolicy;
     private readonly RevalQueryOptions _revalQueryOptions;
 
     private CoreFetchOptions EnsuredFetchOptions => _revalQueryOptions.FetchOptions.Apply(Query.FetchOptions);
@@ -29,7 +29,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         IServiceProvider serviceProvider,
         QueryState<TKey, TRes> query,
         CancellationTokenSource? cts,
-        IQueryRetryPolicy? retryPolicy = null
+        IRetryPolicy? retryPolicy = null
     )
     {
         _serviceProvider = serviceProvider;
@@ -96,7 +96,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
         try
         {
-            Query.Data = await _retryPolicy.ExecuteWithRetryAsync<TKey, TRes>(
+            Query.Data = await _retryPolicy.ExecuteWithRetryAsync<TRes>(
                 () => Query.Handler(ctx),
                 EnsuredRetryOptions,
                 linkedCts.Token
