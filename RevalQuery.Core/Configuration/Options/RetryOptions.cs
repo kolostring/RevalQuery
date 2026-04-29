@@ -5,11 +5,12 @@ public sealed record CoreRetryOptions(
     Func<int, TimeSpan> RetryDelay
 )
 {
-    public static CoreRetryOptions Default => new(
-        3,
-        attempt
-            => TimeSpan.FromMilliseconds(Math.Min(1000 * Math.Pow(2, attempt), 30000))
-    );
+    private static Func<int, TimeSpan> DefaultDelayCalculator => attempt
+        => TimeSpan.FromMilliseconds(Math.Min(1000 * Math.Pow(2, attempt), 30000));
+
+    public static CoreRetryOptions QueryDefault => new(3, DefaultDelayCalculator);
+
+    public static CoreRetryOptions MutationDefault => new(1, DefaultDelayCalculator);
 
     public CoreRetryOptions Apply(RetryOptions? options)
     {

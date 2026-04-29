@@ -13,5 +13,5 @@ public class RevalQueryOptions
 
     public CoreCacheOptions CacheOptions { get; set; } = CoreCacheOptions.Default;
     public CoreFetchOptions FetchOptions { get; set; } = CoreFetchOptions.Default;
-    public CoreRetryOptions RetryOptions { get; set; } = CoreRetryOptions.Default;
+    public CoreRetryOptions RetryOptions { get; set; } = CoreRetryOptions.QueryDefault;
 }

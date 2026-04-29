@@ -16,7 +16,7 @@ public sealed class MutationState<TParams, TResponse>(
 )
 {
     private readonly IRetryPolicy _retryPolicy = new ExponentialBackoffRetryPolicy();
-    private readonly CoreRetryOptions _retryOpts = CoreRetryOptions.Default.Apply(retryOptions);
+    private readonly CoreRetryOptions _retryOpts = CoreRetryOptions.MutationDefault.Apply(retryOptions);
 
     private QueryResult<TResponse>? _result;
     private int _runningMutationsQuantity = 0;
