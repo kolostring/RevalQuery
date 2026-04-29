@@ -1,6 +1,6 @@
 namespace RevalQuery.Core.Mutation;
 
-public class MutationObserver<TParams, TRes> : IDisposable
+public class MutationObserver<TParams, TRes> : IDisposable where TParams : class
 {
     public MutationState<TParams, TRes> State { get; }
     private readonly Action _onStateHasChanged;

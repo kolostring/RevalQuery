@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Components;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Mutation;
-using RevalQuery.Core.Mutation.Execution;
+using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
@@ -61,9 +61,10 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
     }
 
     protected MutationState<TParams, TRes> UseMutation<TParams, TRes>(
-        Func<MutationHandlerExecutionContext<TParams>, Task<TRes>> handler,
-        [CallerLineNumber] int line = 0,
-        [CallerMemberName] string member = "")
+            MutationOptions<TParams, TRes> options,
+            [CallerLineNumber] int line = 0,
+            [CallerMemberName] string member = ""
+        ) where TParams : class
     {
         var slotId = $"mutation_{member}_{line}";
 
@@ -73,7 +74,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
             return obs.State;
         }
 
-        var state = new MutationState<TParams, TRes>(handler, ServiceProvider);
+        var state = new MutationState<TParams, TRes>(options, ServiceProvider);
 
         var observer = new MutationObserver<TParams, TRes>(
             state,
