@@ -5,6 +5,14 @@ using RevalQuery.Core.Query.Execution;
 
 namespace RevalQuery.Core.Mutation;
 
+public enum MutationStatus
+{
+    Idle,
+    Fetching,
+    Resolved,
+    Exception
+}
+
 /// <summary>
 /// Represents the state of a mutation including data, status, and lifecycle.
 /// Supports concurrent mutations tracking.
@@ -18,22 +26,29 @@ public sealed class MutationState<TParams, TResponse>(
     private readonly IRetryPolicy _retryPolicy = new ExponentialBackoffRetryPolicy();
     private readonly CoreRetryOptions _retryOpts = CoreRetryOptions.MutationDefault.Apply(retryOptions);
 
-    private QueryResult<TResponse>? _result;
-    private int _runningMutationsQuantity = 0;
+    public TResponse? Data { get; private set; }
+    public Exception? Exception { get; private set; }
+    public MutationStatus Status { get; private set; } = MutationStatus.Idle;
+    public int RunningMutationsQuantity { get; private set; }
 
     public event Action? OnChanged;
 
-    public TResponse? Data => _result is QueryResult<TResponse>.Success s ? s.Value : default;
-    public Exception? Error => _result is QueryResult<TResponse>.Failure f ? f.Exception : null;
+    public bool IsIdle => Status == MutationStatus.Idle;
+    public bool IsFetching => Status == MutationStatus.Fetching;
+    public bool IsResolved => Status == MutationStatus.Resolved;
+    public bool IsException => Status == MutationStatus.Exception;
 
-    public bool IsIdle => _runningMutationsQuantity == 0;
-    public bool IsFetching => _runningMutationsQuantity > 0;
-    public bool IsError => IsIdle && _result is QueryResult<TResponse>.Failure;
-    public bool IsSuccess => IsIdle && _result is QueryResult<TResponse>.Success;
-
-    public async Task<QueryResult<TResponse>> ExecuteAsync(TParams variables, CancellationToken ct = default)
+    public async Task ExecuteAsync(TParams variables, CancellationToken ct = default)
     {
-        _runningMutationsQuantity++;
+        var wasIdle = RunningMutationsQuantity == 0;
+        if (wasIdle)
+        {
+            Data = default;
+            Exception = null;
+            Status = MutationStatus.Fetching;
+        }
+        
+        RunningMutationsQuantity++;
         NotifyChanged();
 
         try
@@ -45,7 +60,7 @@ public sealed class MutationState<TParams, TResponse>(
                 CancellationToken = ct
             };
 
-            _result = await _retryPolicy.ExecuteWithRetryAsync(
+            Data = await _retryPolicy.ExecuteWithRetryAsync(
                 () => handler(ctx),
                 _retryOpts,
                 ct
@@ -53,29 +68,34 @@ public sealed class MutationState<TParams, TResponse>(
         }
         catch (OperationCanceledException)
         {
-            _result = QueryResult.Success<TResponse>(default!);
+            // Keep previous status/data if canceled
         }
         catch (Exception ex)
         {
-            _result = ex;
+            Exception = ex;
         }
         finally
         {
-            _runningMutationsQuantity--;
+            var wasOnlyOne = RunningMutationsQuantity == 1;
+            RunningMutationsQuantity--;
+            
+            if (wasOnlyOne)
+            {
+                Status = Exception is null 
+                    ? MutationStatus.Resolved 
+                    : MutationStatus.Exception;
+            }
             NotifyChanged();
         }
-
-        return _result;
     }
 
-    private void NotifyChanged()
-    {
-        OnChanged?.Invoke();
-    }
+    private void NotifyChanged() => OnChanged?.Invoke();
 
     public void Reset()
     {
-        _result = null;
+        Data = default;
+        Exception = null;
+        Status = MutationStatus.Idle;
         NotifyChanged();
     }
 }
