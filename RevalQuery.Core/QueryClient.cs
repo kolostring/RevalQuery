@@ -89,6 +89,48 @@ public sealed class QueryClient
 
     public void Cancel(string key) => Cancel(ValueTuple.Create(key));
 
+    public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
+        where TKey : ITuple
+    {
+        _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        var state = GetOrCreateQuery(queryOptions);
+
+        var lookupKey = CacheKeyCalculator.GetHashCode(state.Key);
+        if (!_workerLookup.TryGetValue(lookupKey, out var worker))
+        {
+            var newWorker = new QueryWorker<TKey, TRes>(_defaultOptions, _serviceProvider, state, null);
+            _workerLookup[lookupKey] = newWorker;
+            worker = newWorker;
+        }
+
+        _ = ((QueryWorker<TKey, TRes>)worker!).RunAsync();
+    }
+
+    public async Task<TRes> FetchQueryAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
+        where TKey : ITuple
+    {
+        _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        var state = GetOrCreateQuery(queryOptions);
+
+        var lookupKey = CacheKeyCalculator.GetHashCode(state.Key);
+        if (!_workerLookup.TryGetValue(lookupKey, out var worker))
+        {
+            var newWorker = new QueryWorker<TKey, TRes>(_defaultOptions, _serviceProvider, state, null);
+            _workerLookup[lookupKey] = newWorker;
+            worker = newWorker;
+        }
+
+        await ((QueryWorker<TKey, TRes>)worker!).RunAsync();
+        if (state.IsException)
+        {
+            throw state.Exception!;
+        }
+
+        return state.Data!;
+    }
+
     public IQueryState? FindQuery(ITuple keySegments)
     {
         var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);

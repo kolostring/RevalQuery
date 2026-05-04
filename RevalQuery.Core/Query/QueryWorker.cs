@@ -20,7 +20,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     private QueryState<TKey, TRes> Query { get; }
 
-    private readonly CancellationTokenSource _runnerCts = new();
+    private CancellationTokenSource? _pollingCts;
     private CancellationTokenSource? _currentFetchCts;
     private bool _isDisposed;
 
@@ -38,9 +38,15 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         Query = query;
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
 
+        Query.OnFirstSubscriberAdded += StartPolling;
+        Query.OnLastSubscriberRemoved += PausePolling;
         Query.OnInvalidated += HandleInvalidation;
         Query.OnCancelRequested += CancelCurrentFetch;
-        StartPolling();
+    }
+
+    private void PausePolling(QueryState<TKey, TRes> state)
+    {
+        _pollingCts?.Cancel();
     }
 
     private void CancelCurrentFetch()
@@ -48,50 +54,66 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         _currentFetchCts?.Cancel();
     }
 
-    private void StartPolling()
+    private void StartPolling(TKey key)
     {
         var interval = EnsuredFetchOptions.RefetchInterval;
+        if (interval <= TimeSpan.Zero) return;
 
-        if (interval <= TimeSpan.Zero || _isDisposed) return;
-
-        _ = Task.Run(async () =>
+        if (_pollingCts?.IsCancellationRequested ?? true)
         {
-            while (!_isDisposed && !_runnerCts.IsCancellationRequested)
+            _pollingCts?.Dispose();
+            _pollingCts = new CancellationTokenSource();
+        }
+
+        try
+        {
+            _ = Task.Run(async () =>
             {
-                await Task.Delay(interval, _runnerCts.Token);
-                _ = Run();
-            }
-        }, _runnerCts.Token);
+                while (!_isDisposed && !_pollingCts.IsCancellationRequested)
+                {
+                    await Task.Delay(interval, _pollingCts.Token);
+                    RunIfAllowed();
+                }
+            }, _pollingCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            //Cancelled polling
+        }
     }
 
     private void HandleInvalidation()
     {
         if (_isDisposed) return;
-        _ = Run();
+        RunIfAllowed();
     }
 
     public void RunIfStale()
     {
         var staleTime = EnsuredFetchOptions.StaleTime;
         var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
-        if (elapsedTimeSinceUpdate > staleTime) _ = Run();
+        if (elapsedTimeSinceUpdate > staleTime) RunIfAllowed();
     }
 
-    private async Task Run()
+    private void RunIfAllowed()
     {
-        if (!Query.CanFetch || Query.IsFetching) return;
+        if (Query.CanFetch) _ = RunAsync();
+    }
+
+    public async Task RunAsync()
+    {
+        if (Query.IsFetching) return;
 
         Query.FetchStatus = FetchStatus.Fetching;
         Query.NotifyChanged();
 
         _currentFetchCts = new CancellationTokenSource();
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_runnerCts.Token, _currentFetchCts.Token);
 
         var ctx = new QueryHandlerExecutionContext<TKey>
         {
             Key = Query.Key,
             ServiceProvider = _serviceProvider,
-            CancellationToken = linkedCts.Token
+            CancellationToken = _currentFetchCts.Token
         };
 
         try
@@ -99,7 +121,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             Query.Data = await _retryPolicy.ExecuteWithRetryAsync<TRes>(
                 () => Query.Handler(ctx),
                 EnsuredRetryOptions,
-                linkedCts.Token
+                _currentFetchCts.Token
             );
             Query.SetFresh();
             Query.Status = QueryStatus.Resolved;
@@ -127,11 +149,15 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     {
         if (_isDisposed) return;
 
-        Query.OnCancelRequested -= CancelCurrentFetch;
-        _runnerCts.Cancel();
-        _runnerCts.Dispose();
+        _pollingCts?.Cancel();
+        _pollingCts?.Dispose();
+        _currentFetchCts?.Cancel();
+        _currentFetchCts?.Dispose();
 
         _isDisposed = true;
+        Query.OnFirstSubscriberAdded -= StartPolling;
+        Query.OnLastSubscriberRemoved -= PausePolling;
         Query.OnInvalidated -= HandleInvalidation;
+        Query.OnCancelRequested -= CancelCurrentFetch;
     }
 }
