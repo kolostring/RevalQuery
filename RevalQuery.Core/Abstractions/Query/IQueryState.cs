@@ -4,7 +4,7 @@ namespace RevalQuery.Core.Abstractions.Query;
 /// Base interface for query state.
 /// Defines common lifecycle and notification events.
 /// </summary>
-public interface IQueryState
+public interface IQueryState : IObservableQueryState
 {
 
     bool IsIdle { get; }
@@ -28,7 +28,7 @@ public interface IQueryState
 /// <summary>
 /// Generic query state interface with data access.
 /// </summary>
-public interface IQueryState<TData> : IQueryState, IObservableQueryState
+public interface IQueryState<TData> : IQueryState
 {
     TData? Data { get; set; }
     Exception? Exception { get; set; }

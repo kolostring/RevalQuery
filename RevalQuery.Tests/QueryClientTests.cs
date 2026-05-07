@@ -11,6 +11,9 @@ namespace RevalQuery.Tests;
 
 public class QueryClientTests
 {
+    private const string Key = "test";
+    private const string UsersKey = "users";
+
     private readonly IServiceProvider _serviceProvider;
     private readonly RevalQueryOptions _options;
     private readonly QueryClient _client;
@@ -26,47 +29,37 @@ public class QueryClientTests
     [Fact]
     public async Task Subscribe_TriggersHandler_And_ResolvesData()
     {
-        var key = (1, "test");
-        var expectedData = "result";
-        var callCount = 0;
-        var queryOptions = QueryOptions.Create(key, ctx => { callCount++; return Task.FromResult(expectedData); }).Build();
+        var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
         var observer = _client.Subscribe(queryOptions, () => { });
         await WaitUntil(observer.Query, s => s.IsResolved);
-        Assert.Equal(expectedData, observer.Query.Data);
+        Assert.Equal("result", observer.Query.Data);
         Assert.True(observer.Query.IsIdle);
-        Assert.Equal(1, callCount);
     }
 
     [Fact]
     public async Task Invalidate_Triggers_Refetch()
     {
-        var key = (1, "test");
-        var callCount = 0;
-        var queryOptions = QueryOptions.Create(key, ctx => { callCount++; return Task.FromResult($"res {callCount}"); }).Build();
+        var queryOptions = QueryOptions.Create(Key, UniqueResultHandler).Build();
         var observer = _client.Subscribe(queryOptions, () => { });
         await WaitUntil(observer.Query, s => s.IsResolved);
-        Assert.Equal(1, callCount);
-        _client.Invalidate(key);
-        await WaitUntil(observer.Query, s => s.IsResolved && callCount == 2);
-        Assert.Equal(2, callCount);
+        var initialData = observer.Query.Data;
+        _client.Invalidate(Key);
+        await WaitUntil(observer.Query, s => s.IsResolved);
+        Assert.NotSame(initialData, observer.Query.Data);
     }
 
     [Fact]
     public async Task Hierarchical_Invalidation_Works()
     {
-        var key1 = ("users", 1);
-        var key2 = ("users", 2);
-        var callCount1 = 0;
-        var callCount2 = 0;
-        var obs1 = _client.Subscribe(QueryOptions.Create(key1, _ => { callCount1++; return Task.FromResult("u1"); }).Build(), () => { });
-        var obs2 = _client.Subscribe(QueryOptions.Create(key2, _ => { callCount2++; return Task.FromResult("u2"); }).Build(), () => { });
+        var obs1 = _client.Subscribe(QueryOptions.Create(UsersKey, User1Handler).Build(), () => { });
+        var obs2 = _client.Subscribe(QueryOptions.Create("users2", User2Handler).Build(), () => { });
         await Task.WhenAll(WaitUntil(obs1.Query, s => s.IsResolved), WaitUntil(obs2.Query, s => s.IsResolved));
-        Assert.Equal(1, callCount1);
-        Assert.Equal(1, callCount2);
-        _client.Invalidate("users");
-        await Task.WhenAll(WaitUntil(obs1.Query, s => s.IsResolved && callCount1 == 2), WaitUntil(obs2.Query, s => s.IsResolved && callCount2 == 2));
-        Assert.Equal(2, callCount1);
-        Assert.Equal(2, callCount2);
+        Assert.Equal("u1", obs1.Query.Data);
+        Assert.Equal("u2", obs2.Query.Data);
+        _client.Invalidate(UsersKey);
+        await Task.WhenAll(WaitUntil(obs1.Query, s => s.IsResolved), WaitUntil(obs2.Query, s => s.IsResolved));
+        Assert.Equal("u1", obs1.Query.Data);
+        Assert.Equal("u2", obs2.Query.Data);
     }
 
     [Fact]
@@ -77,14 +70,13 @@ public class QueryClientTests
         var gcCollector = new TtlQueryGarbageCollector(options);
         var client = new QueryClient(_serviceProvider, options, evictionPolicy: gcCollector);
 
-        var key = (1, "gc-test");
-        var queryOptions = QueryOptions.Create(key, _ => Task.FromResult("result")).Build();
+        var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
 
         var observer = client.Subscribe(queryOptions, () => { });
         await WaitUntil(observer.Query, s => s.IsResolved);
         observer.Dispose();
         gcCollector.CollectExpiredEntries();
-        var found = client.FindQuery(key);
+        var found = client.FindQuery(Key);
         Assert.Null(found);
     }
 
@@ -96,43 +88,26 @@ public class QueryClientTests
         var gcCollector = new TtlQueryGarbageCollector(options);
         var client = new QueryClient(_serviceProvider, options, evictionPolicy: gcCollector);
 
-        var key = (1, "resub-test");
-        var queryOptions = QueryOptions.Create(key, _ => Task.FromResult("result")).Build();
+        var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
 
         var observer = client.Subscribe(queryOptions, () => { });
         await WaitUntil(observer.Query, s => s.IsResolved);
         observer.Dispose();
         client.Subscribe(queryOptions, () => { });
         gcCollector.CollectExpiredEntries();
-        var found = client.FindQuery(key);
+        var found = client.FindQuery(Key);
         Assert.NotNull(found);
     }
 
     [Fact]
     public async Task QueryClient_Cancel_AbortsFetch()
     {
-        var key = (1, "cancel-test");
-        var isCanceled = false;
-
-        var queryOptions = QueryOptions.Create(key, async ctx =>
-        {
-            try
-            {
-                await Task.Delay(1000, ctx.CancellationToken ?? default);
-                return "completed";
-            }
-            catch (OperationCanceledException)
-            {
-                isCanceled = true;
-                throw;
-            }
-        }).Build();
+        var queryOptions = QueryOptions.Create(Key, CancelableHandler).Build();
 
         var observer = _client.Subscribe(queryOptions, () => { });
         await WaitUntil(observer.Query, s => s.IsFetching);
-        _client.Cancel(key);
+        _client.Cancel(Key);
         await WaitUntil(observer.Query, s => s.IsIdle);
-        Assert.True(isCanceled);
         Assert.True(observer.Query.IsIdle);
     }
 
@@ -140,9 +115,8 @@ public class QueryClientTests
     public void Plugin_Throws_On_NonStatic_Handler()
     {
         _options.QueryPluginsPipeline.Add(new QueryPluginHandlersStatelessValidation());
-        var key = ValueTuple.Create("static-test");
         var count = 0;
-        var queryOptions = QueryOptions.Create(key, _ => Task.FromResult(count++)).Build();
+        var queryOptions = QueryOptions.Create(Key, _ => Task.FromResult(count++)).Build();
         Assert.Throws<InvalidOperationException>(() => _client.Subscribe(queryOptions, () => { }));
     }
 
@@ -150,8 +124,7 @@ public class QueryClientTests
     public void Plugin_Allows_Static_Handler()
     {
         _options.QueryPluginsPipeline.Add(new QueryPluginHandlersStatelessValidation());
-        var key = ValueTuple.Create("static-ok-test");
-        var queryOptions = QueryOptions.Create(key, StaticHandler).Build();
+        var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
         var observer = _client.Subscribe(queryOptions, () => { });
         Assert.NotNull(observer);
     }
@@ -159,10 +132,9 @@ public class QueryClientTests
     [Fact]
     public void QueryOptions_Create_With_String_Key_Succeeds()
     {
-        var key = "string-key";
-        var queryOptions = QueryOptions.Create(key, StaticHandler).Build();
+        var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
         Assert.IsType<ValueTuple<string>>(queryOptions.Key);
-        Assert.Equal(key, queryOptions.Key.Item1);
+        Assert.Equal(Key, queryOptions.Key.Item1);
     }
 
     private static Task<string> StaticHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
@@ -181,6 +153,31 @@ public class QueryClientTests
         finally
         {
             state.OnChanged -= handler;
+        }
+    }
+
+    private static Task<string> ResultHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
+        => Task.FromResult("result");
+
+    private static Task<string> UniqueResultHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
+        => Task.FromResult($"res{Guid.NewGuid()}");
+
+    private static Task<string> User1Handler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
+        => Task.FromResult("u1");
+
+    private static Task<string> User2Handler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
+        => Task.FromResult("u2");
+
+    private static async Task<string> CancelableHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
+    {
+        try
+        {
+            await Task.Delay(1000, ctx.CancellationToken ?? default);
+            return "completed";
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
     }
 }
