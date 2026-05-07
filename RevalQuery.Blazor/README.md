@@ -1,116 +1,233 @@
-﻿# RevalQuery
+# RevalQuery
 
-**A high-performance, Result-oriented data fetching library for Blazor.**
+Data fetching library for Blazor. Built on RevalQuery.Core.
 
-Heavily inspired by **TanStack Query**, BlazorQ brings a professional-grade state management and caching layer to .NET
-8+. It is designed for developers who value type safety, explicit error handling via the **Result Pattern**, and
-architecture that works across both **Blazor WebAssembly** and **Blazor Server**.
+Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, caching, and state management for Blazor WebAssembly and Blazor Server.
+
+## Quick Start
+
+```razor
+@using CachingDemo.Client.Services
+@using RevalQuery.Core
+@rendermode InteractiveWebAssembly
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Search Bar Example</PageTitle>
+
+<div class="search-box">
+    <div style="display: flex; gap: 8px;">
+        <input @bind="SearchTerm" @bind:event="oninput" placeholder="Type to search..."/>
+
+        @if (Suggestions.IsFetching)
+        {
+            <div>
+                Loading...
+            </div>
+        }
+    </div>
+
+    @if (Suggestions.Error is not null)
+    {
+        <p style="color:red">Error: @Suggestions.Error.Message</p>
+    }
+    else if (Suggestions.Data is not null)
+    {
+        <ul>
+            @foreach (var item in Suggestions.Data)
+            {
+                <li>@item</li>
+            }
+        </ul>
+    }
+    else if (!Suggestions.IsFetching)
+    {
+        <p><em>Nothing to show</em></p>
+    }
+</div>
+
+@code {
+    private string SearchTerm { get; set; } = string.Empty;
+
+    IQueryState<List<string>> Suggestions => UseQuery(
+        key: ("search", SearchTerm),
+        handler: async static ctx =>
+        {
+            var res = await SearchService.SearchAsync(ctx.Key.SearchTerm);
+            return QueryResult.Success(res);
+        },
+        options => options
+            .ConfigureFetch(fetch => fetch
+                .StaleTime(TimeSpan.FromMinutes(5))
+            )
+    );
+}
+```
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Component Integration](#component-integration)
+- [UseQuery](#usequery)
+- [UseMutation](#usemutation)
+- [QueryFactory Pattern](#queryfactory-pattern)
+- [QueryState Properties](#querystate-properties)
 
 ---
 
-## 📦 Installation
+## Installation
 
-Register the core services in your `Program.cs`.
+Register in both client and server Program.cs:
 
 ```csharp
-//Program.cs
+// Server/Program.cs
+builder.Services.AddRevalQuery();
 
+// Client/Program.cs  
 builder.Services.AddRevalQuery();
 ```
 
+Required for Blazor WebAssembly prerendering support.
+
 ---
 
-## 🏗 Component Integration
+## Component Integration
 
-Before using the following functions, your components must inherit from the base class:
+Inherit from `QueryComponentBase`:
 
 ```razor
-@inherits BlazorQ.QueryComponentBase
+@inherit QueryComponentBase
 ```
 
 ---
 
-## 🔍 Using Queries (`UseQuery`)
+## UseQuery
 
-The `UseQuery` method allows you to observe a piece of data.
-
-### Stateless Handlers
-
-Handlers **must be stateless**. Using the `static` keyword on your lambda is the best way to enforce this; it prevents
-the closure from capturing component-level variables and ensures the compiler helps you stay safe.
+Subscribe to a query - observes data and manages lifecycle automatically.
 
 ```csharp
-private IQueryState<BasketItem?> quantityQuery => UseQuery(
-    key: ("basket-count", itemId),
-
-    handler: static async ctx =>
-        {
-            // Access services via the context ServiceProvider
-            var basketService = ctx.ServiceProvider.GetRequiredService<IBasketService>();
-            var item = await basketService.GetItem(ctx.Key.itemId);
-            return item;
-        },
-    
-    configure: options => options
-        .OnSuccess(
-            async (basketItem) =>
-            {
-                Console.WriteLine($"Fetched quantity: {basketItem?.Quantity}");
-            }
-        )
-        .Enabled(OperatingSystem.IsBrowser()) // Only fetch on the client side
+IQueryState<User[]> Users => UseQuery(
+    key: ("users",),
+    handler: async static ctx =>
+        await ctx.ServiceProvider.GetRequiredService<IUserService>().GetAll()
 );
 ```
 
-> **💡 Pro Tip:** For better reusability and cleaner components, define your `QueryOptions` in a static factory class by using the `QueryOptionsFactory.Create` method(
-> e.g., `BasketQueries.GetItemOptions(itemId)`).
-
-### Stateless Validation (Highly Recommended)
-
-To enforce architectural purity, use the stateless validation plugin during development. This ensures your handlers
-don't accidentally capture external state, which can lead to memory leaks or stale closures.
+**Static handlers:** Handlers must be `static`. Using `static` ensures compilation error if the handler accidentally captures component state. This guarantees pure, stateless functions that won't cause memory leaks or stale closures.
 
 ```csharp
-//Program.cs
+// Correct - static handler
+handler: async static ctx => ...
 
-if (builder.Environment.IsDevelopment())
+// Compilation error with static - captures state
+handler: async static ctx => someComponentField  // Compile error
+```
+
+---
+
+## UseMutation
+
+Execute write operations (Create/Update/Delete). Supports callbacks.
+
+```csharp
+MutationState<CreateUserRequest, User> CreateUserMutation => UseMutation(
+    MutationOptions.Create<CreateUserRequest, User>(
+        async static ctx =>
+            await ctx.ServiceProvider.GetRequiredService<IUserService>().CreateAsync(ctx.Params)
+    )
+    .OnResolved(async (user, _) => Console.WriteLine($"Created {user.Name}"))
+    .OnException(async (ex, _) => Console.WriteLine($"Error: {ex.Message}"))
+);
+
+// Trigger mutation
+await CreateUserMutation.ExecuteAsync(new CreateUserRequest { Name = "John" });
+```
+
+---
+
+## QueryFactory Pattern
+
+For reusability across components, define queries in static classes. This keeps query definitions centralized, makes keys consistent, and simplifies invalidation.
+
+```csharp
+public static class UserQueries
 {
-    // Throws errors at runtime if handlers capture state
-    builder.Services.AddSingleton<IQueryPlugin, QueryPluginHandlersStatelessValidation>();
+    private const string Token = "users";
+
+    // For invalidation - centralized key definition
+    public static (string, int) GetKey(int userId) => (Token, userId);
+
+    // Returns builder - components can extend configuration
+    public static QueryOptionsBuilder<(string, int), User> GetUserOptions(int userId)
+    {
+        return QueryOptions.Create(
+            key: (Token, userId),
+            handler: async static ctx =>
+                await ctx.ServiceProvider.GetRequiredService<IUserService>().GetByIdAsync(ctx.Key.Item2)
+        );
+    }
 }
 ```
----
 
-## ⚡ Mutations
-
-Unlike Queries, Mutations are used for server-side actions (Create/Update/Delete). These **can be stateful** and are the
-recommended place to perform cache invalidation using the `QueryClient`.
+**Usage in component:**
 
 ```csharp
-private IMutationState<string, Task> addItemMutation => UseMutation(
-    MutationOptionsFactory.Create<string, Task>
-    (
-        handler: async (ctx) =>
-        {
-            var basketService = ctx.ServiceProvider.GetRequiredService<IBasketService>();
-            var queryClient = ctx.ServiceProvider.GetRequiredService<QueryClient>();
-    
-                await basketService.AddItem(new(ctx.Params, 1));
-                
-                // Invalidate specific cache keys to trigger re-fetches
-                queryClient.Invalidate(("basket-count", ctx.Params));
-                
-                return Task.CompletedTask;
-        }
-    ) 
+IQueryState<User> User => UseQuery(
+    UserQueries.GetUserOptions(userId)
+        .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
+        .ConfigureRetry(r => r.Retry(3))
 );
 ```
 
+**For invalidation:**
+
+```csharp
+Client.Invalidate(UserQueries.GetKey(userId));
+```
+
+Benefits:
+- Single source of truth for query definitions
+- Consistent key format across the app
+- Easy bulk invalidation
+- Components extend factory options via builder pattern
+
 ---
 
-## ⚠️ Dev Release Note
+## QueryState Properties
 
-This is a development release. The API is subject to change.
+Access query state via `IQueryState<T>`:
+
+| Property | Description |
+|----------|-------------|
+| `Data` | The fetched data (null if pending/error) |
+| `Exception` | The error if query failed |
+| `IsPending` | No data yet |
+| `IsResolved` | Data available |
+| `IsException` | Query failed |
+| `IsFetching` | Currently fetching |
+| `IsLoading` | Fetching + no data (IsFetching && IsPending) |
+| `IsIdle` | Not fetching |
+| `LastUpdatedAt` | Timestamp of last successful fetch |
+
+---
+
+## Configuration
+
+Query lifecycle callbacks (onSuccess, onError, onSettled) are **NOT** supported on queries. Use `IQueryState` properties directly in components:
+
+```csharp
+@if (Users.IsResolved)
+{
+    <p>Loaded @Users.Data?.Length users</p>
+}
+@else if (Users.IsFetching)
+{
+    <p>Loading...</p>
+}
+@else if (Users.IsException)
+{
+    <p>Error: @Users.Exception.Message</p>
+}
+```
 
 ---
 
