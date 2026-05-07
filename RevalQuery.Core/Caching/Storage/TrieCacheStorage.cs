@@ -5,14 +5,21 @@ namespace RevalQuery.Core.Caching.Storage;
 
 /// <summary>
 /// Trie-based implementation of cache storage.
-/// Organizes cache entries hierarchically by key segments.
+/// Organizes cache entries hierarchically by key segments for efficient prefix operations.
 /// </summary>
 public sealed class TrieCacheStorage : ICacheStorage
 {
     private readonly CacheNode _root = new(0);
 
+    /// <summary>
+    /// The root node of the trie.
+    /// </summary>
     public CacheNode RootNode => _root;
 
+    /// <summary>
+    /// Gets or creates a node for the given key segments.
+    /// Creates the hierarchical path if it doesn't exist.
+    /// </summary>
     public void GetOrCreateNode(ITuple keySegments)
     {
         var current = _root;
@@ -33,6 +40,9 @@ public sealed class TrieCacheStorage : ICacheStorage
         }
     }
 
+    /// <summary>
+    /// Peeks at a node by tuple key without modification.
+    /// </summary>
     public CacheNode? PeekNode(ITuple keySegments)
     {
         var current = _root;
@@ -48,16 +58,25 @@ public sealed class TrieCacheStorage : ICacheStorage
         return current;
     }
 
+    /// <summary>
+    /// Peeks at a node by single-segment string key.
+    /// </summary>
     public CacheNode? PeekNode(string key)
     {
         return _root.Children.GetValueOrDefault(key);
     }
 
+    /// <summary>
+    /// Prunes a node and its empty ancestors from the trie.
+    /// </summary>
     public bool PruneNode(ITuple keySegments)
     {
         return PruneRecursive(_root, keySegments, 0);
     }
 
+    /// <summary>
+    /// Gets all descendant nodes of a given node (recursive).
+    /// </summary>
     public ICollection<CacheNode> GetChildNodes(CacheNode node)
     {
         var result = new List<CacheNode>();

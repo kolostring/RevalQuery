@@ -5,11 +5,15 @@ using RevalQuery.Core.Query.Options;
 namespace RevalQuery.Core.Plugin;
 
 /// <summary>
-/// Plugin that validates query handler signatures.
-/// Ensures handlers are properly configured before execution.
+/// Built-in plugin that validates query handlers are static methods.
+/// Ensures purity - handlers must not capture instance state.
 /// </summary>
 public class QueryPluginHandlersStatelessValidation : IQueryPlugin
 {
+    /// <summary>
+    /// Validates that the handler is a static method.
+    /// Throws if handler is an instance method or lambda.
+    /// </summary>
     public QueryOptions<TKey, TRes> OnQueryInitialize<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions,
         Func<QueryOptions<TKey, TRes>, QueryOptions<TKey, TRes>> next

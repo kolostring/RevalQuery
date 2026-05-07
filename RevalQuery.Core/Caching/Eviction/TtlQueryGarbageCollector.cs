@@ -11,7 +11,7 @@ namespace RevalQuery.Core.Caching.Eviction;
 
 /// <summary>
 /// Time-to-live based garbage collection policy for cached queries.
-/// Evicts entries after their configured cache lifetime expires.
+/// Runs in background, evicts entries after their GcTime expires.
 /// </summary>
 public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) : ICacheEvictionPolicy, IAsyncDisposable
 {
@@ -19,8 +19,14 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
     private CancellationTokenSource _cancellationTokenSource = new();
     private Task _collectionTask = Task.CompletedTask;
 
+    /// <summary>
+    /// Raised when entries should be evicted from cache.
+    /// </summary>
     public event Action<ITuple>? OnEvictionRequired;
 
+    /// <summary>
+    /// Registers a query state for potential eviction when last subscriber leaves.
+    /// </summary>
     public void RegisterForEviction<TKey, TResponse>(QueryState<TKey, TResponse> queryState) where TKey : ITuple
     {
         var hashCode = CacheKeyCalculator.GetHashCode(queryState.Key);
@@ -33,16 +39,22 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
 
         _deathRow[hashCode] = token;
 
-        // Bounded cleanup: if deathRow grows too large, remove oldest entries
         if (_deathRow.Count > 10000) CleanupOldestEntries();
     }
 
+    /// <summary>
+    /// Cancels pending eviction when a new subscriber is added.
+    /// </summary>
     public void CancelEviction(ITuple key)
     {
         var hashCode = CacheKeyCalculator.GetHashCode(key);
         _deathRow.TryRemove(hashCode, out _);
     }
 
+    /// <summary>
+    /// Starts the background collection loop.
+    /// Call once at application startup.
+    /// </summary>
     public async Task StartAsync(CancellationToken ct = default)
     {
         _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -50,6 +62,10 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
         await Task.Yield();
     }
 
+    /// <summary>
+    /// Stops the background collection loop.
+    /// Call during application shutdown.
+    /// </summary>
     public async Task StopAsync()
     {
         await _cancellationTokenSource.CancelAsync();
@@ -63,6 +79,9 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
         }
     }
 
+    /// <summary>
+    /// Disposes the garbage collector.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
@@ -83,6 +102,10 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
             }
     }
 
+    /// <summary>
+    /// Manually triggers collection of expired entries.
+    /// For testing or admin scenarios.
+    /// </summary>
     public void CollectExpiredEntries()
     {
         var now = DateTime.UtcNow;

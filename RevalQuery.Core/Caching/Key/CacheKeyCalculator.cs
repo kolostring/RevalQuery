@@ -3,13 +3,12 @@ using System.Runtime.CompilerServices;
 namespace RevalQuery.Core.Caching.Key;
 
 /// <summary>
-/// Responsible for calculating hash codes for cache keys.
-/// Centralizes hash calculation logic to eliminate duplication across the codebase.
+/// Utility for calculating hash codes for cache keys.
 /// </summary>
 public static class CacheKeyCalculator
 {
     /// <summary>
-    /// Calculates a hash code for the given tuple key.
+    /// Calculates a HashCode for the given tuple key.
     /// </summary>
     public static HashCode CalculateHash(ITuple key)
     {

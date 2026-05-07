@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using RevalQuery.Core.Abstractions;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Mutation.Callbacks;
@@ -8,6 +7,9 @@ using RevalQuery.Core.Query.Execution;
 
 namespace RevalQuery.Core.Mutation;
 
+/// <summary>
+/// Represents the status of a mutation operation.
+/// </summary>
 public enum MutationStatus
 {
     Idle,
@@ -17,9 +19,11 @@ public enum MutationStatus
 }
 
 /// <summary>
-/// Represents the state of a mutation including data, status, and lifecycle.
-/// Supports concurrent mutations tracking.
+/// Represents the state of a mutation (write operation) including data, status, and lifecycle.
+/// Supports concurrent mutations.
 /// </summary>
+/// <typeparam name="TParams">The parameters type for the mutation.</typeparam>
+/// <typeparam name="TResponse">The response type from the mutation.</typeparam>
 public sealed class MutationState<TParams, TResponse>(
     MutationOptions<TParams, TResponse> options,
     IServiceProvider serviceProvider
@@ -31,19 +35,56 @@ public sealed class MutationState<TParams, TResponse>(
 
     private readonly Func<MutationHandlerExecutionContext<TParams>, Task<TResponse>> _handler = options.Handler;
 
+    /// <summary>
+    /// The response data from a successful mutation.
+    /// </summary>
     public TResponse? Data { get; private set; }
+
+    /// <summary>
+    /// The exception if the mutation failed.
+    /// </summary>
     public Exception? Exception { get; private set; }
+
+    /// <summary>
+    /// The current mutation status.
+    /// </summary>
     public MutationStatus Status { get; private set; } = MutationStatus.Idle;
-    private List<CancellationTokenSource> _runningMutationsCancellationTokens = new();
+
+    private readonly List<CancellationTokenSource> _runningMutationsCancellationTokens = [];
     private int _currentVersion = 0;
 
+    /// <summary>
+    /// Raised when mutation status changes.
+    /// </summary>
     public event Action? OnChanged;
 
+    /// <summary>
+    /// True when no mutation is in progress.
+    /// </summary>
     public bool IsIdle => Status == MutationStatus.Idle;
+
+    /// <summary>
+    /// True when mutation handler is executing.
+    /// </summary>
     public bool IsFetching => Status == MutationStatus.Fetching;
+
+    /// <summary>
+    /// True when mutation completed successfully.
+    /// </summary>
     public bool IsResolved => Status == MutationStatus.Resolved;
+
+    /// <summary>
+    /// True when mutation failed.
+    /// </summary>
     public bool IsException => Status == MutationStatus.Exception;
 
+    /// <summary>
+    /// Executes the mutation with the given parameters.
+    /// Supports concurrent mutations.
+    /// </summary>
+    /// <param name="variables">The parameters for the mutation.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="mutateOptions">Optional per-call callbacks (OnResolved, OnException, OnSettled).</param>
     public async Task ExecuteAsync(
         TParams variables,
         CancellationToken ct = default,
@@ -146,6 +187,11 @@ public sealed class MutationState<TParams, TResponse>(
 
     private void NotifyChanged() => OnChanged?.Invoke();
 
+    /// <summary>
+    /// Resets the mutation state to Idle.
+    /// Cancels any running mutations, clears Data and Exception.
+    /// Useful for "reset and retry" scenarios.
+    /// </summary>
     public void Reset()
     {
         lock (_mutationLock)

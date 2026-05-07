@@ -11,6 +11,12 @@ namespace RevalQuery.Core;
 /// </summary>
 public static class DependencyInjection
 {
+    /// <summary>
+    /// Registers RevalQuery services in the service collection.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">Optional configuration callback.</param>
+    /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddRevalQuery(
         this IServiceCollection services,
         Action<RevalQueryOptions>? configure = null

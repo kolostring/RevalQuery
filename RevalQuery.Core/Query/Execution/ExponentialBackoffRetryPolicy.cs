@@ -4,10 +4,15 @@ using RevalQuery.Core.Configuration.Options;
 namespace RevalQuery.Core.Query.Execution;
 
 /// <summary>
-/// Default retry policy with exponential backoff strategy.
+/// Default retry policy with exponential backoff.
+/// Retries on failure with increasing delays between attempts.
 /// </summary>
 public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
 {
+    /// <summary>
+    /// Executes the handler with retry logic.
+    /// Retries up to retryOptions.Retry times with delay from retryOptions.RetryDelay.
+    /// </summary>
     public async Task<TResponse> ExecuteWithRetryAsync<TResponse>(
         Func<Task<TResponse>> handler,
         CoreRetryOptions retryOptions,

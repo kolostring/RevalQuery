@@ -7,8 +7,11 @@ using RevalQuery.Core.Query.Execution;
 namespace RevalQuery.Core.Query;
 
 /// <summary>
-/// Orchestrates query execution with polling, invalidation handling, and lifecycle management.
+/// Orchestrates query execution: fetching, retry logic, polling, invalidation handling.
+/// Internal component - created and managed by QueryClient.
 /// </summary>
+/// <typeparam name="TKey">The query key type.</typeparam>
+/// <typeparam name="TRes">The response type.</typeparam>
 public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 {
     private readonly IServiceProvider _serviceProvider;
@@ -24,6 +27,14 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private CancellationTokenSource? _currentFetchCts;
     private bool _isDisposed;
 
+    /// <summary>
+    /// Creates a QueryWorker for a specific query.
+    /// </summary>
+    /// <param name="revalQueryOptions">Global options including retry and fetch defaults.</param>
+    /// <param name="serviceProvider">Service provider for handler dependencies.</param>
+    /// <param name="query">The query state to manage.</param>
+    /// <param name="cts">Optional cancellation token source.</param>
+    /// <param name="retryPolicy">Optional custom retry policy.</param>
     public QueryWorker(
         RevalQueryOptions revalQueryOptions,
         IServiceProvider serviceProvider,
@@ -93,6 +104,10 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         RunIfAllowed();
     }
 
+    /// <summary>
+    /// Runs the query if data is stale (beyond StaleTime).
+    /// Called when a new subscriber is added.
+    /// </summary>
     public void RunIfStale()
     {
         var staleTime = EnsuredFetchOptions.StaleTime;
@@ -105,6 +120,12 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         if (Query.CanFetch) _ = RunAsync();
     }
 
+    /// <summary>
+    /// Executes the query handler with retry logic.
+    /// Updates Query.Data, Query.Status on success.
+    /// Sets Query.Exception, Query.Status on failure.
+    /// </summary>
+    /// <returns>Internal - use Query.Data to access result.</returns>
     public async Task RunAsync()
     {
         if (Query.IsFetching) return;
@@ -150,6 +171,9 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         Query.NotifyChanged();
     }
 
+    /// <summary>
+    /// Disposes the worker - cancels polling and current fetch, removes event handlers.
+    /// </summary>
     public void Dispose()
     {
         if (_isDisposed) return;
