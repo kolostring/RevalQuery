@@ -42,6 +42,11 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         Query.OnLastSubscriberRemoved += PausePolling;
         Query.OnInvalidated += HandleInvalidation;
         Query.OnCancelRequested += CancelCurrentFetch;
+
+        if (Query.CanFetch)
+        {
+            StartPolling(Query.Key);
+        }
     }
 
     private void PausePolling(QueryState<TKey, TRes> state)
