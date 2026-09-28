@@ -135,7 +135,10 @@ public sealed class QueryClient : IDisposable
     public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
-        _ = RunOnceAsync(queryOptions);
+        // Registered before returning, so a key already taken by another result type is
+        // reported to the caller rather than lost in an unobserved task.
+        var (state, worker) = PrepareRun(queryOptions);
+        _ = RunAndReleaseAsync(state, worker);
     }
 
     /// <summary>
@@ -152,7 +155,9 @@ public sealed class QueryClient : IDisposable
     public async Task<TRes> FetchQueryAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
-        var state = await RunOnceAsync(queryOptions);
+        var (state, worker) = PrepareRun(queryOptions);
+
+        await RunAndReleaseAsync(state, worker);
 
         if (state.IsException) throw state.Exception!;
 
@@ -223,14 +228,16 @@ public sealed class QueryClient : IDisposable
 
         var state = GetOrCreateQuery(options);
 
-        QueryWorker<TKey, TRes> worker;
-        lock (_gate) worker = GetOrCreateWorker(state);
-
+        // Subscribed before the worker exists, so a prefetch settling concurrently cannot
+        // release the worker out from under this observer.
         var observer = new QueryObserver<TRes>(
             state,
             onStateHasChanged,
             options.Enabled
         );
+
+        QueryWorker<TKey, TRes> worker;
+        lock (_gate) worker = GetOrCreateWorker(state);
 
         worker.RunIfStale();
 
@@ -261,16 +268,22 @@ public sealed class QueryClient : IDisposable
         if (_ownsEvictionPolicy) _ = _evictionPolicy.StopAsync();
     }
 
-    private async Task<QueryState<TKey, TRes>> RunOnceAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
-        where TKey : ITuple
+    /// <summary>
+    /// Registers a query and its worker for a run that no observer asked for.
+    /// </summary>
+    private (QueryState<TKey, TRes> State, QueryWorker<TKey, TRes> Worker) PrepareRun<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions) where TKey : ITuple
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
         var state = GetOrCreateQuery(options);
 
-        QueryWorker<TKey, TRes> worker;
-        lock (_gate) worker = GetOrCreateWorker(state);
+        lock (_gate) return (state, GetOrCreateWorker(state));
+    }
 
+    private async Task RunAndReleaseAsync<TKey, TRes>(QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker)
+        where TKey : ITuple
+    {
         try
         {
             await worker.RunAsync();
@@ -279,8 +292,6 @@ public sealed class QueryClient : IDisposable
         {
             ReleaseIfUnobserved(state);
         }
-
-        return state;
     }
 
     /// <summary>
