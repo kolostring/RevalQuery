@@ -19,6 +19,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private readonly IRetryPolicy _retryPolicy;
     private readonly RevalQueryOptions _revalQueryOptions;
     private readonly IQueryPersistence? _persistence;
+    private readonly Task _restore;
     private readonly object _gate = new();
 
     private CoreFetchOptions EnsuredFetchOptions => _revalQueryOptions.FetchOptions.Apply(Query.FetchOptions);
@@ -28,7 +29,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     private CancellationTokenSource? _pollingCts;
     private CancellationTokenSource? _currentFetchCts;
-    private Task? _inFlight;
+    private TaskCompletionSource<bool>? _inFlight;
     private bool _isDisposed;
 
     /// <summary>
@@ -38,18 +39,24 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// <param name="serviceProvider">Service provider for handler dependencies.</param>
     /// <param name="query">The query state to manage.</param>
     /// <param name="persistence">Optional durable store to save successful fetches to.</param>
+    /// <param name="restore">
+    /// The query's pending load from persistence, awaited before deciding whether its data is
+    /// stale. Completed when there is nothing to load.
+    /// </param>
     /// <param name="retryPolicy">Optional custom retry policy.</param>
     public QueryWorker(
         RevalQueryOptions revalQueryOptions,
         IServiceProvider serviceProvider,
         QueryState<TKey, TRes> query,
         IQueryPersistence? persistence = null,
+        Task? restore = null,
         IRetryPolicy? retryPolicy = null
     )
     {
         _serviceProvider = serviceProvider;
         _revalQueryOptions = revalQueryOptions;
         _persistence = persistence;
+        _restore = restore ?? Task.CompletedTask;
 
         Query = query;
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
@@ -68,7 +75,15 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private void PausePolling(QueryState<TKey, TRes> state)
     {
         CancellationTokenSource? cts;
-        lock (_gate) cts = _pollingCts;
+
+        lock (_gate)
+        {
+            cts = _pollingCts;
+            // Cleared under the lock, so a subscriber arriving next does not see a source that
+            // is about to be cancelled and skip starting its own loop.
+            _pollingCts = null;
+        }
+
         CancelSafely(cts);
     }
 
@@ -133,10 +148,35 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     }
 
     /// <summary>
-    /// Runs the query if data is stale (beyond StaleTime).
-    /// Called when a new subscriber is added.
+    /// Runs the query if its data is stale (beyond StaleTime), once anything held in
+    /// persistence has had its chance to land. Called when a new subscriber is added.
     /// </summary>
     public void RunIfStale()
+    {
+        if (_restore.IsCompleted)
+        {
+            RunIfStaleNow();
+            return;
+        }
+
+        _ = RunIfStaleAfterRestoreAsync();
+    }
+
+    private async Task RunIfStaleAfterRestoreAsync()
+    {
+        try
+        {
+            await _restore;
+        }
+        catch
+        {
+            // A failed restore leaves the query to fetch as if nothing was stored
+        }
+
+        RunIfStaleNow();
+    }
+
+    private void RunIfStaleNow()
     {
         var staleTime = EnsuredFetchOptions.StaleTime;
         var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
@@ -154,25 +194,43 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// Sets Query.Exception, Query.Status on failure.
     /// Concurrent callers join the fetch already in flight rather than starting a second one.
     /// </summary>
-    /// <returns>A task completing when the fetch settles - use Query.Data to access the result.</returns>
-    public Task RunAsync()
+    /// <returns>
+    /// True when this call ran or joined a fetch, false when the worker was already disposed
+    /// and nothing ran. Use Query.Data to access the result.
+    /// </returns>
+    public Task<bool> RunAsync()
     {
-        TaskCompletionSource completion;
+        TaskCompletionSource<bool> completion;
 
         lock (_gate)
         {
-            if (_isDisposed) return Task.CompletedTask;
-            if (_inFlight is { IsCompleted: false }) return _inFlight;
+            if (_isDisposed) return Task.FromResult(false);
+            if (_inFlight is { Task.IsCompleted: false }) return _inFlight.Task;
 
-            completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            _inFlight = completion.Task;
+            completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _inFlight = completion;
         }
 
         _ = RunCoreAsync(completion);
         return completion.Task;
     }
 
-    private async Task RunCoreAsync(TaskCompletionSource completion)
+    private async Task RunCoreAsync(TaskCompletionSource<bool> completion)
+    {
+        // Everything below reports through completion exactly once. An observer callback
+        // throwing must not strand it: a completion that never settles would leave every later
+        // RunAsync joining a task that never finishes, and the query would never fetch again.
+        try
+        {
+            await RunFetchAsync();
+        }
+        finally
+        {
+            completion.TrySetResult(true);
+        }
+    }
+
+    private async Task RunFetchAsync()
     {
         var fetchCts = new CancellationTokenSource();
 
@@ -181,36 +239,33 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             if (_isDisposed)
             {
                 fetchCts.Dispose();
-                completion.TrySetResult();
                 return;
             }
 
             _currentFetchCts = fetchCts;
         }
 
-        Query.FetchStatus = FetchStatus.Fetching;
-        Query.NotifyChanged();
-
-        var ctx = new QueryHandlerExecutionContext<TKey>
-        {
-            Key = Query.Key,
-            ServiceProvider = _serviceProvider,
-            CancellationToken = fetchCts.Token
-        };
-
         var fetched = default(TRes);
         var succeeded = false;
 
         try
         {
+            Query.FetchStatus = FetchStatus.Fetching;
+            NotifyChangedSafely();
+
+            var ctx = new QueryHandlerExecutionContext<TKey>
+            {
+                Key = Query.Key,
+                ServiceProvider = _serviceProvider,
+                CancellationToken = fetchCts.Token
+            };
+
             fetched = await _retryPolicy.ExecuteWithRetryAsync<TRes>(
                 () => Query.Handler(ctx),
                 EnsuredRetryOptions,
                 fetchCts.Token
             );
-            Query.Data = fetched;
-            Query.SetFresh();
-            Query.Status = QueryStatus.Resolved;
+            Query.ApplyFetched(fetched);
             succeeded = true;
         }
         catch (OperationCanceledException)
@@ -232,12 +287,26 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             fetchCts.Dispose();
 
             Query.FetchStatus = FetchStatus.Idle;
-            Query.NotifyChanged();
+            NotifyChangedSafely();
         }
 
         if (succeeded) await SavePersistedAsync(fetched!);
+    }
 
-        completion.TrySetResult();
+    /// <summary>
+    /// Notifies observers without letting one of them break the fetch. A Blazor component
+    /// whose circuit went away throws from StateHasChanged, and that is not this query's problem.
+    /// </summary>
+    private void NotifyChangedSafely()
+    {
+        try
+        {
+            Query.NotifyChanged();
+        }
+        catch
+        {
+            // An observer that cannot render is the observer's problem, not the query's
+        }
     }
 
     private async Task SavePersistedAsync(TRes data)

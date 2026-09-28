@@ -22,6 +22,8 @@ namespace RevalQuery.Core;
 /// </remarks>
 public sealed class QueryClient : IDisposable
 {
+    private const int MaxRunAttempts = 3;
+
     private readonly object _gate = new();
     private readonly QueryRegistry _registry = new();
     private readonly ICacheEvictionPolicy _evictionPolicy;
@@ -61,34 +63,41 @@ public sealed class QueryClient : IDisposable
         QueryOptions<TKey, TRes> queryOptions
     ) where TKey : ITuple
     {
-        QueryState<TKey, TRes> newState;
+        lock (_gate) return GetOrCreateQueryLocked(queryOptions);
+    }
 
-        lock (_gate)
+    /// <summary>
+    /// Returns the state for these options, creating and wiring it when the key is free.
+    /// Callers hold the lock.
+    /// </summary>
+    private QueryState<TKey, TRes> GetOrCreateQueryLocked<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
+        where TKey : ITuple
+    {
+        var node = _registry.GetOrCreateNode(queryOptions.Key);
+
+        if (node.State is not null)
         {
-            var node = _registry.GetOrCreateNode(queryOptions.Key);
+            if (node.State is QueryState<TKey, TRes> existing) return existing;
 
-            if (node.State is not null)
-            {
-                if (node.State is QueryState<TKey, TRes> existing) return existing;
-
-                throw new InvalidOperationException(
-                    $"Query {DescribeKey(queryOptions.Key)} is already registered with result type " +
-                    $"{node.State.GetType().GenericTypeArguments[1].Name}, but {typeof(TRes).Name} was requested.");
-            }
-
-            newState = new QueryState<TKey, TRes>(
-                queryOptions.Key,
-                queryOptions.Handler,
-                queryOptions.FetchOptions,
-                queryOptions.RetryOptions,
-                queryOptions.CacheOptions
-            );
-
-            node.State = newState;
-            WireStateLifecycle(newState);
+            throw new InvalidOperationException(
+                $"Query {DescribeKey(queryOptions.Key)} is already registered with result type " +
+                $"{node.State.GetType().GenericTypeArguments[1].Name}, but {typeof(TRes).Name} was requested.");
         }
 
-        if (_persistence is not null) _ = LoadPersistedAsync(newState);
+        var newState = new QueryState<TKey, TRes>(
+            queryOptions.Key,
+            queryOptions.Handler,
+            queryOptions.FetchOptions,
+            queryOptions.RetryOptions,
+            queryOptions.CacheOptions
+        );
+
+        node.State = newState;
+        WireStateLifecycle(newState);
+
+        // Off the lock from the start: an adapter is free to block, and holding the registry
+        // while it does would stall every other query.
+        if (_persistence is not null) node.Restore = Task.Run(() => LoadPersistedAsync(newState));
 
         return newState;
     }
@@ -226,18 +235,24 @@ public sealed class QueryClient : IDisposable
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        var state = GetOrCreateQuery(options);
-
-        // Subscribed before the worker exists, so a prefetch settling concurrently cannot
-        // release the worker out from under this observer.
-        var observer = new QueryObserver<TRes>(
-            state,
-            onStateHasChanged,
-            options.Enabled
-        );
-
+        QueryObserver<TRes> observer;
         QueryWorker<TKey, TRes> worker;
-        lock (_gate) worker = GetOrCreateWorker(state);
+
+        // Registering the query, subscribing to it and giving it a worker happen together.
+        // Split apart, an eviction landing in the gap would drop the state a component is
+        // about to render, and the next subscriber to the same key would get a second one.
+        lock (_gate)
+        {
+            var state = GetOrCreateQueryLocked(options);
+
+            observer = new QueryObserver<TRes>(
+                state,
+                onStateHasChanged,
+                options.Enabled
+            );
+
+            worker = GetOrCreateWorker(state);
+        }
 
         worker.RunIfStale();
 
@@ -276,22 +291,39 @@ public sealed class QueryClient : IDisposable
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        var state = GetOrCreateQuery(options);
-
-        lock (_gate) return (state, GetOrCreateWorker(state));
+        lock (_gate)
+        {
+            var state = GetOrCreateQueryLocked(options);
+            return (state, GetOrCreateWorker(state));
+        }
     }
 
     private async Task RunAndReleaseAsync<TKey, TRes>(QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker)
         where TKey : ITuple
     {
-        try
+        // A worker released by whoever else was using this query refuses to run. Take a fresh
+        // one rather than returning data the caller never actually fetched.
+        for (var attempt = 0; attempt < MaxRunAttempts; attempt++)
         {
-            await worker.RunAsync();
+            var ran = false;
+
+            try
+            {
+                ran = await worker.RunAsync();
+            }
+            finally
+            {
+                ReleaseIfUnobserved(state);
+            }
+
+            if (ran) return;
+
+            lock (_gate) worker = GetOrCreateWorker(state);
         }
-        finally
-        {
-            ReleaseIfUnobserved(state);
-        }
+
+        throw new InvalidOperationException(
+            $"Query {DescribeKey(state.Key)} could not be run: its worker was released " +
+            $"{MaxRunAttempts} times while the fetch was starting.");
     }
 
     /// <summary>
@@ -304,7 +336,8 @@ public sealed class QueryClient : IDisposable
 
         if (node.Worker is QueryWorker<TKey, TRes> existing) return existing;
 
-        var worker = new QueryWorker<TKey, TRes>(_defaultOptions, _serviceProvider, state, _persistence);
+        var worker = new QueryWorker<TKey, TRes>(
+            _defaultOptions, _serviceProvider, state, _persistence, node.Restore);
         node.Worker = worker;
 
         return worker;
@@ -398,10 +431,11 @@ public sealed class QueryClient : IDisposable
             return;
         }
 
-        if (persisted is null || !state.IsPending) return;
+        if (persisted is null) return;
 
-        state.Restore(persisted.Data, persisted.LastUpdatedAt);
-        state.NotifyChanged();
+        // TryRestore refuses once a fetch has landed, so the older stored data cannot overwrite
+        // a fresher result that arrived while this load was in flight.
+        if (state.TryRestore(persisted.Data, persisted.LastUpdatedAt)) state.NotifyChanged();
     }
 
     private static string DescribeKey(ITuple key)

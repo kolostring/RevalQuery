@@ -14,6 +14,9 @@ namespace RevalQuery.Core.Caching.Eviction;
 /// </summary>
 public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) : ICacheEvictionPolicy, IDisposable, IAsyncDisposable
 {
+    private const int MaxTrackedQueries = 10_000;
+    private const int EvictionBatchSize = 1_000;
+
     private readonly ConcurrentDictionary<ITuple, EvictionToken> _deathRow = new(QueryKeyComparer.Instance);
     private readonly object _lifecycleGate = new();
     private CancellationTokenSource? _cancellationTokenSource;
@@ -41,7 +44,7 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
 
         EnsureStarted();
 
-        if (_deathRow.Count > 10000) CleanupOldestEntries();
+        if (_deathRow.Count > MaxTrackedQueries) EvictOldestEntries();
     }
 
     /// <summary>
@@ -156,14 +159,21 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
         }
     }
 
-    private void CleanupOldestEntries()
+    /// <summary>
+    /// Relieves a death row that has grown past its bound by evicting its most overdue
+    /// entries early. Dropping the records instead would leave those queries in the registry
+    /// with nothing left to evict them, which is the leak this guards against.
+    /// </summary>
+    private void EvictOldestEntries()
     {
-        var toRemove = _deathRow
+        var toEvict = _deathRow
             .OrderBy(x => x.Value.Expiry)
-            .Take(1000)
+            .Take(EvictionBatchSize)
             .Select(x => x.Key)
             .ToList();
 
-        foreach (var key in toRemove) _deathRow.TryRemove(key, out _);
+        foreach (var key in toEvict)
+            if (_deathRow.TryRemove(key, out var token))
+                OnEvictionRequired?.Invoke(token.Key);
     }
 }

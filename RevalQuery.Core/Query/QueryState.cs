@@ -96,7 +96,9 @@ public sealed class QueryState<TKey, TResponse>(
 
     private readonly List<IQueryObserver> _observers = [];
     private readonly object _observersGate = new();
+    private readonly object _dataGate = new();
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
+    private bool _hasFetched;
 
     /// <summary>
     /// Raised when any state property changes (data, status, fetch status).
@@ -205,16 +207,40 @@ public sealed class QueryState<TKey, TResponse>(
     }
 
     /// <summary>
+    /// Records the result of a successful fetch: the data, the moment it arrived, and the
+    /// resolved status, as one step so a concurrent restore cannot land between them.
+    /// </summary>
+    /// <param name="data">The fetched data.</param>
+    public void ApplyFetched(TResponse data)
+    {
+        lock (_dataGate)
+        {
+            Data = data;
+            Status = QueryStatus.Resolved;
+            _lastUpdatedAt = DateTimeOffset.UtcNow;
+            _hasFetched = true;
+        }
+    }
+
+    /// <summary>
     /// Adopts data loaded from persistence, keeping the timestamp it was originally fetched at
-    /// so restored data is correctly stale rather than appearing fresh.
+    /// so restored data is correctly stale rather than appearing fresh. Does nothing once a
+    /// fetch has produced data, which is always newer.
     /// </summary>
     /// <param name="data">The restored data.</param>
     /// <param name="lastUpdatedAt">When that data was originally fetched.</param>
-    public void Restore(TResponse data, DateTimeOffset lastUpdatedAt)
+    /// <returns>True when the data was adopted.</returns>
+    public bool TryRestore(TResponse data, DateTimeOffset lastUpdatedAt)
     {
-        Data = data;
-        Status = QueryStatus.Resolved;
-        _lastUpdatedAt = lastUpdatedAt;
+        lock (_dataGate)
+        {
+            if (_hasFetched) return false;
+
+            Data = data;
+            Status = QueryStatus.Resolved;
+            _lastUpdatedAt = lastUpdatedAt;
+            return true;
+        }
     }
 
     /// <summary>

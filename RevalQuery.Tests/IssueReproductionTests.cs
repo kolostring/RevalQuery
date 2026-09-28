@@ -183,7 +183,7 @@ public class IssueReproductionTests
     // ---------- Issue 4: QueryClient is callable from any thread ----------
 
     [Fact]
-    public void Issue4_Concurrent_PrefetchQuery_Keeps_The_Registry_Intact()
+    public async Task Issue4_Concurrent_PrefetchQuery_Keeps_The_Registry_Intact()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -202,8 +202,8 @@ public class IssueReproductionTests
                 try { client.PrefetchQuery(opts); }
                 catch (Exception ex) { failures.Add($"{ex.GetType().Name}: {ex.Message}"); }
             })).ToArray();
-            Task.WaitAll(tasks);
-            Thread.Sleep(2);
+            await Task.WhenAll(tasks);
+            await Task.Delay(2);
 
             if (client.FindQuery(key) is null) Interlocked.Increment(ref lostEntries);
         }
