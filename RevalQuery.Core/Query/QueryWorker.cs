@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions;
+using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Execution;
@@ -17,6 +18,8 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private readonly IServiceProvider _serviceProvider;
     private readonly IRetryPolicy _retryPolicy;
     private readonly RevalQueryOptions _revalQueryOptions;
+    private readonly IQueryPersistence? _persistence;
+    private readonly object _gate = new();
 
     private CoreFetchOptions EnsuredFetchOptions => _revalQueryOptions.FetchOptions.Apply(Query.FetchOptions);
     private CoreRetryOptions EnsuredRetryOptions => _revalQueryOptions.RetryOptions.Apply(Query.RetryOptions);
@@ -25,6 +28,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     private CancellationTokenSource? _pollingCts;
     private CancellationTokenSource? _currentFetchCts;
+    private Task? _inFlight;
     private bool _isDisposed;
 
     /// <summary>
@@ -33,18 +37,19 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// <param name="revalQueryOptions">Global options including retry and fetch defaults.</param>
     /// <param name="serviceProvider">Service provider for handler dependencies.</param>
     /// <param name="query">The query state to manage.</param>
-    /// <param name="cts">Optional cancellation token source.</param>
+    /// <param name="persistence">Optional durable store to save successful fetches to.</param>
     /// <param name="retryPolicy">Optional custom retry policy.</param>
     public QueryWorker(
         RevalQueryOptions revalQueryOptions,
         IServiceProvider serviceProvider,
         QueryState<TKey, TRes> query,
-        CancellationTokenSource? cts,
+        IQueryPersistence? persistence = null,
         IRetryPolicy? retryPolicy = null
     )
     {
         _serviceProvider = serviceProvider;
         _revalQueryOptions = revalQueryOptions;
+        _persistence = persistence;
 
         Query = query;
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
@@ -62,12 +67,31 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     private void PausePolling(QueryState<TKey, TRes> state)
     {
-        _pollingCts?.Cancel();
+        CancellationTokenSource? cts;
+        lock (_gate) cts = _pollingCts;
+        CancelSafely(cts);
     }
 
     private void CancelCurrentFetch()
     {
-        _currentFetchCts?.Cancel();
+        CancellationTokenSource? cts;
+        lock (_gate) cts = _currentFetchCts;
+        CancelSafely(cts);
+    }
+
+    /// <summary>
+    /// Cancels a source that the fetch it belongs to may have already finished with and disposed.
+    /// </summary>
+    private static void CancelSafely(CancellationTokenSource? cts)
+    {
+        try
+        {
+            cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The fetch settled first, so there is nothing left to cancel
+        }
     }
 
     private void StartPolling(TKey key)
@@ -75,27 +99,31 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         var interval = EnsuredFetchOptions.RefetchInterval;
         if (interval <= TimeSpan.Zero) return;
 
-        if (_pollingCts?.IsCancellationRequested ?? true)
+        CancellationTokenSource cts;
+        lock (_gate)
         {
-            _pollingCts?.Dispose();
-            _pollingCts = new CancellationTokenSource();
+            if (_isDisposed) return;
+            if (_pollingCts is { IsCancellationRequested: false }) return;
+
+            cts = new CancellationTokenSource();
+            _pollingCts = cts;
         }
 
-        try
+        _ = Task.Run(async () =>
         {
-            _ = Task.Run(async () =>
+            try
             {
-                while (!_isDisposed && !_pollingCts.IsCancellationRequested)
+                while (!cts.IsCancellationRequested)
                 {
-                    await Task.Delay(interval, _pollingCts.Token);
+                    await Task.Delay(interval, cts.Token);
                     RunIfAllowed();
                 }
-            }, _pollingCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            //Cancelled polling
-        }
+            }
+            catch (OperationCanceledException)
+            {
+                // Polling was paused or the worker was disposed
+            }
+        }, cts.Token);
     }
 
     private void HandleInvalidation()
@@ -124,33 +152,66 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// Executes the query handler with retry logic.
     /// Updates Query.Data, Query.Status on success.
     /// Sets Query.Exception, Query.Status on failure.
+    /// Concurrent callers join the fetch already in flight rather than starting a second one.
     /// </summary>
-    /// <returns>Internal - use Query.Data to access result.</returns>
-    public async Task RunAsync()
+    /// <returns>A task completing when the fetch settles - use Query.Data to access the result.</returns>
+    public Task RunAsync()
     {
-        if (Query.IsFetching) return;
+        TaskCompletionSource completion;
+
+        lock (_gate)
+        {
+            if (_isDisposed) return Task.CompletedTask;
+            if (_inFlight is { IsCompleted: false }) return _inFlight;
+
+            completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _inFlight = completion.Task;
+        }
+
+        _ = RunCoreAsync(completion);
+        return completion.Task;
+    }
+
+    private async Task RunCoreAsync(TaskCompletionSource completion)
+    {
+        var fetchCts = new CancellationTokenSource();
+
+        lock (_gate)
+        {
+            if (_isDisposed)
+            {
+                fetchCts.Dispose();
+                completion.TrySetResult();
+                return;
+            }
+
+            _currentFetchCts = fetchCts;
+        }
 
         Query.FetchStatus = FetchStatus.Fetching;
         Query.NotifyChanged();
-
-        _currentFetchCts = new CancellationTokenSource();
 
         var ctx = new QueryHandlerExecutionContext<TKey>
         {
             Key = Query.Key,
             ServiceProvider = _serviceProvider,
-            CancellationToken = _currentFetchCts.Token
+            CancellationToken = fetchCts.Token
         };
+
+        var fetched = default(TRes);
+        var succeeded = false;
 
         try
         {
-            Query.Data = await _retryPolicy.ExecuteWithRetryAsync<TRes>(
+            fetched = await _retryPolicy.ExecuteWithRetryAsync<TRes>(
                 () => Query.Handler(ctx),
                 EnsuredRetryOptions,
-                _currentFetchCts.Token
+                fetchCts.Token
             );
+            Query.Data = fetched;
             Query.SetFresh();
             Query.Status = QueryStatus.Resolved;
+            succeeded = true;
         }
         catch (OperationCanceledException)
         {
@@ -163,12 +224,35 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         }
         finally
         {
-            _currentFetchCts.Dispose();
-            _currentFetchCts = null;
+            lock (_gate)
+            {
+                if (ReferenceEquals(_currentFetchCts, fetchCts)) _currentFetchCts = null;
+            }
+
+            fetchCts.Dispose();
+
+            Query.FetchStatus = FetchStatus.Idle;
+            Query.NotifyChanged();
         }
 
-        Query.FetchStatus = FetchStatus.Idle;
-        Query.NotifyChanged();
+        if (succeeded) await SavePersistedAsync(fetched!);
+
+        completion.TrySetResult();
+    }
+
+    private async Task SavePersistedAsync(TRes data)
+    {
+        if (_persistence is null) return;
+
+        try
+        {
+            await _persistence.SaveAsync(Query.Key, new PersistedQuery<TRes>(data, Query.LastUpdatedAt));
+        }
+        catch
+        {
+            // A persistence adapter failing does not make the fetch a failure: the data is
+            // in the registry and usable. Reporting the failure is the adapter's own job.
+        }
     }
 
     /// <summary>
@@ -176,17 +260,25 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// </summary>
     public void Dispose()
     {
-        if (_isDisposed) return;
+        CancellationTokenSource? pollingCts;
+        CancellationTokenSource? fetchCts;
 
-        _pollingCts?.Cancel();
-        _pollingCts?.Dispose();
-        _currentFetchCts?.Cancel();
-        _currentFetchCts?.Dispose();
+        lock (_gate)
+        {
+            if (_isDisposed) return;
+            _isDisposed = true;
+            pollingCts = _pollingCts;
+            fetchCts = _currentFetchCts;
+        }
 
-        _isDisposed = true;
         Query.OnFirstSubscriberAdded -= StartPolling;
         Query.OnLastSubscriberRemoved -= PausePolling;
         Query.OnInvalidated -= HandleInvalidation;
         Query.OnCancelRequested -= CancelCurrentFetch;
+
+        // Cancelled, not disposed: the polling loop still holds its token, and the in-flight
+        // fetch disposes its own source when it settles.
+        CancelSafely(pollingCts);
+        CancelSafely(fetchCts);
     }
 }

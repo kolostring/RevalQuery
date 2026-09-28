@@ -1,47 +1,56 @@
 using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Caching;
+using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Caching.Eviction;
-using RevalQuery.Core.Caching.Key;
-using RevalQuery.Core.Caching.Storage;
 using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
+using RevalQuery.Core.Registry;
 
 namespace RevalQuery.Core;
 
 /// <summary>
 /// Main entry point for query management.
-/// Coordinates state management, caching, subscription, and worker orchestration.
+/// Owns the registry of live query states, the workers driving them, and the eviction policy.
 /// </summary>
-public sealed class QueryClient
+/// <remarks>
+/// Safe to call from any thread. One client serves one user session: the registry, the
+/// eviction policy and the client itself share a lifetime, and sharing a client between
+/// users leaks their data to each other.
+/// </remarks>
+public sealed class QueryClient : IDisposable
 {
-    private readonly Dictionary<int, IQueryState> _stateLookup = new();
-    private readonly Dictionary<int, IDisposable> _workerLookup = new();
-    private readonly ICacheStorage _cacheStorage;
+    private readonly object _gate = new();
+    private readonly QueryRegistry _registry = new();
     private readonly ICacheEvictionPolicy _evictionPolicy;
+    private readonly bool _ownsEvictionPolicy;
     private readonly IServiceProvider _serviceProvider;
     private readonly RevalQueryOptions _defaultOptions;
+    private readonly IQueryPersistence? _persistence;
+    private bool _isDisposed;
 
     /// <summary>
     /// Creates a new QueryClient instance.
     /// </summary>
     /// <param name="serviceProvider">Service provider for resolving dependencies in handlers.</param>
     /// <param name="defaultOptions">Default options for all queries (plugins, cache, retry, fetch).</param>
-    /// <param name="cacheStorage">Optional custom cache storage implementation.</param>
-    /// <param name="evictionPolicy">Optional custom eviction policy implementation.</param>
+    /// <param name="evictionPolicy">Optional custom eviction policy. One is created when omitted.</param>
+    /// <param name="persistence">Optional durable store queries are loaded from and saved to.</param>
     public QueryClient(
         IServiceProvider serviceProvider,
         RevalQueryOptions defaultOptions,
-        ICacheStorage? cacheStorage = null,
-        ICacheEvictionPolicy? evictionPolicy = null
+        ICacheEvictionPolicy? evictionPolicy = null,
+        IQueryPersistence? persistence = null
     )
     {
         _serviceProvider = serviceProvider;
-        _cacheStorage = cacheStorage ?? new TrieCacheStorage();
+        _defaultOptions = defaultOptions;
+        _persistence = persistence;
+        _ownsEvictionPolicy = evictionPolicy is null;
         _evictionPolicy = evictionPolicy ?? new TtlQueryGarbageCollector(defaultOptions);
         _evictionPolicy.OnEvictionRequired += HandleEviction;
-        _defaultOptions = defaultOptions;
     }
 
     /// <summary>
@@ -52,35 +61,34 @@ public sealed class QueryClient
         QueryOptions<TKey, TRes> queryOptions
     ) where TKey : ITuple
     {
-        var keySegments = queryOptions.Key;
-        var handler = queryOptions.Handler;
-        var fetchOptions = queryOptions.FetchOptions;
-        var retryOptions = queryOptions.RetryOptions;
-        var cacheOptions = queryOptions.CacheOptions;
+        QueryState<TKey, TRes> newState;
 
-        var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
-        var state = _stateLookup.GetValueOrDefault(lookupKey);
-        if (state != null)
+        lock (_gate)
         {
-            if (state is QueryState<TKey, TRes> cachedState) return cachedState;
+            var node = _registry.GetOrCreateNode(queryOptions.Key);
 
-            throw new InvalidOperationException(
-                $"Key collision at {string.Join("/", keySegments)}. " +
-                $"Expected {typeof(TRes).Name} but found {state.GetType().GenericTypeArguments[0].Name}.");
+            if (node.State is not null)
+            {
+                if (node.State is QueryState<TKey, TRes> existing) return existing;
+
+                throw new InvalidOperationException(
+                    $"Query {DescribeKey(queryOptions.Key)} is already registered with result type " +
+                    $"{node.State.GetType().GenericTypeArguments[1].Name}, but {typeof(TRes).Name} was requested.");
+            }
+
+            newState = new QueryState<TKey, TRes>(
+                queryOptions.Key,
+                queryOptions.Handler,
+                queryOptions.FetchOptions,
+                queryOptions.RetryOptions,
+                queryOptions.CacheOptions
+            );
+
+            node.State = newState;
+            WireStateLifecycle(newState);
         }
 
-        _cacheStorage.GetOrCreateNode(keySegments);
-
-        var newState = new QueryState<TKey, TRes>(
-            keySegments,
-            handler,
-            fetchOptions,
-            retryOptions,
-            cacheOptions
-        );
-        _stateLookup[lookupKey] = newState;
-
-        WireQueryStateWithEvictionPolicy(newState);
+        if (_persistence is not null) _ = LoadPersistedAsync(newState);
 
         return newState;
     }
@@ -92,8 +100,7 @@ public sealed class QueryClient
     /// <param name="keySegments">The key to invalidate.</param>
     public void Invalidate(ITuple keySegments)
     {
-        var node = _cacheStorage.PeekNode(keySegments);
-        if (node != null) NotifyInvalidationRecursive(node);
+        foreach (var state in StatesUnder(keySegments)) state.NotifyInvalidated();
     }
 
     /// <summary>
@@ -118,7 +125,7 @@ public sealed class QueryClient
     public void Cancel(string key) => Cancel(ValueTuple.Create(key));
 
     /// <summary>
-    /// Prefetches data into cache without subscribing.
+    /// Prefetches data into the registry without subscribing.
     /// Fire-and-forget - triggers fetch immediately, no return value.
     /// Useful for preloading data before component mounts.
     /// </summary>
@@ -128,24 +135,13 @@ public sealed class QueryClient
     public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
-        _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
-
-        var state = GetOrCreateQuery(queryOptions);
-
-        var lookupKey = CacheKeyCalculator.GetHashCode(state.Key);
-        if (!_workerLookup.TryGetValue(lookupKey, out var worker))
-        {
-            var newWorker = new QueryWorker<TKey, TRes>(_defaultOptions, _serviceProvider, state, null);
-            _workerLookup[lookupKey] = newWorker;
-            worker = newWorker;
-        }
-
-        _ = ((QueryWorker<TKey, TRes>)worker!).RunAsync();
+        _ = RunOnceAsync(queryOptions);
     }
 
     /// <summary>
     /// Fetches data and returns the result.
     /// Unlike PrefetchQuery, this awaits completion and returns data.
+    /// Callers arriving while a fetch is already running join it instead of starting a second one.
     /// Throws exception on failure.
     /// </summary>
     /// <typeparam name="TKey">The key type.</typeparam>
@@ -156,23 +152,9 @@ public sealed class QueryClient
     public async Task<TRes> FetchQueryAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
-        _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+        var state = await RunOnceAsync(queryOptions);
 
-        var state = GetOrCreateQuery(queryOptions);
-
-        var lookupKey = CacheKeyCalculator.GetHashCode(state.Key);
-        if (!_workerLookup.TryGetValue(lookupKey, out var worker))
-        {
-            var newWorker = new QueryWorker<TKey, TRes>(_defaultOptions, _serviceProvider, state, null);
-            _workerLookup[lookupKey] = newWorker;
-            worker = newWorker;
-        }
-
-        await ((QueryWorker<TKey, TRes>)worker!).RunAsync();
-        if (state.IsException)
-        {
-            throw state.Exception!;
-        }
+        if (state.IsException) throw state.Exception!;
 
         return state.Data!;
     }
@@ -184,20 +166,17 @@ public sealed class QueryClient
     /// <param name="keySegments">The key to find.</param>
     public IQueryState? FindQuery(ITuple keySegments)
     {
-        var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
-        return _stateLookup.GetValueOrDefault(lookupKey);
+        lock (_gate) return _registry.PeekNode(keySegments)?.State;
     }
 
     /// <summary>
     /// Finds an existing query state by key.
-    /// Returns null if not found.
-    /// Automatically casts the result to the correct type.
+    /// Returns null if not found, or if the query was registered with a different result type.
     /// </summary>
     /// <param name="keySegments">The key to find.</param>
     public QueryState<TKey, TRes>? FindQuery<TRes, TKey>(TKey keySegments) where TKey : ITuple
     {
-        var lookupKey = CacheKeyCalculator.GetHashCode(keySegments);
-        return (QueryState<TKey, TRes>?)_stateLookup.GetValueOrDefault(lookupKey);
+        return FindQuery(keySegments) as QueryState<TKey, TRes>;
     }
 
     /// <summary>
@@ -209,27 +188,19 @@ public sealed class QueryClient
 
     /// <summary>
     /// Finds an existing query state by string key.
-    /// Returns null if not found.
-    /// Automatically casts the result to the correct type.
+    /// Returns null if not found, or if the query was registered with a different result type.
     /// </summary>
     /// <param name="key">The string key.</param>
-    public QueryState<ValueTuple<string>, TRes>? FindQuery<TRes>(string key) => (QueryState<ValueTuple<string>, TRes>?)FindQuery(ValueTuple.Create(key));
+    public QueryState<ValueTuple<string>, TRes>? FindQuery<TRes>(string key) =>
+        FindQuery<TRes, ValueTuple<string>>(ValueTuple.Create(key));
 
     /// <summary>
-    /// Finds all queries under a key prefix.
-    /// Used for bulk invalidation - returns all child query states.
+    /// Finds all queries under a key prefix, including the query at the prefix itself.
+    /// Used for bulk invalidation.
     /// </summary>
     /// <param name="keySegments">The prefix key.</param>
     /// <returns>Collection of matching query states.</returns>
-    public ICollection<IQueryState> FindQueries(ITuple keySegments)
-    {
-        var node = _cacheStorage.PeekNode(keySegments);
-        if (node == null) return [];
-
-        var childNodes = _cacheStorage.GetChildNodes(node);
-
-        return [.. childNodes.Select(child => _stateLookup.GetValueOrDefault(child.KeyHashCode)).OfType<IQueryState>()];
-    }
+    public ICollection<IQueryState> FindQueries(ITuple keySegments) => StatesUnder(keySegments);
 
     /// <summary>
     /// Finds all queries under a string key prefix.
@@ -248,71 +219,184 @@ public sealed class QueryClient
     public QueryObserver<TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
         where TKey : ITuple
     {
-        _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        var state = GetOrCreateQuery(
-            queryOptions
-        );
+        var state = GetOrCreateQuery(options);
+
+        QueryWorker<TKey, TRes> worker;
+        lock (_gate) worker = GetOrCreateWorker(state);
 
         var observer = new QueryObserver<TRes>(
             state,
             onStateHasChanged,
-            queryOptions.Enabled
+            options.Enabled
         );
 
-        EnsureWorkerIsRunning(state);
+        worker.RunIfStale();
 
         return observer;
     }
 
-    private void EnsureWorkerIsRunning<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    /// <summary>
+    /// Stops every worker and detaches from the eviction policy.
+    /// Called by the DI container when the owning scope ends.
+    /// </summary>
+    public void Dispose()
     {
-        var lookupKey = CacheKeyCalculator.GetHashCode(state.Key);
+        List<IDisposable> workers;
 
-        if (_workerLookup.TryGetValue(lookupKey, out var worker))
+        lock (_gate)
         {
-            ((QueryWorker<TKey, TRes>)worker).RunIfStale();
-            return;
+            if (_isDisposed) return;
+            _isDisposed = true;
+            workers = QueryRegistry.WorkersFrom(_registry.Root);
+            _registry.Clear();
         }
 
-        var newWorker = new QueryWorker<TKey, TRes>(
-            _defaultOptions,
-            _serviceProvider,
-            state,
-            null
-        );
+        _evictionPolicy.OnEvictionRequired -= HandleEviction;
 
-        _workerLookup[lookupKey] = newWorker;
+        foreach (var worker in workers) worker.Dispose();
 
-        state.OnLastSubscriberRemoved += (_) =>
+        // Only stop a policy this client created. An injected one is the container's to dispose.
+        if (_ownsEvictionPolicy) _ = _evictionPolicy.StopAsync();
+    }
+
+    private async Task<QueryState<TKey, TRes>> RunOnceAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
+        where TKey : ITuple
+    {
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        var state = GetOrCreateQuery(options);
+
+        QueryWorker<TKey, TRes> worker;
+        lock (_gate) worker = GetOrCreateWorker(state);
+
+        try
         {
-            if (_workerLookup.Remove(lookupKey, out var removedWorker)) removedWorker.Dispose();
+            await worker.RunAsync();
+        }
+        finally
+        {
+            ReleaseIfUnobserved(state);
+        }
+
+        return state;
+    }
+
+    /// <summary>
+    /// Returns the worker for a state, creating it when missing. Callers hold the lock.
+    /// </summary>
+    private QueryWorker<TKey, TRes> GetOrCreateWorker<TKey, TRes>(QueryState<TKey, TRes> state)
+        where TKey : ITuple
+    {
+        var node = _registry.GetOrCreateNode(state.Key);
+
+        if (node.Worker is QueryWorker<TKey, TRes> existing) return existing;
+
+        var worker = new QueryWorker<TKey, TRes>(_defaultOptions, _serviceProvider, state, _persistence);
+        node.Worker = worker;
+
+        return worker;
+    }
+
+    /// <summary>
+    /// Wires a state's subscriber lifecycle once, when it enters the registry. A query with
+    /// no observers stops its worker and goes on the eviction policy's list; a query that
+    /// gains one comes back off it.
+    /// </summary>
+    private void WireStateLifecycle<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    {
+        state.OnFirstSubscriberAdded += key => _evictionPolicy.CancelEviction(key);
+        state.OnLastSubscriberRemoved += unobserved =>
+        {
+            DisposeWorker(unobserved.Key);
+            _evictionPolicy.RegisterForEviction(unobserved.Key, unobserved.CacheOptions);
         };
-        newWorker.RunIfStale();
+    }
+
+    /// <summary>
+    /// Stops the worker for a query nobody is watching and puts the query on the eviction list.
+    /// Used after a prefetch or a one-off fetch, which create no observer of their own.
+    /// </summary>
+    private void ReleaseIfUnobserved<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    {
+        if (state.HasObservers) return;
+
+        DisposeWorker(state.Key);
+        _evictionPolicy.RegisterForEviction(state.Key, state.CacheOptions);
+    }
+
+    private void DisposeWorker(ITuple key)
+    {
+        IDisposable? worker;
+
+        lock (_gate)
+        {
+            var node = _registry.PeekNode(key);
+            if (node is null || node.State?.HasObservers == true) return;
+
+            worker = node.Worker;
+            node.Worker = null;
+        }
+
+        worker?.Dispose();
     }
 
     private void HandleEviction(ITuple key)
     {
-        var hash = CacheKeyCalculator.GetHashCode(key);
-        _stateLookup.Remove(hash);
-        var nodeFoundAndDeleted = _cacheStorage.PruneNode(key);
+        IDisposable? worker;
 
-        if (!nodeFoundAndDeleted) throw new InvalidOperationException($"Couldn't delete node with key {key}");
+        lock (_gate)
+        {
+            var node = _registry.PeekNode(key);
+            if (node?.State is null || node.State.HasObservers) return;
+
+            worker = node.Worker;
+            node.Worker = null;
+            node.State = null;
+            _registry.PruneNode(key);
+        }
+
+        worker?.Dispose();
     }
 
-    private void NotifyInvalidationRecursive(CacheNode node)
+    private List<IQueryState> StatesUnder(ITuple keySegments)
     {
-        var state = _stateLookup.GetValueOrDefault(node.KeyHashCode);
-        state?.NotifyInvalidated();
-
-        foreach (var child in node.Children.Values) NotifyInvalidationRecursive(child);
+        lock (_gate)
+        {
+            var node = _registry.PeekNode(keySegments);
+            return node is null ? [] : QueryRegistry.StatesFrom(node);
+        }
     }
 
-    private void WireQueryStateWithEvictionPolicy<TKey, TResponse>(QueryState<TKey, TResponse> stateToWire)
-        where TKey : ITuple
+    /// <summary>
+    /// Loads a query's data from persistence, unless a fetch has already produced some.
+    /// </summary>
+    private async Task LoadPersistedAsync<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
-        stateToWire.OnFirstSubscriberAdded += key => _evictionPolicy.CancelEviction(key);
-        stateToWire.OnLastSubscriberRemoved +=
-            state => _evictionPolicy.RegisterForEviction(state);
+        PersistedQuery<TRes>? persisted;
+
+        try
+        {
+            persisted = await _persistence!.LoadAsync<TRes>(state.Key);
+        }
+        catch
+        {
+            // A persistence adapter failing leaves the query to fetch normally.
+            // Reporting the failure is the adapter's own job.
+            return;
+        }
+
+        if (persisted is null || !state.IsPending) return;
+
+        state.Restore(persisted.Data, persisted.LastUpdatedAt);
+        state.NotifyChanged();
+    }
+
+    private static string DescribeKey(ITuple key)
+    {
+        var segments = new string[key.Length];
+        for (var i = 0; i < key.Length; i++) segments[i] = key[i]?.ToString() ?? "null";
+        return $"({string.Join(", ", segments)})";
     }
 }

@@ -36,6 +36,10 @@ public sealed class CacheOptionsBuilder
 {
     private TimeSpan? _gcTime;
 
+    /// <summary>
+    /// Creates a builder, optionally starting from options already set.
+    /// </summary>
+    /// <param name="existing">Options to start from, or null to start empty.</param>
     public CacheOptionsBuilder(CacheOptions? existing = null)
     {
         if (existing == null) return;

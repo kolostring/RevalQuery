@@ -95,6 +95,7 @@ public sealed class QueryState<TKey, TResponse>(
     public CacheOptions? CacheOptions { get; set; } = cacheOptions;
 
     private readonly List<IQueryObserver> _observers = [];
+    private readonly object _observersGate = new();
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
 
     /// <summary>
@@ -156,7 +157,25 @@ public sealed class QueryState<TKey, TResponse>(
     /// True when at least one enabled observer is subscribed.
     /// Query can fetch only when enabled.
     /// </summary>
-    public bool IsEnabled => _observers.Count > 0 && _observers.Any(o => o.Enabled);
+    public bool IsEnabled
+    {
+        get
+        {
+            lock (_observersGate) return _observers.Any(o => o.Enabled);
+        }
+    }
+
+    /// <summary>
+    /// True when at least one observer is subscribed, enabled or not.
+    /// A query with no observers is a candidate for eviction.
+    /// </summary>
+    public bool HasObservers
+    {
+        get
+        {
+            lock (_observersGate) return _observers.Count > 0;
+        }
+    }
 
     /// <summary>
     /// True when can execute a fetch: Idle AND Enabled.
@@ -183,6 +202,19 @@ public sealed class QueryState<TKey, TResponse>(
     public void SetFresh()
     {
         _lastUpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>
+    /// Adopts data loaded from persistence, keeping the timestamp it was originally fetched at
+    /// so restored data is correctly stale rather than appearing fresh.
+    /// </summary>
+    /// <param name="data">The restored data.</param>
+    /// <param name="lastUpdatedAt">When that data was originally fetched.</param>
+    public void Restore(TResponse data, DateTimeOffset lastUpdatedAt)
+    {
+        Data = data;
+        Status = QueryStatus.Resolved;
+        _lastUpdatedAt = lastUpdatedAt;
     }
 
     /// <summary>
@@ -217,9 +249,14 @@ public sealed class QueryState<TKey, TResponse>(
     /// </summary>
     public void Subscribe(IQueryObserver observer)
     {
-        if (_observers.Count == 0) OnFirstSubscriberAdded?.Invoke(Key);
-        _observers.Add(observer);
+        bool isFirst;
+        lock (_observersGate)
+        {
+            isFirst = _observers.Count == 0;
+            _observers.Add(observer);
+        }
 
+        if (isFirst) OnFirstSubscriberAdded?.Invoke(Key);
     }
 
     /// <summary>
@@ -228,8 +265,13 @@ public sealed class QueryState<TKey, TResponse>(
     /// </summary>
     public void Unsubscribe(IQueryObserver observer)
     {
-        _observers.Remove(observer);
+        bool isLast;
+        lock (_observersGate)
+        {
+            if (!_observers.Remove(observer)) return;
+            isLast = _observers.Count == 0;
+        }
 
-        if (_observers.Count == 0) OnLastSubscriberRemoved?.Invoke(this);
+        if (isLast) OnLastSubscriberRemoved?.Invoke(this);
     }
 }

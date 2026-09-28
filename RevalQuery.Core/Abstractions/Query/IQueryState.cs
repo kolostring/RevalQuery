@@ -23,6 +23,12 @@ public interface IQueryState : IObservableQueryState
     bool IsEnabled { get; }
 
     /// <summary>
+    /// True when at least one observer is subscribed, enabled or not.
+    /// A query with no observers is a candidate for eviction.
+    /// </summary>
+    bool HasObservers { get; }
+
+    /// <summary>
     /// True when fetching AND pending (no data yet) - equivalent to loading state.
     /// </summary>
     bool IsLoading { get; }

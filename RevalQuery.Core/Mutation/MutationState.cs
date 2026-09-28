@@ -12,9 +12,13 @@ namespace RevalQuery.Core.Mutation;
 /// </summary>
 public enum MutationStatus
 {
+    /// <summary>No mutation has run, or the state was reset.</summary>
     Idle,
+    /// <summary>The mutation handler is executing.</summary>
     Fetching,
+    /// <summary>The mutation completed successfully.</summary>
     Resolved,
+    /// <summary>The mutation failed.</summary>
     Exception
 }
 
@@ -107,9 +111,16 @@ public sealed class MutationState<TParams, TResponse>(
             }
         }
 
+        // This call's own outcome. Reading the shared Data and Exception fields here would
+        // hand a slow mutation whatever a faster concurrent one happened to write.
         var isMutationCancelled = false;
+        TResponse? settledData = default;
+        Exception? settledException = null;
+
         try
         {
+            await (options.OnMutate?.Invoke(variables) ?? Task.CompletedTask);
+
             var ctx = new MutationHandlerExecutionContext<TParams>
             {
                 Params = variables,
@@ -122,6 +133,7 @@ public sealed class MutationState<TParams, TResponse>(
                 _retryOpts,
                 linkedCts.Token
             );
+            settledData = resolved;
 
             bool isLatestMutation;
             lock (_mutationLock)
@@ -136,6 +148,8 @@ public sealed class MutationState<TParams, TResponse>(
                 }
             }
 
+            await (options.OnResolved?.Invoke(resolved, variables) ?? Task.CompletedTask);
+
             if (isLatestMutation)
             {
                 await (mutateOptions?.OnResolved?.Invoke(resolved, variables) ?? Task.CompletedTask);
@@ -147,6 +161,8 @@ public sealed class MutationState<TParams, TResponse>(
         }
         catch (Exception ex)
         {
+            settledException = ex;
+
             bool isLatestMutation;
             lock (_mutationLock)
             {
@@ -158,6 +174,8 @@ public sealed class MutationState<TParams, TResponse>(
                     Data = default;
                 }
             }
+
+            await (options.OnException?.Invoke(ex, variables) ?? Task.CompletedTask);
 
             if (isLatestMutation)
             {
@@ -175,10 +193,10 @@ public sealed class MutationState<TParams, TResponse>(
 
             if (!isMutationCancelled)
             {
-                await (options.OnSettled?.Invoke(Data, Exception, variables) ?? Task.CompletedTask);
+                await (options.OnSettled?.Invoke(settledData, settledException, variables) ?? Task.CompletedTask);
 
                 if (shouldFireOnSettled)
-                    await (mutateOptions?.OnSettled?.Invoke(Data, Exception, variables) ?? Task.CompletedTask);
+                    await (mutateOptions?.OnSettled?.Invoke(settledData, settledException, variables) ?? Task.CompletedTask);
             }
 
             NotifyChanged();

@@ -60,6 +60,10 @@ public sealed class RetryOptionsBuilder
     private int? _retry;
     private Func<int, TimeSpan>? _retryDelay;
 
+    /// <summary>
+    /// Creates a builder, optionally starting from options already set.
+    /// </summary>
+    /// <param name="existing">Options to start from, or null to start empty.</param>
     public RetryOptionsBuilder(RetryOptions? existing = null)
     {
         if (existing == null) return;

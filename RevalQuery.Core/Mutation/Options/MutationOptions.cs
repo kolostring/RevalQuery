@@ -40,6 +40,10 @@ public sealed class MutationOptionsBuilder<TParams, TRes> where TParams : class
     private Func<Exception, TParams, Task>? _onException;
     private Func<TRes?, Exception?, TParams, Task>? _onSettled;
 
+    /// <summary>
+    /// Creates a builder for a mutation driven by the given handler.
+    /// </summary>
+    /// <param name="handler">The async handler performing the write.</param>
     public MutationOptionsBuilder(Func<MutationHandlerExecutionContext<TParams>, Task<TRes>> handler)
     {
         _handler = handler;

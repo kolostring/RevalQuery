@@ -55,6 +55,10 @@ public sealed class FetchOptionsBuilder
     private TimeSpan? _refetchInterval;
     private TimeSpan? _staleTime;
 
+    /// <summary>
+    /// Creates a builder, optionally starting from options already set.
+    /// </summary>
+    /// <param name="existing">Options to start from, or null to start empty.</param>
     public FetchOptionsBuilder(FetchOptions? existing = null)
     {
         if (existing == null) return;
