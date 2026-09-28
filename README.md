@@ -53,7 +53,7 @@ builder.Services.AddRevalQuery();
 ## Features
 
 - **Type-safe queries** - ITuple-based keys, compile-time type safety
-- **Automatic caching** - Trie-based hierarchical cache with TTL eviction
+- **Hierarchical registry** - Queries organised by key path, with TTL eviction of the ones nobody is watching
 - **Query factory pattern** - Centralized query definitions for reuse and easy invalidation
 - **Static handler enforcement** - Compilation error if handlers capture component state
 - **Plugin system** - Middleware-style extensibility for validation, logging, metrics
@@ -61,6 +61,7 @@ builder.Services.AddRevalQuery();
 - **Query toggling** - Enable/disable queries without losing cached data
 - **Polling support** - Automatic refetch at configurable intervals
 - **Retry with backoff** - Configurable exponential backoff retry policy
+- **Optional persistence** - Point `IQueryPersistence` at a durable store to survive restarts
 
 ## Documentation
 

@@ -153,6 +153,43 @@ services.AddRevalQuery(options =>
 
 ---
 
+## Persistence
+
+Query data lives in memory and disappears with the session. Implement
+`IQueryPersistence` and register it to keep a durable copy. A query loads from the
+store when it is created and saves to it after every successful fetch.
+
+```csharp
+public class LocalStoragePersistence : IQueryPersistence
+{
+    public ValueTask<PersistedQuery<TRes>?> LoadAsync<TRes>(ITuple key, CancellationToken ct = default) { ... }
+
+    public ValueTask SaveAsync<TRes>(ITuple key, PersistedQuery<TRes> entry, CancellationToken ct = default) { ... }
+}
+
+services.AddScoped<IQueryPersistence, LocalStoragePersistence>();
+```
+
+Adapters own serialisation and their own key encoding; the library never
+serialises. `LastUpdatedAt` is stored and restored verbatim, so data that was
+already stale when the process stopped refetches on the next start rather than
+appearing fresh.
+
+---
+
+## Lifetimes and threads
+
+`AddRevalQuery` registers `QueryClient` and the eviction policy as scoped, and they
+share one registry. That is deliberate: one registry per user session is what keeps
+one user's data out of another's. Registering either as a singleton in a server
+process leaks data between users.
+
+`QueryClient` is safe to call from any thread. Observer callbacks are not
+synchronised, because `QueryComponentBase` already routes them through
+`InvokeAsync`.
+
+---
+
 ## Plugin System
 
 Extensibility via `IQueryPlugin` middleware.
