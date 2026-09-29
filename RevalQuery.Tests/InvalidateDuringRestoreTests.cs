@@ -60,7 +60,7 @@ public class InvalidateDuringRestoreTests
         await Task.Delay(400);
 
         // The invalidation fires a fetch straight away, because CanFetch is true while the
-        // restore is still outstanding. TryRestore then declines, since _hasFetched is set.
+        // restore is still outstanding. TryRestore then declines, since _hasSettled is set.
         //
         // This is load-bearing: anything that makes the query report FetchStatus.Fetching
         // for the duration of the restore turns CanFetch false, drops the invalidation,

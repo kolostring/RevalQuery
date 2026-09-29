@@ -26,9 +26,9 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
         }
     </div>
 
-    @if (Suggestions.Error is not null)
+    @if (Suggestions.Exception is not null)
     {
-        <p style="color:red">Error: @Suggestions.Error.Message</p>
+        <p style="color:red">Error: @Suggestions.Exception.Message</p>
     }
     else if (Suggestions.Data is not null)
     {
@@ -39,7 +39,7 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
             }
         </ul>
     }
-    else if (!Suggestions.IsFetching)
+    else if (!Suggestions.IsLoading)
     {
         <p><em>Nothing to show</em></p>
     }

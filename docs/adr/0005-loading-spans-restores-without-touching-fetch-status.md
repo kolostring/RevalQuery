@@ -16,7 +16,7 @@ timestamp over the `MinValue` that `NotifyInvalidated` wrote, nothing is stale a
 and the query never refetches. The user is left on stale data with no way to tell.
 
 Today that cannot happen, because `CanFetch` is true throughout the restore: the
-invalidation fetches immediately and `TryRestore` then declines on `_hasFetched`.
+invalidation fetches immediately and `TryRestore` then declines on `_hasSettled`.
 `RevalQuery.Tests/InvalidateDuringRestoreTests.cs` pins exactly this. If you are here
 because that test failed, something started reporting `Fetching` during a restore.
 
