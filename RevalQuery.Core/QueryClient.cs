@@ -59,6 +59,7 @@ public sealed class QueryClient : IDisposable
     /// Gets or creates a query state for the given options.
     /// Won't start fetching - prefer Subscribe() for component usage.
     /// </summary>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions
     ) where TKey : ITuple
@@ -73,6 +74,8 @@ public sealed class QueryClient : IDisposable
     private QueryState<TKey, TRes> GetOrCreateQueryLocked<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
+        ThrowIfDisposedLocked();
+
         var node = _registry.GetOrCreateNode(queryOptions.Key);
 
         if (node.State is not null)
@@ -141,6 +144,7 @@ public sealed class QueryClient : IDisposable
     /// <typeparam name="TKey">The key type.</typeparam>
     /// <typeparam name="TRes">The response type.</typeparam>
     /// <param name="queryOptions">Query configuration.</param>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
@@ -161,6 +165,7 @@ public sealed class QueryClient : IDisposable
     /// <param name="queryOptions">Query configuration.</param>
     /// <returns>The fetched data.</returns>
     /// <exception cref="Exception">Throws if the query fails.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public async Task<TRes> FetchQueryAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
@@ -230,6 +235,7 @@ public sealed class QueryClient : IDisposable
     /// <param name="queryOptions">Query configuration including key and handler.</param>
     /// <param name="onStateHasChanged">Callback to invoke StateHasChanged on the component.</param>
     /// <returns>A QueryObserver that should be disposed when component is disposed.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public QueryObserver<TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
         where TKey : ITuple
     {
@@ -272,6 +278,7 @@ public sealed class QueryClient : IDisposable
     /// <typeparam name="TRes">The response type.</typeparam>
     /// <param name="observer">The observer returned by the original Subscribe call.</param>
     /// <param name="queryOptions">The rebuilt query configuration.</param>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public void ApplyOptions<TKey, TRes>(QueryObserver<TRes> observer, QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
@@ -283,6 +290,8 @@ public sealed class QueryClient : IDisposable
 
         lock (_gate)
         {
+            ThrowIfDisposedLocked();
+
             // An observer outlives its state only if the state was evicted, which cannot happen
             // while it has one. Checked anyway: driving a state the registry has let go would
             // give it a worker nothing owns.
@@ -298,6 +307,11 @@ public sealed class QueryClient : IDisposable
     /// Stops every worker and detaches from the eviction policy.
     /// Called by the DI container when the owning scope ends.
     /// </summary>
+    /// <remarks>
+    /// Idempotent. Afterwards the entry points a live render reaches throw
+    /// <see cref="ObjectDisposedException"/>, while unsubscribing, cancelling and disposing an
+    /// observer stay silent no-ops.
+    /// </remarks>
     public void Dispose()
     {
         List<IDisposable> workers;
@@ -316,6 +330,25 @@ public sealed class QueryClient : IDisposable
 
         // Only stop a policy this client created. An injected one is the container's to dispose.
         if (_ownsEvictionPolicy) _ = _evictionPolicy.StopAsync();
+    }
+
+    /// <summary>
+    /// Refuses work that would put anything back into a registry this client has already
+    /// emptied. Callers hold the lock, so the answer cannot change under them.
+    /// </summary>
+    /// <remarks>
+    /// Guards the entry points a live render reaches: Subscribe, PrefetchQuery,
+    /// FetchQueryAsync, GetOrCreateQuery and ApplyOptions. A component rendering against a
+    /// disposed client is a bug, and one that silently created a query would also create a
+    /// worker with nothing left to dispose it.
+    ///
+    /// Teardown is deliberately not guarded. Unsubscribe, Cancel and observer disposal stay
+    /// silent no-ops, because Blazor does not specify whether component disposal runs before
+    /// or after the DI scope that owns this client.
+    /// </remarks>
+    private void ThrowIfDisposedLocked()
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
     }
 
     /// <summary>
@@ -367,6 +400,10 @@ public sealed class QueryClient : IDisposable
     private QueryWorker<TKey, TRes> GetOrCreateWorker<TKey, TRes>(QueryState<TKey, TRes> state)
         where TKey : ITuple
     {
+        // Also covers the retry loop in RunAndReleaseAsync, which is the one caller that can
+        // arrive here after the client was disposed under an in-flight fetch.
+        ThrowIfDisposedLocked();
+
         var node = _registry.GetOrCreateNode(state.Key);
 
         if (node.Worker is QueryWorker<TKey, TRes> existing) return existing;
