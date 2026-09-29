@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Components;
@@ -81,7 +81,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
 
         // A key reused for a different result type must produce nothing rather than an object
         // of the wrong shape that happened to deserialise.
-        if (entry.Type != typeof(TRes).FullName)
+        if (entry.Type != typeof(TRes).ToString())
         {
             return new ValueTask<PersistedQuery<TRes>?>((PersistedQuery<TRes>?)null);
         }
@@ -135,7 +135,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
             if (_serializerOptions.GetTypeInfo(snapshot.DataType) is not { } typeInfo) continue;
 
             queries[encoded] = new TransferEntry(
-                snapshot.DataType.FullName ?? snapshot.DataType.Name,
+                snapshot.DataType.ToString(),
                 JsonSerializer.Serialize(snapshot.Data, typeInfo),
                 snapshot.LastUpdatedAt);
         }

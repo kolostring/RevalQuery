@@ -1,5 +1,9 @@
-<Solution>
+﻿<Solution>
   <Project Path="RevalQuery.Blazor/RevalQuery.Blazor.csproj" />
   <Project Path="RevalQuery.Core/RevalQuery.Core.csproj" />
   <Project Path="RevalQuery.Tests/RevalQuery.Tests.csproj" />
+  <Folder Name="/examples/">
+    <Project Path="examples/CachingDemo/CachingDemo/CachingDemo.csproj" />
+    <Project Path="examples/CachingDemo/CachingDemo.Client/CachingDemo.Client.csproj" />
+  </Folder>
 </Solution>

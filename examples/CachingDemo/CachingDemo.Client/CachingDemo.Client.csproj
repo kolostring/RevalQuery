@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoDefaultLaunchSettingsFile>true</NoDefaultLaunchSettingsFile>
+    <StaticWebAssetProjectMode>Default</StaticWebAssetProjectMode>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <!-- An example, never a package. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.2" />
+  </ItemGroup>
+
+  <!--
+    Project references, not packages. A pinned version silently stops exercising the library
+    the moment it moves on, which is what left this example on 0.3.0; this way every build of
+    the examples is a smoke test of the working tree.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\RevalQuery.Core\RevalQuery.Core.csproj" />
+    <ProjectReference Include="..\..\..\RevalQuery.Blazor\RevalQuery.Blazor.csproj" />
+  </ItemGroup>
+
+</Project>
