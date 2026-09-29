@@ -151,7 +151,29 @@ public sealed class QueryClient : IDisposable
         // Registered before returning, so a key already taken by another result type is
         // reported to the caller rather than lost in an unobserved task.
         var (state, worker) = PrepareRun(queryOptions);
-        _ = RunAndReleaseAsync(state, worker);
+        _ = PrefetchCoreAsync(state, worker);
+    }
+
+    /// <summary>
+    /// Runs a prefetch that nobody awaits, absorbing the failures a caller would otherwise
+    /// have handled.
+    /// </summary>
+    /// <remarks>
+    /// A prefetch is fire and forget by contract, and a handler's own exception is already
+    /// recorded on the query. What is left here is the run failing to happen at all, which a
+    /// discarded task would surface as an unobserved task exception long after the fact.
+    /// </remarks>
+    private async Task PrefetchCoreAsync<TKey, TRes>(QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker)
+        where TKey : ITuple
+    {
+        try
+        {
+            await RunAndReleaseAsync(state, worker);
+        }
+        catch
+        {
+            // Nobody is waiting for this, and the query carries whatever state the attempt left
+        }
     }
 
     /// <summary>
@@ -171,9 +193,17 @@ public sealed class QueryClient : IDisposable
     {
         var (state, worker) = PrepareRun(queryOptions);
 
-        await RunAndReleaseAsync(state, worker);
+        var outcome = await RunAndReleaseAsync(state, worker);
 
         if (state.IsException) throw state.Exception!;
+
+        // Returning Data here would hand back null, or another caller's older result, as though
+        // this call had fetched it. The caller asked for data and there is none.
+        if (outcome == FetchOutcome.Cancelled)
+        {
+            throw new OperationCanceledException(
+                $"Query {DescribeKey(state.Key)} was cancelled before it produced data.");
+        }
 
         return state.Data!;
     }
@@ -391,27 +421,32 @@ public sealed class QueryClient : IDisposable
         }
     }
 
-    private async Task RunAndReleaseAsync<TKey, TRes>(QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker)
-        where TKey : ITuple
+    private async Task<FetchOutcome> RunAndReleaseAsync<TKey, TRes>(
+        QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker) where TKey : ITuple
     {
         // A worker released by whoever else was using this query refuses to run. Take a fresh
         // one rather than returning data the caller never actually fetched.
         for (var attempt = 0; attempt < MaxRunAttempts; attempt++)
         {
-            var ran = false;
+            // Re-acquired at the top rather than after a failed attempt, so the last attempt
+            // does not leave a freshly created worker in the registry on its way out.
+            if (attempt > 0)
+            {
+                lock (_gate) worker = GetOrCreateWorker(state);
+            }
+
+            var outcome = FetchOutcome.NotRun;
 
             try
             {
-                ran = await worker.RunAsync();
+                outcome = await worker.RunAsync();
             }
             finally
             {
                 ReleaseIfUnobserved(state);
             }
 
-            if (ran) return;
-
-            lock (_gate) worker = GetOrCreateWorker(state);
+            if (outcome != FetchOutcome.NotRun) return outcome;
         }
 
         throw new InvalidOperationException(

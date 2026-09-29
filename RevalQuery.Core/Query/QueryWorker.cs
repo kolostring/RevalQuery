@@ -10,6 +10,24 @@ using RevalQuery.Core.Query.Options;
 namespace RevalQuery.Core.Query;
 
 /// <summary>
+/// What one run attempt did.
+/// </summary>
+public enum FetchOutcome
+{
+    /// <summary>
+    /// Nothing ran, because the worker was already released. The caller should take a fresh
+    /// worker and try again rather than treat the query's data as fetched.
+    /// </summary>
+    NotRun,
+
+    /// <summary>The handler ran to a conclusion, either producing data or failing.</summary>
+    Settled,
+
+    /// <summary>The fetch was cancelled before it produced anything.</summary>
+    Cancelled
+}
+
+/// <summary>
 /// Orchestrates query execution: fetching, retry logic, polling, invalidation handling.
 /// Internal component - created and managed by QueryClient.
 /// </summary>
@@ -31,7 +49,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
     private CancellationTokenSource? _pollingCts;
     private CancellationTokenSource? _currentFetchCts;
-    private TaskCompletionSource<bool>? _inFlight;
+    private TaskCompletionSource<FetchOutcome>? _inFlight;
     private bool _isDisposed;
 
     /// <summary>
@@ -170,6 +188,8 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             _pollingCts = cts;
         }
 
+        // No token passed to Task.Run: an already-cancelled one would skip the delegate, and
+        // with it the disposal below. StopPolling tolerates a source this loop disposed first.
         _ = Task.Run(async () =>
         {
             try
@@ -184,7 +204,14 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
             {
                 // Polling was paused or the worker was disposed
             }
-        }, cts.Token);
+            finally
+            {
+                // The loop is the last user of this source. Every options change and every
+                // subscribe cycle makes a new one, so leaving them undisposed accumulates
+                // timer registrations for the life of the circuit.
+                cts.Dispose();
+            }
+        });
     }
 
     private void HandleInvalidation()
@@ -241,19 +268,18 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// Concurrent callers join the fetch already in flight rather than starting a second one.
     /// </summary>
     /// <returns>
-    /// True when this call ran or joined a fetch, false when the worker was already disposed
-    /// and nothing ran. Use Query.Data to access the result.
+    /// What the run did. Use Query.Data to access the result of a settled one.
     /// </returns>
-    public Task<bool> RunAsync()
+    public Task<FetchOutcome> RunAsync()
     {
-        TaskCompletionSource<bool> completion;
+        TaskCompletionSource<FetchOutcome> completion;
 
         lock (_gate)
         {
-            if (_isDisposed) return Task.FromResult(false);
+            if (_isDisposed) return Task.FromResult(FetchOutcome.NotRun);
             if (_inFlight is { Task.IsCompleted: false }) return _inFlight.Task;
 
-            completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = new TaskCompletionSource<FetchOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
             _inFlight = completion;
         }
 
@@ -261,31 +287,38 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         return completion.Task;
     }
 
-    private async Task RunCoreAsync(TaskCompletionSource<bool> completion)
+    private async Task RunCoreAsync(TaskCompletionSource<FetchOutcome> completion)
     {
         // Everything below reports through completion exactly once. An observer callback
         // throwing must not strand it: a completion that never settles would leave every later
         // RunAsync joining a task that never finishes, and the query would never fetch again.
+        // Settled is the default for that case: the fetch did happen, and something downstream
+        // of it threw, so retrying would repeat work rather than recover anything.
+        var outcome = FetchOutcome.Settled;
+
         try
         {
-            await RunFetchAsync();
+            outcome = await RunFetchAsync();
         }
         finally
         {
-            completion.TrySetResult(true);
+            completion.TrySetResult(outcome);
         }
     }
 
-    private async Task RunFetchAsync()
+    private async Task<FetchOutcome> RunFetchAsync()
     {
         var fetchCts = new CancellationTokenSource();
 
         lock (_gate)
         {
+            // Released between RunAsync taking the lock and this line. Reporting that as a run
+            // would let FetchQueryAsync return the query's data as though this call had
+            // produced it, when nothing was fetched at all.
             if (_isDisposed)
             {
                 fetchCts.Dispose();
-                return;
+                return FetchOutcome.NotRun;
             }
 
             _currentFetchCts = fetchCts;
@@ -293,6 +326,7 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
 
         var fetched = default(TRes);
         var succeeded = false;
+        var cancelled = false;
 
         try
         {
@@ -316,12 +350,13 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         }
         catch (OperationCanceledException)
         {
-            // Reset to idle, keep previous result if any
+            // Reset to idle, keep previous result if any. Reported rather than swallowed: a
+            // caller awaiting this fetch asked for data and is getting none.
+            cancelled = true;
         }
         catch (Exception ex)
         {
-            Query.Exception = ex;
-            Query.Status = QueryStatus.Exception;
+            Query.ApplyFailed(ex);
         }
         finally
         {
@@ -337,6 +372,8 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         }
 
         if (succeeded) await SavePersistedAsync(fetched!);
+
+        return cancelled ? FetchOutcome.Cancelled : FetchOutcome.Settled;
     }
 
     /// <summary>

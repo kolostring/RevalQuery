@@ -98,7 +98,7 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly object _observersGate = new();
     private readonly object _dataGate = new();
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
-    private bool _hasFetched;
+    private bool _hasSettled;
 
     /// <summary>
     /// Raised when any state property changes (data, status, fetch status).
@@ -188,22 +188,36 @@ public sealed class QueryState<TKey, TResponse>(
     /// Timestamp of last successful data update.
     /// Use with StaleTime to determine if data needs refetching.
     /// </summary>
-    public DateTimeOffset LastUpdatedAt => _lastUpdatedAt;
+    /// <remarks>
+    /// Read under the same gate that writes it. DateTimeOffset is wider than a machine word, so
+    /// an unsynchronised read racing an update can observe half of each and produce a staleness
+    /// decision that matches neither.
+    /// </remarks>
+    public DateTimeOffset LastUpdatedAt
+    {
+        get { lock (_dataGate) return _lastUpdatedAt; }
+    }
 
     /// <summary>
     /// Marks the query data as stale (needs refetching).
     /// </summary>
+    [Obsolete("Use NotifyInvalidated, which also tells the worker to refetch. This only moves " +
+              "the clock, so a query marked stale this way refetches at some unpredictable " +
+              "later moment rather than now.")]
     public void SetStale()
     {
-        _lastUpdatedAt = DateTimeOffset.MinValue;
+        lock (_dataGate) _lastUpdatedAt = DateTimeOffset.MinValue;
     }
 
     /// <summary>
     /// Marks the query data as fresh (successfully fetched).
     /// </summary>
+    [Obsolete("Use ApplyFetched, which records the data, the status and the timestamp as one " +
+              "step. Moving the clock on its own leaves the query looking fresh while holding " +
+              "whatever data it already had.")]
     public void SetFresh()
     {
-        _lastUpdatedAt = DateTimeOffset.UtcNow;
+        lock (_dataGate) _lastUpdatedAt = DateTimeOffset.UtcNow;
     }
 
     /// <summary>
@@ -216,17 +230,42 @@ public sealed class QueryState<TKey, TResponse>(
         lock (_dataGate)
         {
             Data = data;
+            Exception = null;
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = DateTimeOffset.UtcNow;
-            _hasFetched = true;
+            _hasSettled = true;
+        }
+    }
+
+    /// <summary>
+    /// Records a failed fetch: the exception and the status together, so no reader sees one
+    /// without the other.
+    /// </summary>
+    /// <remarks>
+    /// Marks the query settled, which is what stops a slow restore from later adopting data
+    /// over the failure and leaving the query resolved with an exception still attached.
+    /// </remarks>
+    /// <param name="exception">The exception the handler produced.</param>
+    public void ApplyFailed(Exception exception)
+    {
+        lock (_dataGate)
+        {
+            Exception = exception;
+            Status = QueryStatus.Exception;
+            _hasSettled = true;
         }
     }
 
     /// <summary>
     /// Adopts data loaded from persistence, keeping the timestamp it was originally fetched at
     /// so restored data is correctly stale rather than appearing fresh. Does nothing once a
-    /// fetch has produced data, which is always newer.
+    /// fetch has settled, successfully or not.
     /// </summary>
+    /// <remarks>
+    /// A failed fetch counts as settled. Adopting over one would leave the query resolved with
+    /// its exception still set, so a component branching on Exception renders an error beside
+    /// data, and FetchQueryAsync returns stale data where it should have thrown.
+    /// </remarks>
     /// <param name="data">The restored data.</param>
     /// <param name="lastUpdatedAt">When that data was originally fetched.</param>
     /// <returns>True when the data was adopted.</returns>
@@ -234,9 +273,10 @@ public sealed class QueryState<TKey, TResponse>(
     {
         lock (_dataGate)
         {
-            if (_hasFetched) return false;
+            if (_hasSettled) return false;
 
             Data = data;
+            Exception = null;
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = lastUpdatedAt;
             return true;
@@ -270,7 +310,8 @@ public sealed class QueryState<TKey, TResponse>(
     /// </summary>
     public void NotifyInvalidated()
     {
-        _lastUpdatedAt = DateTimeOffset.MinValue;
+        lock (_dataGate) _lastUpdatedAt = DateTimeOffset.MinValue;
+
         OnInvalidated?.Invoke();
     }
 
