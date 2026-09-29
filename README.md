@@ -48,7 +48,7 @@ browser afterwards. To stop the browser refetching what the server already fetch
         }
     </ul>
 }
-@else if (Users.IsFetching)
+@else if (Users.IsLoading)
 {
     <p>Loading...</p>
 }
@@ -64,8 +64,8 @@ browser afterwards. To stop the browser refetching what the server already fetch
 - **Concurrent mutations** - Multiple mutations run in parallel, latest result wins
 - **Query toggling** - Enable/disable queries without losing cached data
 - **Polling support** - Automatic refetch at configurable intervals
-- **Retry with backoff** - Configurable exponential backoff retry policy
-- **Optional persistence** - Point `IQueryPersistence` at a durable store to survive restarts
+- **Retry with backoff** - Configurable exponential backoff, counted as retries after the first attempt
+- **Optional persistence** - Point `IQueryPersistence` at a durable store to survive restarts, with `IsLoading` covering the restore
 - **Prerender state transfer** - The browser renders what the prerender fetched instead of fetching it again
 
 ## Documentation

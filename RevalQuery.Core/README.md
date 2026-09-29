@@ -66,7 +66,7 @@ var options = QueryOptions.Create(
 
 // Extend configuration
 options.ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)));
-options.ConfigureRetry(r => r.Retry(3));
+options.ConfigureRetry(r => r.Retry(3));   // three retries, so up to four calls
 options.ConfigureCache(c => c.GcTime(TimeSpan.FromMinutes(10)));
 options.Enabled(true);
 ```
@@ -137,7 +137,7 @@ services.AddRevalQuery(options =>
         StaleTime: TimeSpan.FromMinutes(1)
     );
 
-    // Default retry options
+    // Default retry options: three retries after a failure, so up to four calls
     options.RetryOptions = new CoreRetryOptions(3, attempt => TimeSpan.FromSeconds(attempt));
 
     // Cache TTL options
@@ -150,6 +150,17 @@ services.AddRevalQuery(options =>
     options.QueryPluginsPipeline.Add(new MyPlugin());
 });
 ```
+
+---
+
+## Retry
+
+`Retry` counts retries, not attempts. A retry is one further attempt after a failed one, so it
+never includes the first: `Retry(0)` still calls the handler once and surfaces its exception,
+and `Retry(3)` calls it up to four times. Queries default to 3 retries, mutations to none.
+
+The delay between retries comes from `RetryDelay`, which maps a retry's one-based number to the
+wait before it. The default backs off exponentially, capped at 30 seconds.
 
 ---
 
@@ -169,6 +180,15 @@ public class LocalStoragePersistence : IQueryPersistence
 
 services.AddScoped<IQueryPersistence, LocalStoragePersistence>();
 ```
+
+An adapter must complete or fault, and must never hang. The library awaits a load with no
+timeout by decision, so an adapter that never returns stalls its query for the life of the
+process. Apply your own timeout inside the adapter and fault instead: a faulted load leaves the
+query to fetch as though nothing was stored, which is recoverable, and a hung one is not.
+
+While a load is outstanding the query reports `IsRestoring`, and `IsLoading` covers it, so a
+component waiting on storage renders a spinner rather than an empty state. `IsFetching` stays
+false: a restore is not a fetch.
 
 Adapters own serialisation and their own key encoding; the library never
 serialises. `LastUpdatedAt` is stored and restored verbatim, so data that was

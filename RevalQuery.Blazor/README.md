@@ -207,10 +207,31 @@ Access query state via `IQueryState<T>`:
 | `IsPending` | No data yet |
 | `IsResolved` | Data available |
 | `IsException` | Query failed |
-| `IsFetching` | Currently fetching |
-| `IsLoading` | Fetching + no data (IsFetching && IsPending) |
+| `IsFetching` | Currently fetching. A restore is not a fetch, so this stays false during one |
+| `IsRestoring` | Currently loading from persistence |
+| `IsLoading` | No data yet and work in flight, fetch or restore: `(IsFetching \|\| IsRestoring) && IsPending` |
 | `IsIdle` | Not fetching |
 | `LastUpdatedAt` | Timestamp of last successful fetch |
+
+`IsLoading` is the one to branch on when deciding between a spinner and an empty state. It
+covers a load from persistence as well as a fetch, so a query waiting on storage renders a
+spinner rather than an empty state it is about to replace. `IsRestoring` is there only to tell
+waiting on storage apart from waiting on the network.
+
+---
+
+## Retry
+
+`Retry(n)` means n further attempts after a failure, not n attempts in total. `Retry(0)` still
+calls the handler once, and `Retry(3)`, the default for queries, calls it up to four times.
+Mutations default to no retries.
+
+```csharp
+IQueryState<User> User => UseQuery(
+    UserQueries.GetUserOptions(userId)
+        .ConfigureRetry(r => r.Retry(2))    // up to three calls
+);
+```
 
 ---
 
@@ -297,7 +318,7 @@ Query lifecycle callbacks (onSuccess, onError, onSettled) are **NOT** supported 
 {
     <p>Loaded @Users.Data?.Length users</p>
 }
-@else if (Users.IsFetching)
+@else if (Users.IsLoading)
 {
     <p>Loading...</p>
 }
