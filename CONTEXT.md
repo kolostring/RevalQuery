@@ -23,6 +23,11 @@ The static function that produces a query's data. Static so it cannot capture
 component state.
 _Avoid_: Fetcher, callback, resolver, loader
 
+**Retry**:
+One further attempt after a failed one. A retry count never includes the first attempt,
+so zero retries still calls the handler once.
+_Avoid_: Attempt, max attempts
+
 **Prefetch**:
 Populating a query's data without any component subscribing to it.
 _Avoid_: Warm, preload, eager fetch
@@ -53,8 +58,14 @@ _Avoid_: State, phase
 
 **Fetch status**:
 Whether a fetch is currently running. Independent of whether the query already has
-data, so a query can be fetching and resolved at the same time.
-_Avoid_: Loading, busy
+data, so a query can be fetching and resolved at the same time. Narrower than loading:
+a restore is not a fetch.
+_Avoid_: Busy, in-flight
+
+**Loading**:
+A query has no data yet and work is in flight to get some, whether that work is a fetch
+or a restore. What a component checks to decide between a spinner and an empty state.
+_Avoid_: Fetching, pending, busy
 
 **Enabled**:
 Whether an observer permits its query to fetch. A disabled observer keeps the cached
@@ -102,3 +113,8 @@ _Avoid_: Garbage collector, expiry, reaper
 An optional durable copy of query data outside the registry, surviving process
 restarts. Supplied by the consuming application, not by this library.
 _Avoid_: Cache, backing store, L2, distributed cache
+
+**Restore**:
+Reading a query's data back out of persistence into the registry. Distinct from a fetch,
+which goes to the query's real source. A restore never makes data look newer than it was.
+_Avoid_: Load, hydrate, rehydrate, warm
