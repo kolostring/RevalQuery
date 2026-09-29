@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Components;
 using RevalQuery.Core;
@@ -120,6 +120,10 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
             if (query.Key.Equals(queryOptions.Key))
             {
+                // The key is what decides which query this slot watches; everything else was
+                // rebuilt by this render and has to take effect now. Skipping this is what used
+                // to make Enabled non-reactive, and the dependent-query pattern with it.
+                Client.ApplyOptions(obs, queryOptions);
                 return query;
             }
 

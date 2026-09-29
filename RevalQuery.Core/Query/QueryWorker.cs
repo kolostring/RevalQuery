@@ -1,9 +1,11 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Execution;
+using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Core.Query;
 
@@ -72,7 +74,9 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         }
     }
 
-    private void PausePolling(QueryState<TKey, TRes> state)
+    private void PausePolling(QueryState<TKey, TRes> state) => StopPolling();
+
+    private void StopPolling()
     {
         CancellationTokenSource? cts;
 
@@ -85,6 +89,48 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         }
 
         CancelSafely(cts);
+    }
+
+    /// <summary>
+    /// Adopts options rebuilt by a re-render, together with the new enabled flag of the observer
+    /// that rebuilt them.
+    /// </summary>
+    /// <remarks>
+    /// <para>Fetch, retry and cache options belong to the query, not to the observer, so the
+    /// most recent render of any component watching this key wins.</para>
+    /// <para>A query that has just become enabled fetches if its data is stale, exactly as a
+    /// query gaining its first subscriber does. This is what makes the dependent-query pattern
+    /// work: a component renders once with Enabled(false), then again with Enabled(true) once
+    /// the value its key depends on arrives.</para>
+    /// </remarks>
+    /// <param name="options">The rebuilt options.</param>
+    /// <param name="observer">The observer whose render produced them.</param>
+    public void ApplyOptions(QueryOptions<TKey, TRes> options, IQueryObserver observer)
+    {
+        var wasEnabled = Query.IsEnabled;
+        var previousInterval = EnsuredFetchOptions.RefetchInterval;
+
+        Query.FetchOptions = options.FetchOptions;
+        Query.RetryOptions = options.RetryOptions;
+        Query.CacheOptions = options.CacheOptions;
+        observer.Enabled = options.Enabled;
+
+        // Read after the assignments: another observer may keep the query enabled even when
+        // this one just disabled itself.
+        if (!Query.IsEnabled)
+        {
+            StopPolling();
+            return;
+        }
+
+        // The loop captured the old interval when it started, so a changed one needs a new loop.
+        if (!wasEnabled || EnsuredFetchOptions.RefetchInterval != previousInterval)
+        {
+            StopPolling();
+            StartPolling(Query.Key);
+        }
+
+        if (!wasEnabled) RunIfStale();
     }
 
     private void CancelCurrentFetch()

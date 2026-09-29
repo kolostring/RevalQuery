@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Abstractions.Query;
@@ -257,6 +257,41 @@ public sealed class QueryClient : IDisposable
         worker.RunIfStale();
 
         return observer;
+    }
+
+    /// <summary>
+    /// Re-applies options to an existing subscription whose key has not changed.
+    /// </summary>
+    /// <remarks>
+    /// Called on every re-render that reaches the same query, so that Enabled, StaleTime,
+    /// RefetchInterval, RetryOptions and CacheOptions stay reactive rather than being frozen at
+    /// the render that first created the query. Does nothing when the query has since left the
+    /// registry.
+    /// </remarks>
+    /// <typeparam name="TKey">The key type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="observer">The observer returned by the original Subscribe call.</param>
+    /// <param name="queryOptions">The rebuilt query configuration.</param>
+    public void ApplyOptions<TKey, TRes>(QueryObserver<TRes> observer, QueryOptions<TKey, TRes> queryOptions)
+        where TKey : ITuple
+    {
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        if (observer.Query is not QueryState<TKey, TRes> state) return;
+
+        QueryWorker<TKey, TRes> worker;
+
+        lock (_gate)
+        {
+            // An observer outlives its state only if the state was evicted, which cannot happen
+            // while it has one. Checked anyway: driving a state the registry has let go would
+            // give it a worker nothing owns.
+            if (!ReferenceEquals(_registry.PeekNode(state.Key)?.State, state)) return;
+
+            worker = GetOrCreateWorker(state);
+        }
+
+        worker.ApplyOptions(options, observer);
     }
 
     /// <summary>

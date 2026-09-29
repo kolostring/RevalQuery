@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RevalQuery.Core\RevalQuery.Core.csproj" />
+    <ProjectReference Include="..\RevalQuery.Blazor\RevalQuery.Blazor.csproj" />
   </ItemGroup>
 
 </Project>
