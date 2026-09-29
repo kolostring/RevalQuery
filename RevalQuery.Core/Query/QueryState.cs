@@ -99,6 +99,7 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly object _dataGate = new();
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
+    private bool _isRestoring;
 
     /// <summary>
     /// Raised when any state property changes (data, status, fetch status).
@@ -151,9 +152,24 @@ public sealed class QueryState<TKey, TResponse>(
     public bool IsIdle => FetchStatus == FetchStatus.Idle;
 
     /// <summary>
-    /// True when fetching AND pending - shows loading state.
+    /// True while a load from persistence is outstanding.
     /// </summary>
-    public bool IsLoading => IsFetching && IsPending;
+    /// <remarks>
+    /// Deliberately not a FetchStatus value. A restore is not a fetch, and reporting one as
+    /// Fetching would turn CanFetch false for its duration and drop any invalidation arriving
+    /// meanwhile. See docs/adr/0005.
+    /// </remarks>
+    public bool IsRestoring
+    {
+        get { lock (_dataGate) return _isRestoring; }
+    }
+
+    /// <summary>
+    /// True when the query has no data yet and work is in flight to get some, whether that
+    /// work is a fetch or a restore. What a component checks to decide between a spinner and
+    /// an empty state.
+    /// </summary>
+    public bool IsLoading => (IsFetching || IsRestoring) && IsPending;
 
     /// <summary>
     /// True when at least one enabled observer is subscribed.
@@ -281,6 +297,27 @@ public sealed class QueryState<TKey, TResponse>(
             _lastUpdatedAt = lastUpdatedAt;
             return true;
         }
+    }
+
+    /// <summary>
+    /// Marks a load from persistence as outstanding, so the query reports itself loading
+    /// rather than empty while it runs.
+    /// </summary>
+    /// <remarks>
+    /// Call before starting the load, not from inside it: a query that has already rendered
+    /// its empty state before the flag goes up shows the blank flash this exists to remove.
+    /// </remarks>
+    public void BeginRestore()
+    {
+        lock (_dataGate) _isRestoring = true;
+    }
+
+    /// <summary>
+    /// Marks the load from persistence as finished, whether or not it produced anything.
+    /// </summary>
+    public void EndRestore()
+    {
+        lock (_dataGate) _isRestoring = false;
     }
 
     /// <summary>

@@ -100,7 +100,13 @@ public sealed class QueryClient : IDisposable
 
         // Off the lock from the start: an adapter is free to block, and holding the registry
         // while it does would stall every other query.
-        if (_persistence is not null) node.Restore = Task.Run(() => LoadPersistedAsync(newState));
+        if (_persistence is not null)
+        {
+            // Flagged here rather than inside the task, so the query never reports itself
+            // empty in the window between being created and the load starting.
+            newState.BeginRestore();
+            node.Restore = Task.Run(() => LoadPersistedAsync(newState));
+        }
 
         return newState;
     }
@@ -550,24 +556,51 @@ public sealed class QueryClient : IDisposable
     /// </summary>
     private async Task LoadPersistedAsync<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
-        PersistedQuery<TRes>? persisted;
-
         try
         {
-            persisted = await _persistence!.LoadAsync<TRes>(state.Key);
+            PersistedQuery<TRes>? persisted;
+
+            try
+            {
+                persisted = await _persistence!.LoadAsync<TRes>(state.Key);
+            }
+            catch
+            {
+                // A persistence adapter failing leaves the query to fetch normally.
+                // Reporting the failure is the adapter's own job.
+                return;
+            }
+
+            if (persisted is null) return;
+
+            // TryRestore refuses once a fetch has landed, so the older stored data cannot
+            // overwrite a fresher result that arrived while this load was in flight.
+            state.TryRestore(persisted.Data, persisted.LastUpdatedAt);
+        }
+        finally
+        {
+            // One notification for the whole restore, after the flag drops. Observers need it
+            // whether or not anything was stored: a query that found nothing stops loading and
+            // has an empty state to render.
+            state.EndRestore();
+            NotifyChangedSafely(state);
+        }
+    }
+
+    /// <summary>
+    /// Notifies observers without letting one of them break the restore. This runs on a
+    /// detached task, so an exception escaping here would go unobserved.
+    /// </summary>
+    private static void NotifyChangedSafely<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    {
+        try
+        {
+            state.NotifyChanged();
         }
         catch
         {
-            // A persistence adapter failing leaves the query to fetch normally.
-            // Reporting the failure is the adapter's own job.
-            return;
+            // An observer that cannot render is the observer's problem, not the query's
         }
-
-        if (persisted is null) return;
-
-        // TryRestore refuses once a fetch has landed, so the older stored data cannot overwrite
-        // a fresher result that arrived while this load was in flight.
-        if (state.TryRestore(persisted.Data, persisted.LastUpdatedAt)) state.NotifyChanged();
     }
 
     private static string DescribeKey(ITuple key)

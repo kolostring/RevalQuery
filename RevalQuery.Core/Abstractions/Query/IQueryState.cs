@@ -29,8 +29,22 @@ public interface IQueryState : IObservableQueryState
     bool HasObservers { get; }
 
     /// <summary>
-    /// True when fetching AND pending (no data yet) - equivalent to loading state.
+    /// True while a load from persistence is outstanding.
     /// </summary>
+    /// <remarks>
+    /// A restore is not a fetch, so IsFetching stays false throughout one. Read this only to
+    /// tell waiting on storage apart from waiting on the network: IsLoading already covers
+    /// both.
+    /// </remarks>
+    bool IsRestoring { get; }
+
+    /// <summary>
+    /// True when the query has no data yet and work is in flight to get some, whether that
+    /// work is a fetch or a restore: (IsFetching || IsRestoring) &amp;&amp; IsPending.
+    /// </summary>
+    /// <remarks>
+    /// What a component checks to decide between a spinner and an empty state.
+    /// </remarks>
     bool IsLoading { get; }
 
     /// <summary>
