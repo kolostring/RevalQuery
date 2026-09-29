@@ -1,0 +1,84 @@
+@page "/dependent-queries"
+@using CachingDemo.Client.Services
+@using RevalQuery.Core.Abstractions.Query
+@using RevalQuery.Core.Query.Options
+@rendermode InteractiveWebAssembly
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Dependent queries</PageTitle>
+
+<h1>Dependent queries, and a reactive Enabled</h1>
+
+<p>
+    The orders query needs a user id the users query has to supply, so it starts disabled and
+    enables itself once a user is picked. That pattern needs <code>Enabled</code> to be read on
+    every render. Until 0.4.0 a component's second render was ignored whenever the key had not
+    changed, so a query that started disabled stayed disabled for good.
+</p>
+
+<h2>Users</h2>
+
+@if (Users.IsLoading)
+{
+    <p><em>Loading users...</em></p>
+}
+else if (Users.Exception is not null)
+{
+    <p style="color:red">@Users.Exception.Message</p>
+}
+else
+{
+    <ul>
+        @foreach (var user in Users.Data ?? [])
+        {
+            <li>
+                <button @onclick="() => Selected = user" disabled="@(Selected == user)">@user</button>
+            </li>
+        }
+    </ul>
+}
+
+<h2>Orders for @(Selected ?? "nobody")</h2>
+
+<StateTable State="Orders" />
+
+@if (!Orders.IsEnabled)
+{
+    <p><em>Disabled until a user is picked. Nothing is fetched.</em></p>
+}
+else if (Orders.IsLoading)
+{
+    <p><em>Loading orders...</em></p>
+}
+else
+{
+    <ul>
+        @foreach (var order in Orders.Data ?? [])
+        {
+            <li>@order</li>
+        }
+    </ul>
+}
+
+@code {
+    private string? Selected { get; set; }
+
+    IQueryState<List<string>> Users => UseQuery(
+        QueryOptions
+            .Create<List<string>>(
+                "users",
+                async static ctx => await ProfileService.GetUsersAsync(ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    IQueryState<List<string>> Orders => UseQuery(
+        QueryOptions
+            .Create<(string, string), List<string>>(
+                ("orders", Selected ?? ""),
+                async static ctx => await ProfileService.GetOrdersAsync(ctx.Key.Item2, ctx.CancellationToken ?? default))
+            // Re-read on every render. Picking a user flips this to true and the query fetches,
+            // exactly as it would on gaining its first subscriber.
+            .Enabled(Selected is not null)
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+}

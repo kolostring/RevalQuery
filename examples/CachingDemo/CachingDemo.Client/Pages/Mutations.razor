@@ -1,0 +1,90 @@
+@page "/mutations"
+@using CachingDemo.Client.Services
+@using RevalQuery.Core.Abstractions.Query
+@using RevalQuery.Core.Mutation.Options
+@using RevalQuery.Core.Query.Options
+@rendermode InteractiveWebAssembly
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Mutations and invalidation</PageTitle>
+
+<h1>Mutations, and invalidating what they changed</h1>
+
+<p>
+    The mutation writes, then invalidates the key it wrote to. The query watching that key
+    refetches on its own, so nothing here copies the mutation's response into the cache by hand.
+</p>
+
+<p>
+    Mutations default to zero retries, so a write that fails fails once. Queries default to
+    three retries, four calls in all. Type something containing "fail" to watch the mutation
+    give up immediately.
+</p>
+
+<div class="controls">
+    <input @bind="Draft" placeholder="New item..." />
+    <button @onclick="Add" disabled="@(AddItem.IsFetching || string.IsNullOrWhiteSpace(Draft))">
+        Add
+    </button>
+</div>
+
+@if (AddItem.IsFetching)
+{
+    <p><em>Saving...</em></p>
+}
+else if (AddItem.IsException)
+{
+    <p style="color:red">@AddItem.Exception?.Message</p>
+}
+
+<h2>Items</h2>
+
+<StateTable State="Todos" />
+
+@if (Todos.IsLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <ul>
+        @foreach (var item in Todos.Data ?? [])
+        {
+            <li>@item</li>
+        }
+    </ul>
+}
+
+@code {
+    private string Draft { get; set; } = string.Empty;
+
+    private async Task Add()
+    {
+        var text = Draft;
+        await AddItem.ExecuteAsync(new AddItemParams(text));
+        if (AddItem.IsResolved) Draft = string.Empty;
+    }
+
+    /// <summary>The mutation's parameters. A class, which is what MutationOptions requires.</summary>
+    public sealed record AddItemParams(string Text);
+
+    IQueryState<List<string>> Todos => UseQuery(
+        QueryOptions
+            .Create<List<string>>(
+                "todos",
+                async static ctx => await TodoService.GetAsync(ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    RevalQuery.Core.Mutation.MutationState<AddItemParams, string> AddItem => UseMutation(
+        MutationOptions
+            .Create<AddItemParams, string>(
+                async static ctx => await TodoService.AddAsync(ctx.Params.Text, ctx.CancellationToken))
+            .OnResolved((_, _) =>
+            {
+                // Stale time keeps the list off the network otherwise, so the invalidation is
+                // what makes the new item show up.
+                Client.Invalidate("todos");
+                return Task.CompletedTask;
+            }));
+}

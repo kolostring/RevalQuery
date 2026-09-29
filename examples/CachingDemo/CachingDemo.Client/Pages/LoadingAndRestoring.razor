@@ -1,0 +1,69 @@
+@page "/loading-and-restoring"
+@using CachingDemo.Client.Persistence
+@using RevalQuery.Core.Abstractions.Query
+@using RevalQuery.Core.Query.Options
+@* No prerender. The persistence adapter is registered in the WebAssembly host only, so a
+   prerender would fetch on the server and transfer the result, which is precisely the restore
+   this page exists to show. *@
+@rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Loading covers restores</PageTitle>
+
+<h1>Loading covers restores</h1>
+
+<p>
+    A restore is a read from persistence, and it is not a fetch: <code>IsFetching</code> stays
+    false throughout one. From 0.4.0 a query exposes <code>IsRestoring</code>, and
+    <code>IsLoading</code> is <code>(IsFetching || IsRestoring) &amp;&amp; IsPending</code>, so a
+    component that renders a spinner on <code>IsLoading</code> covers both waits.
+</p>
+
+<p>
+    This page's store takes @SlowDemoPersistence.Delay.TotalSeconds seconds to answer. Reload
+    the page to watch it again.
+</p>
+
+<h2>Seeded key, fresh enough to skip the fetch</h2>
+<p>
+    Something was stored under <code>("persisted", "profile")</code> before the page loaded, and
+    its stale time has not passed, so the restore is the whole story. Nothing is fetched at all.
+    Judged on <code>IsFetching</code> alone this query would look idle and empty, and the page
+    would show its empty state for @SlowDemoPersistence.Delay.TotalSeconds seconds before the
+    data appeared.
+</p>
+<StateTable State="Profile" />
+<p>Data: <strong>@(Profile.Data ?? "none yet")</strong></p>
+
+<h2>Empty key, restore then fetch</h2>
+<p>
+    Nothing is stored under <code>("persisted", "orders")</code>. The restore still has to run
+    and come back empty before the query knows it must fetch, so this one is loading twice over:
+    first restoring, then fetching.
+</p>
+<StateTable State="Orders" />
+<p>Data: <strong>@(Orders.Data ?? "none yet")</strong></p>
+
+@code {
+    IQueryState<string> Profile => UseQuery(
+        QueryOptions
+            .Create<(string, string), string>(
+                ("persisted", "profile"),
+                async static ctx => await FetchAsync("profile", ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    IQueryState<string> Orders => UseQuery(
+        QueryOptions
+            .Create<(string, string), string>(
+                ("persisted", "orders"),
+                async static ctx => await FetchAsync("orders", ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    private static async Task<string> FetchAsync(string what, CancellationToken ct)
+    {
+        await Task.Delay(1500, ct);
+        return $"{what} from the network at {DateTimeOffset.Now:HH:mm:ss}";
+    }
+}

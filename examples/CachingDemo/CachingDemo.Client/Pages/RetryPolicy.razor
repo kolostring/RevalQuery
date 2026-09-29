@@ -1,0 +1,113 @@
+@page "/retry-policy"
+@using CachingDemo.Client.Services
+@using RevalQuery.Core.Abstractions.Query
+@using RevalQuery.Core.Query.Options
+@rendermode InteractiveWebAssembly
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Retry counts retries</PageTitle>
+
+<h1>Retry counts retries, not attempts</h1>
+
+<p>
+    From 0.4.0, <code>Retry(n)</code> means <em>n further attempts after the first one</em>, so
+    the handler runs up to <code>n + 1</code> times. <code>Retry(0)</code> still calls the
+    handler once. Before 0.4.0 the number was a total attempt count, and <code>Retry(0)</code>
+    called the handler not at all and threw an exception of the library's own invention.
+</p>
+
+<div class="controls">
+    <label>
+        Retries:
+        <input type="number" min="0" max="5" @bind="Retries" @bind:event="oninput" />
+    </label>
+
+    <label>
+        Failures before the handler gives in:
+        <input type="number" min="0" max="5" @bind="Failures" @bind:event="oninput" />
+    </label>
+
+    <button @onclick="Run">Run</button>
+</div>
+
+<p>
+    The next run will call the handler at most <strong>@(Math.Max(0, Retries) + 1)</strong>
+    time(s), and will succeed only when the failure count is below that.
+</p>
+
+@if (_runId is not null)
+{
+    <dl>
+        <dt>Attempts so far</dt>
+        <dd>@FlakyService.AttemptsFor(_runId)</dd>
+
+        <dt>Loading</dt>
+        <dd>@Attempt.IsLoading</dd>
+
+        <dt>Result</dt>
+        <dd>
+            @if (Attempt.Exception is not null)
+            {
+                <span style="color:red">Gave up: @Attempt.Exception.Message</span>
+            }
+            else if (Attempt.Data is not null)
+            {
+                <span style="color:green">@Attempt.Data</span>
+            }
+            else
+            {
+                <em>running</em>
+            }
+        </dd>
+    </dl>
+}
+
+@code {
+    private int Retries { get; set; } = 2;
+    private int Failures { get; set; } = 2;
+
+    private int _runCount;
+    private string? _runId;
+
+    // Snapshotted on the click rather than read live. Both are part of the query, and leaving
+    // them bound to the inputs would let typing in a box rebuild the key or the retry options
+    // of a run already under way.
+    private int _runRetries;
+    private int _runFailures;
+
+    protected override void OnInitialized() => FlakyService.OnAttempt += OnAttempt;
+
+    private void OnAttempt() => InvokeAsync(StateHasChanged);
+
+    private void Run()
+    {
+        _runCount++;
+        // Clamped: a negative count is not validated by the library today, and it leaves the
+        // retry policy with no attempt to make at all.
+        _runRetries = Math.Max(0, Retries);
+        _runFailures = Math.Max(0, Failures);
+        // The run id is part of the key, so every click is a different query rather than a
+        // cache hit on the last one, and it is also the counter the handler increments.
+        _runId = $"run-{_runCount}-{_runRetries}-{_runFailures}";
+    }
+
+    // Disabled until the first Run, then enabled with a key that changes per run. Enabled is
+    // read on every render from 0.4.0, which is what lets a toggle like this take effect.
+    IQueryState<string> Attempt => UseQuery(
+        QueryOptions
+            .Create<(string, string, int), string>(
+                ("retry", _runId ?? "none", _runFailures),
+                async static ctx => await FlakyService.LoadAsync(
+                    ctx.Key.Item2, ctx.Key.Item3, ctx.CancellationToken ?? default))
+            .Enabled(_runId is not null)
+            // A short, flat delay keeps the demo watchable. The default is exponential
+            // backoff starting at two seconds.
+            .ConfigureRetry(retry => retry.Retry(_runRetries, static _ => TimeSpan.FromMilliseconds(400)))
+            .Build());
+
+    public override void Dispose()
+    {
+        FlakyService.OnAttempt -= OnAttempt;
+        base.Dispose();
+    }
+}

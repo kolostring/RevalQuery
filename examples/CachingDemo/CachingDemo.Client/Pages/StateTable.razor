@@ -1,0 +1,17 @@
+@using RevalQuery.Core.Abstractions.Query
+
+<table class="state-table">
+    <tbody>
+        <tr><th>IsLoading</th><td>@State.IsLoading</td></tr>
+        <tr><th>IsRestoring</th><td>@State.IsRestoring</td></tr>
+        <tr><th>IsFetching</th><td>@State.IsFetching</td></tr>
+        <tr><th>IsPending</th><td>@State.IsPending</td></tr>
+        <tr><th>IsResolved</th><td>@State.IsResolved</td></tr>
+        <tr><th>LastUpdatedAt</th><td>@(State.IsResolved ? State.LastUpdatedAt.ToLocalTime().ToString("HH:mm:ss") : "never")</td></tr>
+    </tbody>
+</table>
+
+@code {
+    /// <summary>The query whose flags this table shows.</summary>
+    [Parameter, EditorRequired] public IQueryState State { get; set; } = default!;
+}
