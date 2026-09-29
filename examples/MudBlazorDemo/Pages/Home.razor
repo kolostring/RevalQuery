@@ -1,0 +1,34 @@
+@page "/"
+
+<PageTitle>RevalQuery with MudBlazor</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">RevalQuery with MudBlazor</MudText>
+
+<MudText Class="mb-4">
+    A standalone WebAssembly app. Everything RevalQuery needs here is one call to
+    <MudChip T="string" Size="Size.Small">AddRevalQuery()</MudChip> in Program.cs and
+    <MudChip T="string" Size="Size.Small">@("@inherits QueryComponentBase")</MudChip> on any
+    page that queries.
+</MudText>
+
+<MudText Typo="Typo.h6" GutterBottom="true">Where the two libraries meet</MudText>
+
+<MudList T="string" Class="mb-4">
+    <MudListItem Icon="@Icons.Material.Filled.TableChart" Href="products">
+        <MudText><b>Table and detail.</b> A query's IsLoading drives MudTable's Loading, and
+        picking a row enables a second query that was disabled until then.</MudText>
+    </MudListItem>
+    <MudListItem Icon="@Icons.Material.Filled.Search" Href="autocomplete">
+        <MudText><b>Autocomplete.</b> MudAutocomplete wants a search function, not a render
+        loop, so this one goes through FetchQueryAsync and gets the cache for free.</MudText>
+    </MudListItem>
+    <MudListItem Icon="@Icons.Material.Filled.RateReview" Href="reviews">
+        <MudText><b>Form and mutation.</b> A MudForm posts through UseMutation, then
+        invalidates the query that reads the list back.</MudText>
+    </MudListItem>
+</MudList>
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+    Every handler here waits between half a second and a second on purpose. The point of the
+    pages is what the UI does while it waits, and what it does not do on a second visit.
+</MudAlert>

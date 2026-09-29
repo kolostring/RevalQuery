@@ -1,0 +1,26 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudText Typo="Typo.h6">RevalQuery with MudBlazor</MudText>
+        <MudSpacer />
+        <MudButton Href="https://github.com/kolostring/RevalQuery" Target="_blank" Color="Color.Inherit">
+            Source
+        </MudButton>
+    </MudAppBar>
+
+    <MudDrawer Open="true" Variant="DrawerVariant.Persistent" Elevation="1">
+        <NavMenu />
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Medium" Class="my-6">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>

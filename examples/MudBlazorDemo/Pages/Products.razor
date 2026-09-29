@@ -1,0 +1,104 @@
+@page "/products"
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Table and detail</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Table and detail</MudText>
+
+<MudText Class="mb-4">
+    The table's <MudChip T="string" Size="Size.Small">Loading</MudChip> comes straight from the
+    query's <MudChip T="string" Size="Size.Small">IsLoading</MudChip>, which is true while a
+    fetch or a restore is outstanding and the query has no data yet. Selecting a row enables the
+    detail query, which is disabled until then and so fetches nothing.
+</MudText>
+
+<MudTable T="Product"
+          Items="@(ProductList.Data ?? [])"
+          Loading="@ProductList.IsLoading"
+          LoadingProgressColor="Color.Primary"
+          Hover="true"
+          Dense="true"
+          OnRowClick="@(args => Selected = args.Item?.Id)"
+          RowClassFunc="@((product, _) => product.Id == Selected ? "mud-theme-primary" : string.Empty)"
+          Class="mb-6">
+    <HeaderContent>
+        <MudTh>Name</MudTh>
+        <MudTh>Category</MudTh>
+        <MudTh Style="text-align:right">Price</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Name">@context.Name</MudTd>
+        <MudTd DataLabel="Category"><MudChip T="string" Size="Size.Small">@context.Category</MudChip></MudTd>
+        <MudTd DataLabel="Price" Style="text-align:right">@context.Price.ToString("C")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        @if (ProductList.Exception is not null)
+        {
+            <MudAlert Severity="Severity.Error">@ProductList.Exception.Message</MudAlert>
+        }
+        else
+        {
+            <MudText>No products.</MudText>
+        }
+    </NoRecordsContent>
+</MudTable>
+
+<MudText Typo="Typo.h6" GutterBottom="true">Detail</MudText>
+
+@if (!Detail.IsEnabled)
+{
+    <MudAlert Severity="Severity.Normal" Variant="Variant.Outlined">
+        Disabled until a row is selected. Nothing has been fetched.
+    </MudAlert>
+}
+else if (Detail.IsLoading)
+{
+    <MudSkeleton Height="120px" />
+}
+else if (Detail.Exception is not null)
+{
+    <MudAlert Severity="Severity.Error">@Detail.Exception.Message</MudAlert>
+}
+else if (Detail.Data is { } detail)
+{
+    <MudCard Outlined="true">
+        <MudCardContent>
+            <MudText Typo="Typo.h6">@detail.Product.Name</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">@detail.Description</MudText>
+            <MudText Typo="Typo.body2">@detail.Stock in stock</MudText>
+        </MudCardContent>
+        <MudCardActions>
+            <MudButton Variant="Variant.Text" OnClick="@(() => Client.Invalidate(("product", Selected!.Value)))">
+                Invalidate this one
+            </MudButton>
+        </MudCardActions>
+    </MudCard>
+
+    <MudText Typo="Typo.caption" Class="mt-2">
+        Fetched at @Detail.LastUpdatedAt.ToLocalTime().ToString("HH:mm:ss"). Select another row
+        and come back: the second visit is served from cache, within the five minute stale time,
+        and the timestamp does not move.
+    </MudText>
+}
+
+@code {
+    private int? Selected { get; set; }
+
+    IQueryState<List<Product>> ProductList => UseQuery(
+        QueryOptions
+            .Create<List<Product>>(
+                "products",
+                async static ctx => await CatalogService.GetProductsAsync(ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    IQueryState<ProductDetail> Detail => UseQuery(
+        QueryOptions
+            .Create<(string, int), ProductDetail>(
+                ("product", Selected ?? 0),
+                async static ctx => await CatalogService.GetProductAsync(ctx.Key.Item2, ctx.CancellationToken ?? default))
+            // Read on every render, so selecting a row turns this on and the query fetches.
+            .Enabled(Selected is not null)
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+}

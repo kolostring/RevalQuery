@@ -1,0 +1,141 @@
+@page "/reviews"
+@inject ISnackbar Snackbar
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Form and mutation</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Form and mutation</MudText>
+
+<MudText Class="mb-4">
+    The form posts through <MudChip T="string" Size="Size.Small">UseMutation</MudChip>. Its
+    OnResolved invalidates the reviews key, and the query reading that key refetches on its own.
+    Nothing here writes the mutation's response into the cache by hand.
+</MudText>
+
+<MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
+    Mutations default to zero retries, so a rejected write fails once and stays failed. Queries
+    default to three retries, four calls in all. Submit a one-word comment to see the server
+    refuse it.
+</MudAlert>
+
+<MudPaper Outlined="true" Class="pa-4 mb-6">
+    <MudForm>
+        <MudSelect T="int" @bind-Value="ProductId" Label="Product" Class="mb-3">
+            @foreach (var product in ProductList.Data ?? [])
+            {
+                <MudSelectItem T="int" Value="@product.Id">@product.Name</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudTextField @bind-Value="Author" Label="Your name" Class="mb-3" />
+
+        <MudRating @bind-SelectedValue="Rating" Class="mb-3" />
+
+        <MudTextField @bind-Value="Comment" Label="Comment" Lines="3" Class="mb-3" />
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="@(AddReview.IsFetching || string.IsNullOrWhiteSpace(Author) || string.IsNullOrWhiteSpace(Comment))"
+                   OnClick="Submit">
+            @if (AddReview.IsFetching)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Posting</span>
+            }
+            else
+            {
+                <span>Post review</span>
+            }
+        </MudButton>
+    </MudForm>
+
+    @if (AddReview.IsException)
+    {
+        <MudAlert Severity="Severity.Error" Class="mt-3">@AddReview.Exception?.Message</MudAlert>
+    }
+</MudPaper>
+
+<MudText Typo="Typo.h6" GutterBottom="true">Reviews</MudText>
+
+@if (ReviewList.IsLoading)
+{
+    <MudSkeleton Height="80px" />
+    <MudSkeleton Height="80px" />
+}
+else if (ReviewList.Exception is not null)
+{
+    <MudAlert Severity="Severity.Error">@ReviewList.Exception.Message</MudAlert>
+}
+else if (ReviewList.Data is { Count: 0 })
+{
+    <MudText>No reviews for this one yet.</MudText>
+}
+else
+{
+    <MudList T="Review">
+        @foreach (var review in ReviewList.Data ?? [])
+        {
+            <MudListItem>
+                <MudRating SelectedValue="@review.Rating" ReadOnly="true" Size="Size.Small" />
+                <MudText Typo="Typo.body1">@review.Comment</MudText>
+                <MudText Typo="Typo.caption">@review.Author</MudText>
+            </MudListItem>
+        }
+    </MudList>
+}
+
+@if (ReviewList.IsFetching && !ReviewList.IsLoading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+    <MudText Typo="Typo.caption">Refetching after the invalidation, with the old list still on screen.</MudText>
+}
+
+@code {
+    private int ProductId { get; set; } = 1;
+    private string Author { get; set; } = string.Empty;
+    private int Rating { get; set; } = 4;
+    private string Comment { get; set; } = string.Empty;
+
+    private async Task Submit()
+    {
+        await AddReview.ExecuteAsync(new AddReviewParams(ProductId, new Review(Author, Rating, Comment)));
+
+        if (AddReview.IsResolved)
+        {
+            Snackbar.Add("Review posted.", Severity.Success);
+            Comment = string.Empty;
+        }
+    }
+
+    /// <summary>What the mutation is given. A class, which is what MutationOptions requires.</summary>
+    public sealed record AddReviewParams(int ProductId, Review Review);
+
+    IQueryState<List<Product>> ProductList => UseQuery(
+        QueryOptions
+            .Create<List<Product>>(
+                "products",
+                async static ctx => await CatalogService.GetProductsAsync(ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    IQueryState<List<Review>> ReviewList => UseQuery(
+        QueryOptions
+            .Create<(string, int), List<Review>>(
+                ("reviews", ProductId),
+                async static ctx => await CatalogService.GetReviewsAsync(ctx.Key.Item2, ctx.CancellationToken ?? default))
+            .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
+            .Build());
+
+    RevalQuery.Core.Mutation.MutationState<AddReviewParams, Review> AddReview => UseMutation(
+        MutationOptions
+            .Create<AddReviewParams, Review>(
+                async static ctx => await CatalogService.AddReviewAsync(
+                    ctx.Params.ProductId, ctx.Params.Review, ctx.CancellationToken))
+            .OnResolved((_, parameters) =>
+            {
+                // The list is fresh for five minutes, so without this the new review would not
+                // appear until the stale time passed.
+                Client.Invalidate(("reviews", parameters.ProductId));
+                return Task.CompletedTask;
+            }));
+}

@@ -1,0 +1,97 @@
+@page "/autocomplete"
+@inherits RevalQuery.Blazor.QueryComponentBase
+
+<PageTitle>Autocomplete</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">Autocomplete</MudText>
+
+<MudText Class="mb-4">
+    <MudChip T="string" Size="Size.Small">MudAutocomplete</MudChip> asks for a search function,
+    not for a component that re-renders when data arrives, so
+    <MudChip T="string" Size="Size.Small">UseQuery</MudChip> is the wrong tool here. The pair
+    that fits is <MudChip T="string" Size="Size.Small">FindQuery</MudChip> to answer from the
+    registry and <MudChip T="string" Size="Size.Small">FetchQueryAsync</MudChip> when there is
+    nothing fresh to answer with.
+</MudText>
+
+<MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
+    <MudText Typo="Typo.body2">
+        <b>FetchQueryAsync always fetches.</b> It is "get me this data now", not "get me this
+        data if it is stale": stale time is consulted when a subscriber arrives, not here.
+        Calling it straight from a search box would put a request on the wire for every
+        keystroke, cache or no cache. The freshness check below is this page's own.
+    </MudText>
+</MudAlert>
+
+<MudAutocomplete T="Product"
+                 Label="Search products"
+                 SearchFunc="Search"
+                 ToStringFunc="@(p => p?.Name ?? string.Empty)"
+                 ResetValueOnEmptyText="true"
+                 CoerceText="true"
+                 Class="mb-4" />
+
+<MudText Typo="Typo.h6" GutterBottom="true">Requests the service actually received</MudText>
+
+<MudPaper Outlined="true" Class="pa-4">
+    @if (_log.Count == 0)
+    {
+        <MudText Typo="Typo.body2">Nothing yet. Type above.</MudText>
+    }
+    else
+    {
+        <MudList T="string" Dense="true">
+            @foreach (var entry in _log)
+            {
+                <MudListItem>@entry</MudListItem>
+            }
+        </MudList>
+    }
+</MudPaper>
+
+<MudText Typo="Typo.caption" Class="mt-2">
+    Delete back to a term you have already typed. The list above does not grow, because
+    FindQuery answers from the registry and nothing reaches the service.
+</MudText>
+
+@code {
+    private static readonly TimeSpan Freshness = TimeSpan.FromMinutes(5);
+
+    private readonly List<string> _log = [];
+
+    private async Task<IEnumerable<Product>> Search(string term, CancellationToken ct)
+    {
+        term ??= string.Empty;
+
+        var key = ("product-search", term);
+
+        // The registry is the cache. A hit that is still fresh is the whole answer, and the
+        // handler is never reached.
+        if (Client.FindQuery<List<Product>, (string, string)>(key) is { IsResolved: true } cached
+            && DateTimeOffset.UtcNow - cached.LastUpdatedAt < Freshness)
+        {
+            return cached.Data ?? [];
+        }
+
+        // MudBlazor cancels a search the moment the next keystroke supersedes it. FetchQueryAsync
+        // takes no token of its own, so the most this page can do is decline to start a request
+        // that is already obsolete.
+        ct.ThrowIfCancellationRequested();
+
+        var results = await Client.FetchQueryAsync(
+            QueryOptions
+                .Create<(string, string), List<Product>>(
+                    key,
+                    async static ctx => await CatalogService.SearchAsync(
+                        ctx.Key.Item2, ctx.CancellationToken ?? default))
+                .Build());
+
+        _log.Add($"\"{term}\" at {DateTimeOffset.Now:HH:mm:ss}");
+
+        // MudAutocomplete awaits this from its own component, so nothing here repaints the page
+        // unless the page asks for it.
+        await InvokeAsync(StateHasChanged);
+
+        return results;
+    }
+}
