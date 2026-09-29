@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Caching;
@@ -15,9 +15,31 @@ namespace RevalQuery.Tests;
 /// Cases the review turned up that the rest of the suite did not reach.
 /// </summary>
 /// <remarks>
-/// Three of these fail against the code as it stood before the fix: the wedged query, the
-/// suppressed fetch, and the overfull death row. The rest cover interleavings too narrow to
-/// provoke on demand, so they are guards against regression rather than reproductions.
+/// <para>Each fix was reverted in turn and the suite re-run, so the mapping below is measured
+/// rather than assumed. Five of these seven fail with their fix removed and are real
+/// regression tests, each catching exactly one:</para>
+/// <para>An_Observer_That_Throws_Does_Not_Wedge_The_Query catches QueryWorker swallowing an
+/// observer's exception instead of letting it escape the fetch.</para>
+/// <para>Fresh_Persisted_Data_Suppresses_The_Fetch catches RunIfStale deciding staleness
+/// without first awaiting the pending load from persistence.</para>
+/// <para>Stale_Persisted_Data_Still_Refetches catches TryRestore stamping the restore with the
+/// current time instead of keeping the moment the data was originally fetched.</para>
+/// <para>A_Late_Restore_Never_Overwrites_A_Landed_Fetch catches TryRestore adopting data after
+/// a fetch has already produced some.</para>
+/// <para>An_Overfull_Death_Row_Evicts_Rather_Than_Forgetting catches the eviction policy
+/// dropping its records instead of evicting early when it grows past its bound.</para>
+/// <para>Two are structural. They describe an invariant and exercise the normal path, but
+/// cannot provoke the interleaving that breaks it, because no API opens the window:</para>
+/// <para>FetchQueryAsync_Does_Not_Return_Data_It_Never_Fetched needs the worker released
+/// between PrepareRun returning and RunAsync being entered, which is a few instructions with
+/// nothing in between to hook.</para>
+/// <para>Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling needs a subscriber to
+/// arrive after the last one leaves but before the worker is disposed for it, so the worker
+/// survives with a cancelled polling source. Driving that reliably needs two threads stopped
+/// at an exact point inside QueryState.Unsubscribe.</para>
+/// <para>Both are kept rather than deleted: a named invariant that a later reader can check by
+/// hand is worth more than nothing, and neither could be strengthened without adding a seam to
+/// the library that exists only for tests.</para>
 /// </remarks>
 public class ReviewFindingsTests
 {
@@ -49,6 +71,10 @@ public class ReviewFindingsTests
         Assert.True(client.FindQuery("wedged")!.IsIdle);
     }
 
+    /// <summary>
+    /// Structural. Covers the normal path; see the class remarks for why the retry path this
+    /// guards cannot be forced open.
+    /// </summary>
     [Fact]
     public async Task FetchQueryAsync_Does_Not_Return_Data_It_Never_Fetched()
     {
@@ -68,6 +94,11 @@ public class ReviewFindingsTests
         Assert.Equal("value", await fetch);
     }
 
+    /// <summary>
+    /// Structural. The churn is sequential, so it never produces the interleaving described in
+    /// the class remarks; what it does prove is that repeated subscribe and dispose cycles leave
+    /// a query polling.
+    /// </summary>
     [Fact]
     public async Task Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling()
     {
@@ -137,7 +168,14 @@ public class ReviewFindingsTests
 
         await WaitUntil(() => observer.Query.Data == "from-network");
 
+        // Past the 30ms load, so nothing is still in flight that could change the answer.
+        await Task.Delay(150);
+
         Assert.Equal("from-network", observer.Query.Data);
+
+        // The three-hour-old timestamp has to have been replaced by the fetch's own. Restoring
+        // it verbatim is what made the query look stale in the first place.
+        Assert.True(observer.Query.LastUpdatedAt > DateTimeOffset.UtcNow.AddMinutes(-1));
     }
 
     [Fact]
