@@ -10,36 +10,44 @@ namespace RevalQuery.Core.Query.Execution;
 public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
 {
     /// <summary>
-    /// Executes the handler with retry logic.
-    /// Retries up to retryOptions.Retry times with delay from retryOptions.RetryDelay.
+    /// Executes the handler, retrying a failure up to retryOptions.Retry further times with
+    /// the delay from retryOptions.RetryDelay between them.
     /// </summary>
+    /// <remarks>
+    /// The retry count never includes the first attempt, so zero retries still calls the
+    /// handler once and surfaces its exception.
+    /// </remarks>
     public async Task<TResponse> ExecuteWithRetryAsync<TResponse>(
         Func<Task<TResponse>> handler,
         CoreRetryOptions retryOptions,
         CancellationToken cancellationToken = default
     )
     {
-        var maxAttempts = retryOptions.Retry;
+        var maxRetries = retryOptions.Retry;
         var retryDelayCalculator = retryOptions.RetryDelay;
+        Exception? lastException = null;
 
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
             try
             {
-                if (attempt > 1)
+                if (attempt > 0)
                 {
-                    var delay = retryDelayCalculator(attempt - 1);
+                    var delay = retryDelayCalculator(attempt);
                     await Task.Delay(delay, cancellationToken);
                 }
 
                 return await handler();
             }
-            catch (Exception) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (attempt < maxRetries && !cancellationToken.IsCancellationRequested)
             {
-                // Continue to next attempt
+                lastException = ex;
             }
         }
 
-        throw new InvalidOperationException("Retry policy failed to return result.");
+        // Unreachable: the final attempt either returns or throws past the filter above. The
+        // rethrow is here so that if it ever is reached, the caller gets the real failure
+        // rather than an invented one that discards it.
+        throw lastException ?? new InvalidOperationException("Retry policy failed to return result.");
     }
 }

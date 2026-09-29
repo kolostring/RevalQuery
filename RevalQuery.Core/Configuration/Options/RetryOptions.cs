@@ -3,6 +3,11 @@ namespace RevalQuery.Core.Configuration.Options;
 /// <summary>
 /// Internal immutable retry options with applied defaults.
 /// </summary>
+/// <param name="Retry">
+/// How many further attempts a failure gets. Never counts the first attempt, so zero still
+/// calls the handler once.
+/// </param>
+/// <param name="RetryDelay">Maps a retry's one-based number to the wait before it.</param>
 public sealed record CoreRetryOptions(
     int Retry,
     Func<int, TimeSpan> RetryDelay
@@ -12,14 +17,15 @@ public sealed record CoreRetryOptions(
         => TimeSpan.FromMilliseconds(Math.Min(1000 * Math.Pow(2, attempt), 30000));
 
     /// <summary>
-    /// Default for queries: 3 retries with exponential backoff.
+    /// Default for queries: 3 retries after the first attempt, four calls in all, with
+    /// exponential backoff.
     /// </summary>
     public static CoreRetryOptions QueryDefault => new(3, DefaultDelayCalculator);
 
     /// <summary>
-    /// Default for mutations: 1 retry (fail-fast).
+    /// Default for mutations: no retries, so one call (fail-fast).
     /// </summary>
-    public static CoreRetryOptions MutationDefault => new(1, DefaultDelayCalculator);
+    public static CoreRetryOptions MutationDefault => new(0, DefaultDelayCalculator);
 
     /// <summary>
     /// Applies user overrides to these defaults.
@@ -72,9 +78,12 @@ public sealed class RetryOptionsBuilder
     }
 
     /// <summary>
-    /// Sets retry count. Optionally provides custom delay calculator.
+    /// Sets the retry count. Optionally provides custom delay calculator.
     /// </summary>
-    /// <param name="count">Number of retry attempts.</param>
+    /// <param name="count">
+    /// How many further attempts a failure gets. Never counts the first attempt, so 0 still
+    /// calls the handler once and 3 calls it up to four times.
+    /// </param>
     /// <param name="delay">Optional custom delay function (attempt -> TimeSpan).</param>
     public RetryOptionsBuilder Retry(int count, Func<int, TimeSpan>? delay = null)
     {

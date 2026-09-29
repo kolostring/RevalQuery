@@ -41,12 +41,12 @@ public class ReviewOfA700df3Tests
         var persistence = new SlowPersistence("from-disk", loadDelayMs: 150);
         using var client = NewClient(persistence);
 
-        // One attempt, so the failure is recorded well before the load lands. Retry counts
-        // attempts rather than retries, and the default of 3 backs off for longer than the
-        // load takes, which hides the ordering this test is about.
+        // No retries, so the failure is recorded well before the load lands. The default of
+        // 3 retries backs off for longer than the load takes, which would hide the ordering
+        // this test is about.
         var options = QueryOptions.Create<string>(
             "failed", _ => Task.FromException<string>(new InvalidOperationException("boom")))
-            .ConfigureRetry(r => r.Retry(1))
+            .ConfigureRetry(r => r.Retry(0))
             .Build();
 
         await Assert.ThrowsAnyAsync<Exception>(() => client.FetchQueryAsync(options));
@@ -74,7 +74,7 @@ public class ReviewOfA700df3Tests
         var options = QueryOptions.Create("recovering", _ => shouldFail
                 ? Task.FromException<string>(new InvalidOperationException("boom"))
                 : Task.FromResult("value"))
-            .ConfigureRetry(r => r.Retry(1))
+            .ConfigureRetry(r => r.Retry(0))
             .Build();
 
         await Assert.ThrowsAnyAsync<Exception>(() => client.FetchQueryAsync(options));
@@ -96,11 +96,13 @@ public class ReviewOfA700df3Tests
         var persistence = new SlowPersistence("from-disk", loadDelayMs: 30);
         using var client = NewClient(persistence);
 
+        // No retries: the restore landing mid-fetch is what this test is about, and backing
+        // off through three of them only makes it slower.
         var options = QueryOptions.Create<string>("racing", async _ =>
         {
             await Task.Delay(80);
             throw new InvalidOperationException("boom");
-        }).Build();
+        }).ConfigureRetry(r => r.Retry(0)).Build();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.FetchQueryAsync(options));
     }
