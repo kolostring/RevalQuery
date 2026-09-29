@@ -266,6 +266,31 @@ public sealed class QueryClient : IDisposable
     }
 
     /// <summary>
+    /// Captures every query that currently holds data.
+    /// </summary>
+    /// <remarks>
+    /// The dehydrate half of moving a prerender's work to the client. Pending queries and
+    /// failed ones produce no snapshot, so a failure is never carried across as though it were
+    /// a result and the client simply fetches for itself.
+    /// </remarks>
+    /// <returns>A snapshot per resolved query, in no particular order.</returns>
+    public IReadOnlyList<QuerySnapshot> SnapshotResolvedQueries()
+    {
+        List<IQueryState> states;
+
+        lock (_gate) states = QueryRegistry.StatesFrom(_registry.Root);
+
+        var snapshots = new List<QuerySnapshot>(states.Count);
+
+        foreach (var state in states)
+        {
+            if (state.Snapshot() is { } snapshot) snapshots.Add(snapshot);
+        }
+
+        return snapshots;
+    }
+
+    /// <summary>
     /// Re-applies options to an existing subscription whose key has not changed.
     /// </summary>
     /// <remarks>

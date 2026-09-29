@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Execution;
@@ -240,6 +240,19 @@ public sealed class QueryState<TKey, TResponse>(
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = lastUpdatedAt;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Captures this query's key, data and fetch time as one step, or null when it holds no data.
+    /// </summary>
+    public QuerySnapshot? Snapshot()
+    {
+        lock (_dataGate)
+        {
+            if (Status != QueryStatus.Resolved || Data is null) return null;
+
+            return new QuerySnapshot(Key, typeof(TResponse), Data, _lastUpdatedAt);
         }
     }
 

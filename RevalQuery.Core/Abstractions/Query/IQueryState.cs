@@ -1,4 +1,4 @@
-namespace RevalQuery.Core.Abstractions.Query;
+﻿namespace RevalQuery.Core.Abstractions.Query;
 
 /// <summary>
 /// Base interface for query state management.
@@ -80,6 +80,16 @@ public interface IQueryState : IObservableQueryState
     /// Requests cancellation of any in-progress fetch operation.
     /// </summary>
     void Cancel();
+
+    /// <summary>
+    /// Captures this query's key, data and fetch time as one step, or null when it holds no data.
+    /// </summary>
+    /// <remarks>
+    /// Taken under the same gate as a fetch, so a snapshot never pairs one fetch's data with
+    /// another's timestamp. A pending or failed query returns null, which is what keeps a
+    /// failure from being carried anywhere as though it were a result.
+    /// </remarks>
+    QuerySnapshot? Snapshot();
 }
 
 /// <summary>
