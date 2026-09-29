@@ -1,4 +1,4 @@
-# RevalQuery.Core
+﻿# RevalQuery.Core
 
 Type-safe async data fetching and caching library. Used by RevalQuery.Blazor.
 
@@ -175,6 +175,11 @@ serialises. `LastUpdatedAt` is stored and restored verbatim, so data that was
 already stale when the process stopped refetches on the next start rather than
 appearing fresh.
 
+Several stores may be registered. A load takes the first one holding the key, so
+registration order is preference order, and a save goes to all of them. That is what
+lets the Blazor prerender state transfer sit alongside a durable store of your own
+instead of replacing it.
+
 ---
 
 ## Lifetimes and threads
@@ -187,6 +192,13 @@ process leaks data between users.
 `QueryClient` is safe to call from any thread. Observer callbacks are not
 synchronised, because `QueryComponentBase` already routes them through
 `InvokeAsync`.
+
+Disposal is enforced asymmetrically. Once the client is disposed, anything a live render
+reaches throws `ObjectDisposedException`: `Subscribe`, `PrefetchQuery`, `FetchQueryAsync`,
+`GetOrCreateQuery` and `ApplyOptions`. Tearing down stays silent: unsubscribing, cancelling
+and disposing an observer are no-ops. Blazor does not specify whether component disposal
+runs before or after the DI scope that owns the client, so a component tearing down second
+must not throw.
 
 ---
 

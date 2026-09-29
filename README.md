@@ -1,4 +1,4 @@
-# RevalQuery
+﻿# RevalQuery
 
 Type-safe async data fetching and caching library for .NET. Inspired by TanStack Query.
 
@@ -20,6 +20,10 @@ builder.Services.AddRevalQuery();
 // Client/Program.cs
 builder.Services.AddRevalQuery();
 ```
+
+Both hosts need it: with prerendering on, components run on the server first and in the
+browser afterwards. To stop the browser refetching what the server already fetched, add the
+[prerender state transfer](./RevalQuery.Blazor/README.md#prerender-state-transfer).
 
 ## Quick Start (Blazor)
 
@@ -62,11 +66,15 @@ builder.Services.AddRevalQuery();
 - **Polling support** - Automatic refetch at configurable intervals
 - **Retry with backoff** - Configurable exponential backoff retry policy
 - **Optional persistence** - Point `IQueryPersistence` at a durable store to survive restarts
+- **Prerender state transfer** - The browser renders what the prerender fetched instead of fetching it again
 
 ## Documentation
 
 - [RevalQuery.Blazor README](./RevalQuery.Blazor/README.md)
 - [RevalQuery.Core README](./RevalQuery.Core/README.md)
+- [Glossary](./CONTEXT.md)
+- [Architecture decision records](./docs/adr)
+- [Examples](./examples) - runnable, and referencing the projects in this repo rather than a published version
 
 ## License
 

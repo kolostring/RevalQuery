@@ -1,4 +1,4 @@
----
+﻿---
 status: accepted
 ---
 
@@ -35,7 +35,21 @@ requests and means all data gets passed to all users".
 
 ## Consequences
 
-`QueryClient` takes one lock covering registry mutations and fetch-status transitions.
+`QueryClient` takes one lock, and it covers the registry: which keys exist, what state
+sits at each, and which worker drives it. It does not cover a query's data or its status.
+`Data`, `Status` and `FetchStatus` are plain properties with no lock and no volatile, and
+they are read without synchronisation.
+
+That is correct, but for a narrower reason than a wide lock would give, so the invariant
+is worth naming. **A query has at most one fetch in flight at a time**, enforced by
+`QueryWorker`'s `_inFlight`: a second caller joins the running fetch rather than starting
+another. One writer means no torn interleaving of two results, and the writes a reader
+might miss are ones the following `NotifyChanged` will bring it back for. Where an update
+must be seen whole, `QueryState` takes `_dataGate` and does the whole thing under it:
+`ApplyFetched`, `TryRestore` and `Snapshot` each pair the data with its timestamp in one
+step, which is what stops a restore landing between a fetch's data and its clock, or a
+snapshot carrying one fetch's data with another's time.
+
 Observer callbacks are deliberately left unsynchronised, because `QueryComponentBase`
 already routes them through `InvokeAsync`, which is the renderer's job rather than ours.
 
