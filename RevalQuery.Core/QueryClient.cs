@@ -128,19 +128,44 @@ public sealed class QueryClient : IDisposable
     public void Invalidate(string key) => Invalidate(ValueTuple.Create(key));
 
     /// <summary>
-    /// Cancels any in-progress fetch for the given key.
+    /// Cancels the in-flight fetch of every query under the key prefix, including the query at
+    /// the prefix itself, and completes once they have all unwound.
     /// </summary>
-    /// <param name="keySegments">The key to cancel.</param>
-    public void Cancel(ITuple keySegments)
+    /// <remarks>
+    /// <para>Awaiting this is what makes it useful before an optimistic update. A refetch that
+    /// started before the mutation would otherwise land after it and overwrite the optimistic
+    /// value the caller just wrote. Once this completes, no result from a cancelled fetch can
+    /// still reach the query, so writing to <see cref="IQueryState{TRes}.Data"/> afterwards
+    /// stands until the next fetch.</para>
+    /// <para>Matches by prefix, the same set as
+    /// <see cref="Invalidate(ITuple)"/>, so the pair can be used on the same key.</para>
+    /// <para>A cancelled query keeps whatever data it already had and records no error. Use
+    /// <see cref="IQueryState.Cancel"/> to stop one query without waiting.</para>
+    /// </remarks>
+    /// <param name="keySegments">The key prefix to cancel under.</param>
+    public Task CancelAsync(ITuple keySegments)
     {
-        FindQuery(keySegments)?.Cancel();
+        List<IQueryWorker> workers;
+
+        lock (_gate)
+        {
+            var node = _registry.PeekNode(keySegments);
+            workers = node is null ? [] : QueryRegistry.WorkersFrom(node);
+        }
+
+        if (workers.Count == 0) return Task.CompletedTask;
+
+        // Every cancellation is requested before any unwind is awaited, so a slow handler on
+        // one query does not leave the next one fetching while this call waits.
+        return Task.WhenAll(workers.Select(worker => worker.CancelCurrentFetchAsync()));
     }
 
     /// <summary>
-    /// Cancels any in-progress fetch for the given string key.
+    /// Cancels the in-flight fetch of every query under the string key prefix and completes
+    /// once they have all unwound.
     /// </summary>
-    /// <param name="key">The string key to cancel.</param>
-    public void Cancel(string key) => Cancel(ValueTuple.Create(key));
+    /// <param name="key">The string key prefix to cancel under.</param>
+    public Task CancelAsync(string key) => CancelAsync(ValueTuple.Create(key));
 
     /// <summary>
     /// Prefetches data into the registry without subscribing.
@@ -154,10 +179,12 @@ public sealed class QueryClient : IDisposable
     public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
         // Registered before returning, so a key already taken by another result type is
         // reported to the caller rather than lost in an unobserved task.
-        var (state, worker) = PrepareRun(queryOptions);
-        _ = PrefetchCoreAsync(state, worker);
+        PrepareRun(options);
+        _ = PrefetchCoreAsync(options);
     }
 
     /// <summary>
@@ -169,12 +196,12 @@ public sealed class QueryClient : IDisposable
     /// recorded on the query. What is left here is the run failing to happen at all, which a
     /// discarded task would surface as an unobserved task exception long after the fact.
     /// </remarks>
-    private async Task PrefetchCoreAsync<TKey, TRes>(QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker)
+    private async Task PrefetchCoreAsync<TKey, TRes>(QueryOptions<TKey, TRes> options)
         where TKey : ITuple
     {
         try
         {
-            await RunAndReleaseAsync(state, worker);
+            await RunAndReleaseAsync(options);
         }
         catch
         {
@@ -191,25 +218,46 @@ public sealed class QueryClient : IDisposable
     /// <typeparam name="TKey">The key type.</typeparam>
     /// <typeparam name="TRes">The response type.</typeparam>
     /// <param name="queryOptions">Query configuration.</param>
+    /// <param name="cancellationToken">
+    /// Abandons the wait, not the fetch. Cancelling it ends this await with an
+    /// <see cref="OperationCanceledException"/> while the fetch runs on and its result still
+    /// lands in the registry. That is deliberate: an autocomplete that abandons a request on
+    /// the next keystroke still wants the answer cached for the backspace that follows.
+    /// Use <see cref="CancelAsync(ITuple)"/> to stop the fetch itself.
+    /// </param>
     /// <returns>The fetched data.</returns>
     /// <exception cref="Exception">Throws if the query fails.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// The fetch was cancelled, or <paramref name="cancellationToken"/> was.
+    /// </exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public async Task<TRes> FetchQueryAsync<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
+    public async Task<TRes> FetchQueryAsync<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions,
+        CancellationToken cancellationToken = default)
         where TKey : ITuple
     {
-        var (state, worker) = PrepareRun(queryOptions);
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        var outcome = await RunAndReleaseAsync(state, worker);
+        // Registered before the await, so a key already taken by another result type throws
+        // from the call rather than from the task it returned.
+        PrepareRun(options);
 
-        if (state.IsException) throw state.Exception!;
+        // WaitAsync rather than a token passed into the run: the fetch is shared with every
+        // other caller joined to it, and one caller walking away must not take it from them.
+        var (state, outcome) = await RunAndReleaseAsync(options).WaitAsync(cancellationToken);
 
-        // Returning Data here would hand back null, or another caller's older result, as though
-        // this call had fetched it. The caller asked for data and there is none.
+        // Checked before the exception, which belongs to the query rather than to this call.
+        // A fetch cancelled while an older failure still sat on the state would otherwise
+        // throw that failure, reporting an error this call never hit.
         if (outcome == FetchOutcome.Cancelled)
         {
+            // Returning Data here would hand back null, or another caller's older result, as
+            // though this call had fetched it. The caller asked for data and there is none.
             throw new OperationCanceledException(
                 $"Query {DescribeKey(state.Key)} was cancelled before it produced data.");
         }
+
+        if (state.IsException) throw state.Exception!;
 
         return state.Data!;
     }
@@ -375,7 +423,7 @@ public sealed class QueryClient : IDisposable
     /// </remarks>
     public void Dispose()
     {
-        List<IDisposable> workers;
+        List<IQueryWorker> workers;
 
         lock (_gate)
         {
@@ -403,9 +451,9 @@ public sealed class QueryClient : IDisposable
     /// disposed client is a bug, and one that silently created a query would also create a
     /// worker with nothing left to dispose it.
     ///
-    /// Teardown is deliberately not guarded. Unsubscribe, Cancel and observer disposal stay
-    /// silent no-ops, because Blazor does not specify whether component disposal runs before
-    /// or after the DI scope that owns this client.
+    /// Teardown is deliberately not guarded. Unsubscribe, CancelAsync and observer disposal
+    /// stay silent no-ops, because Blazor does not specify whether component disposal runs
+    /// before or after the DI scope that owns this client.
     /// </remarks>
     private void ThrowIfDisposedLocked()
     {
@@ -415,11 +463,10 @@ public sealed class QueryClient : IDisposable
     /// <summary>
     /// Registers a query and its worker for a run that no observer asked for.
     /// </summary>
+    /// <param name="options">Options that have already been through the plugin pipeline.</param>
     private (QueryState<TKey, TRes> State, QueryWorker<TKey, TRes> Worker) PrepareRun<TKey, TRes>(
-        QueryOptions<TKey, TRes> queryOptions) where TKey : ITuple
+        QueryOptions<TKey, TRes> options) where TKey : ITuple
     {
-        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
-
         lock (_gate)
         {
             var state = GetOrCreateQueryLocked(options);
@@ -427,19 +474,23 @@ public sealed class QueryClient : IDisposable
         }
     }
 
-    private async Task<FetchOutcome> RunAndReleaseAsync<TKey, TRes>(
-        QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker) where TKey : ITuple
+    /// <summary>
+    /// Runs a query for a caller with no observer of its own, releasing it again afterwards.
+    /// </summary>
+    /// <returns>The state that was run, and what the run did.</returns>
+    private async Task<(QueryState<TKey, TRes> State, FetchOutcome Outcome)> RunAndReleaseAsync<TKey, TRes>(
+        QueryOptions<TKey, TRes> options) where TKey : ITuple
     {
         // A worker released by whoever else was using this query refuses to run. Take a fresh
         // one rather than returning data the caller never actually fetched.
         for (var attempt = 0; attempt < MaxRunAttempts; attempt++)
         {
-            // Re-acquired at the top rather than after a failed attempt, so the last attempt
-            // does not leave a freshly created worker in the registry on its way out.
-            if (attempt > 0)
-            {
-                lock (_gate) worker = GetOrCreateWorker(state);
-            }
+            // State and worker are taken together, every attempt, because an eviction can land
+            // between two of them. It prunes the node, and a worker created afterwards for the
+            // evicted state would sit on a node the registry has since refilled with a second
+            // state for the same key. The next subscriber would then get that second state and
+            // a worker driving the first, and would wait for a fetch that never reaches it.
+            var (state, worker) = PrepareRun(options);
 
             var outcome = FetchOutcome.NotRun;
 
@@ -452,11 +503,11 @@ public sealed class QueryClient : IDisposable
                 ReleaseIfUnobserved(state);
             }
 
-            if (outcome != FetchOutcome.NotRun) return outcome;
+            if (outcome != FetchOutcome.NotRun) return (state, outcome);
         }
 
         throw new InvalidOperationException(
-            $"Query {DescribeKey(state.Key)} could not be run: its worker was released " +
+            $"Query {DescribeKey(options.Key)} could not be run: its worker was released " +
             $"{MaxRunAttempts} times while the fetch was starting.");
     }
 
@@ -510,7 +561,7 @@ public sealed class QueryClient : IDisposable
 
     private void DisposeWorker(ITuple key)
     {
-        IDisposable? worker;
+        IQueryWorker? worker;
 
         lock (_gate)
         {
@@ -526,7 +577,7 @@ public sealed class QueryClient : IDisposable
 
     private void HandleEviction(ITuple key)
     {
-        IDisposable? worker;
+        IQueryWorker? worker;
 
         lock (_gate)
         {

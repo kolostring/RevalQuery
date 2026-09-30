@@ -1,5 +1,6 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Query;
 
 namespace RevalQuery.Core.Registry;
 
@@ -79,9 +80,9 @@ internal sealed class QueryRegistry
     /// <summary>
     /// Collects the workers held by this node and everything beneath it.
     /// </summary>
-    public static List<IDisposable> WorkersFrom(RegistryNode node)
+    public static List<IQueryWorker> WorkersFrom(RegistryNode node)
     {
-        var result = new List<IDisposable>();
+        var result = new List<IQueryWorker>();
         CollectWorkers(node, result);
         return result;
     }
@@ -99,7 +100,10 @@ internal sealed class QueryRegistry
         return IsRemovable(current);
     }
 
-    private static bool IsRemovable(RegistryNode node) => node.State is null && node.Children.Count == 0;
+    // A node still holding a worker is not empty. Pruning one would leave the worker with
+    // nothing to dispose it, still polling a query the registry no longer holds.
+    private static bool IsRemovable(RegistryNode node) =>
+        node.State is null && node.Worker is null && node.Children.Count == 0;
 
     private static void CollectStates(RegistryNode node, List<IQueryState> result)
     {
@@ -107,7 +111,7 @@ internal sealed class QueryRegistry
         foreach (var child in node.Children.Values) CollectStates(child, result);
     }
 
-    private static void CollectWorkers(RegistryNode node, List<IDisposable> result)
+    private static void CollectWorkers(RegistryNode node, List<IQueryWorker> result)
     {
         if (node.Worker is not null) result.Add(node.Worker);
         foreach (var child in node.Children.Values) CollectWorkers(child, result);

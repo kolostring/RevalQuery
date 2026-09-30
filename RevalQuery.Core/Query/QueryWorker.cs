@@ -33,7 +33,7 @@ public enum FetchOutcome
 /// </summary>
 /// <typeparam name="TKey">The query key type.</typeparam>
 /// <typeparam name="TRes">The response type.</typeparam>
-public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
+public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IRetryPolicy _retryPolicy;
@@ -149,6 +149,29 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
         CancellationTokenSource? cts;
         lock (_gate) cts = _currentFetchCts;
         CancelSafely(cts);
+    }
+
+    /// <inheritdoc />
+    public async Task CancelCurrentFetchAsync()
+    {
+        CancellationTokenSource? cts;
+        Task? inFlight;
+
+        // Both read under the one lock, so the task awaited below is the task the source
+        // cancelled belongs to rather than a later fetch that started in between.
+        lock (_gate)
+        {
+            cts = _currentFetchCts;
+            inFlight = _inFlight is { Task.IsCompleted: false } ? _inFlight.Task : null;
+        }
+
+        CancelSafely(cts);
+
+        if (inFlight is null) return;
+
+        // The run reports its own cancellation through the outcome, so nothing thrown here
+        // needs handling: the caller asked for the fetch to stop, not for its result.
+        await inFlight.ConfigureAwait(false);
     }
 
     /// <summary>
@@ -325,6 +348,14 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
                 EnsuredRetryOptions,
                 fetchCts.Token
             );
+
+            // A handler that never read its token still returns a value. Applying it would
+            // make Cancel a request the query is free to ignore, and would overwrite whatever
+            // replaced this fetch: the optimistic value a mutation just wrote, or a newer
+            // fetch's result. The value is dropped instead, the same as the result of a
+            // cancelled retryer in TanStack Query.
+            fetchCts.Token.ThrowIfCancellationRequested();
+
             Query.ApplyFetched(fetched);
             succeeded = true;
         }

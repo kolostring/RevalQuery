@@ -1,4 +1,5 @@
-using RevalQuery.Core.Abstractions.Query;
+﻿using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Query;
 
 namespace RevalQuery.Core.Registry;
 
@@ -21,5 +22,5 @@ internal sealed class RegistryNode
     /// <summary>
     /// The worker driving this node's query, or null when no fetch is being managed.
     /// </summary>
-    public IDisposable? Worker { get; set; }
+    public IQueryWorker? Worker { get; set; }
 }

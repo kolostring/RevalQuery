@@ -28,7 +28,7 @@ public class ReviewOfA700df3Tests
 
         var fetch = client.FetchQueryAsync(options);
         await started.Task;
-        client.Cancel("cancelled");
+        await client.CancelAsync("cancelled");
 
         // The handler never produced anything. Returning null as though it had is worse than
         // saying so: the caller cannot tell the difference between "no data" and "not fetched".

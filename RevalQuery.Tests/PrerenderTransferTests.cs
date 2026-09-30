@@ -159,7 +159,11 @@ public class PrerenderTransferTests
         var (client, _, clientProvider) = Host(clientState);
 
         var observer = client.Subscribe(ClientQuery("widget"), () => { });
-        await Task.Delay(300);
+
+        // Polled rather than slept for a fixed 300 ms. This test waits for something to
+        // arrive, and a machine busy with the stress loops elsewhere in this suite can take
+        // longer than any delay chosen in advance.
+        await WaitUntil(() => observer.Query.Data is not null);
 
         Assert.Equal(1, _clientCalls);
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
@@ -193,6 +197,12 @@ public class PrerenderTransferTests
         Assert.Equal("slash right", await Restored(client, ("a", "b/c")));
 
         clientProvider.Dispose();
+    }
+
+    private static async Task WaitUntil(Func<bool> predicate, int timeoutMs = 3000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (!predicate() && DateTime.UtcNow < deadline) await Task.Delay(10);
     }
 
     private static QueryOptions<TKey, Widget> Named<TKey>(TKey key, string name)

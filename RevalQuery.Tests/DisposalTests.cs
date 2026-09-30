@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
@@ -78,7 +78,7 @@ public class DisposalTests
 
         // Component disposal may land after the scope that owns the client.
         observer.Dispose();
-        client.Cancel("f");
+        await client.CancelAsync("f");
         client.Invalidate("f");
         client.Dispose();
     }

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Caching.Eviction;
@@ -106,7 +106,7 @@ public class QueryClientTests
 
         var observer = _client.Subscribe(queryOptions, () => { });
         await WaitUntil(observer.Query, s => s.IsFetching);
-        _client.Cancel(Key);
+        await _client.CancelAsync(Key);
         await WaitUntil(observer.Query, s => s.IsIdle);
         Assert.True(observer.Query.IsIdle);
     }
