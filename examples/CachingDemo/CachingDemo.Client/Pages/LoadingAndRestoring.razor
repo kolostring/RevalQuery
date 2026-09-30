@@ -38,8 +38,12 @@
 <h2>Empty key, restore then fetch</h2>
 <p>
     Nothing is stored under <code>("persisted", "orders")</code>. The restore still has to run
-    and come back empty before the query knows it must fetch, so this one is loading twice over:
-    first restoring, then fetching.
+    and come back empty before the query knows it must fetch, so this one waits twice: first on
+    the store, then on the network. Watch <code>IsLoading</code> rather than the two flags
+    beneath it and the wait is continuous, with no flicker where the restore has ended and the
+    fetch has not started. That is by construction: a restore is not over until the query knows
+    what follows the stored data, so the fetch is already running the moment
+    <code>IsRestoring</code> goes false. See <code>docs/adr/0006</code>.
 </p>
 <StateTable State="Orders" />
 <p>Data: <strong>@(Orders.Data ?? "none yet")</strong></p>

@@ -32,6 +32,13 @@ _Avoid_: Attempt, max attempts
 Populating a query's data without any component subscribing to it.
 _Avoid_: Warm, preload, eager fetch
 
+**Cancel**:
+Stopping a query's in-flight fetch and discarding whatever it would have produced. The
+query keeps the data it already had and records no error, because a cancelled fetch
+never learned anything. Distinct from abandoning a wait, where the caller stops
+listening and the fetch runs on.
+_Avoid_: Abort, stop, kill, interrupt
+
 ### Writes
 
 **Mutation**:

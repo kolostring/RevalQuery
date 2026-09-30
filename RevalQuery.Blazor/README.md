@@ -69,6 +69,7 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 - [Component Integration](#component-integration)
 - [UseQuery](#usequery)
 - [UseMutation](#usemutation)
+- [Optimistic updates](#optimistic-updates)
 - [QueryFactory Pattern](#queryfactory-pattern)
 - [QueryState Properties](#querystate-properties)
 - [Reactive options](#reactive-options)
@@ -145,6 +146,45 @@ MutationState<CreateUserRequest, User> CreateUserMutation => UseMutation(
 // Trigger mutation
 await CreateUserMutation.ExecuteAsync(new CreateUserRequest { Name = "John" });
 ```
+
+---
+
+## Optimistic updates
+
+Writing the expected result into the query before the server confirms it. `IQueryState<T>.Data`
+has a setter, so the write itself is a plain assignment. The part that needs care is the
+refetch that may already be in flight: started before the mutation, it lands after it and
+overwrites what you just wrote.
+
+`QueryClient.CancelAsync` is the answer. It stops the in-flight fetch of every query under the
+key prefix and completes once they have unwound, so once it returns nothing a cancelled fetch
+produces can still reach the query. A handler that ignored its `CancellationToken` and returned
+a value anyway has that value discarded.
+
+```csharp
+MutationState<Todo, Todo> AddTodoMutation => UseMutation(
+    MutationOptions.Create<Todo, Todo>(
+        async static ctx => await ctx.ServiceProvider
+            .GetRequiredService<ITodoService>().AddAsync(ctx.Params, ctx.CancellationToken))
+    .OnMutate(async todo =>
+    {
+        // Nothing in flight can overwrite the write below once this returns.
+        await QueryClient.CancelAsync(TodoQueries.Key);
+
+        var todos = QueryClient.FindQuery<List<Todo>>(TodoQueries.Key)!;
+        _rollback = todos.Data;
+        todos.Data = [.. todos.Data ?? [], todo];
+    })
+    .OnException(async (_, _) =>
+    {
+        QueryClient.FindQuery<List<Todo>>(TodoQueries.Key)!.Data = _rollback;
+    })
+    .OnSettled(async (_, _, _) => QueryClient.Invalidate(TodoQueries.Key))
+);
+```
+
+A cancelled query keeps the data it already had and records no error, so the optimistic value
+stands until the `Invalidate` in `OnSettled` brings the real one back.
 
 ---
 

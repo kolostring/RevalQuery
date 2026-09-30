@@ -39,17 +39,66 @@ public sealed class QueryClient
     // Fire-and-forget prefetch
     public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> options);
 
-    // Awaitable fetch - throws on error
-    public async Task<TRes> FetchQueryAsync<TKey, TRes>(QueryOptions<TKey, TRes> options);
+    // Awaitable fetch - throws on error. The token abandons the wait, not the fetch.
+    public async Task<TRes> FetchQueryAsync<TKey, TRes>(
+        QueryOptions<TKey, TRes> options,
+        CancellationToken cancellationToken = default
+    );
 
     // Invalidate cache
     public void Invalidate(ITuple key);
     public void Invalidate(string key);
 
-    // Cancel in-flight fetch
-    public void Cancel(ITuple key);
+    // Cancel in-flight fetches under a key prefix, completing once they have unwound
+    public Task CancelAsync(ITuple key);
+    public Task CancelAsync(string key);
 }
 ```
+
+### Cancelling
+
+`CancelAsync` stops the in-flight fetch of every query under the key prefix and completes once
+they have unwound. It matches by prefix, the same set as `Invalidate`, so the two can be used
+on the same key. A cancelled query keeps the data it already had and records no error: a fetch
+that was stopped never learned anything. A result the handler produces anyway, because it never
+read its `CancellationToken`, is discarded rather than applied.
+
+Awaiting it is what makes an optimistic update safe. A refetch started before the mutation would
+otherwise land after it and overwrite the optimistic value:
+
+```csharp
+// Stop anything in flight first, and wait for it to unwind. Once this returns, no result
+// from a cancelled fetch can still reach the query.
+await client.CancelAsync(("todos",));
+
+var todos = client.FindQuery<List<Todo>>(("todos",))!;
+var previous = todos.Data;
+todos.Data = [.. previous!, newTodo];
+
+try
+{
+    await SaveAsync(newTodo);
+}
+catch
+{
+    todos.Data = previous;
+    throw;
+}
+finally
+{
+    client.Invalidate(("todos",));
+}
+```
+
+`IQueryState.Cancel()` is the low-level trigger for one query. It returns immediately without
+waiting for the fetch to unwind.
+
+The `CancellationToken` on `FetchQueryAsync` does something different: it abandons the wait, not
+the fetch. Cancelling it ends the await with an `OperationCanceledException` while the fetch runs
+on, and its result still lands in the registry. That is deliberate. The fetch is shared with
+every other caller joined to it, and an autocomplete that abandons a request on the next
+keystroke still wants the answer cached for the backspace that follows. Use `CancelAsync` when
+you mean to stop the fetch itself.
 
 ---
 

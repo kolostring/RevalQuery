@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -98,6 +98,10 @@ public class LoadingDuringRestoreTests
         await TestUtils.WaitForStateAsync(state, s => !s.IsLoading);
         Assert.False(state.IsRestoring);
         Assert.True(state.IsPending);
+
+        // Polled, not read straight away. The restore ends a moment before observers are told,
+        // so a wait that returned on the state alone can arrive ahead of the notification.
+        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref changes) > 0);
         Assert.True(changes > 0);
     }
 
