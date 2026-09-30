@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -154,6 +154,35 @@ public class RestoreBoundaryTests
         await Task.Delay(300);
 
         Assert.Equal("from-network", observer.Query.Data);
+    }
+
+    [Fact]
+    public void A_Restore_That_Is_Already_Ending_Refuses_To_Take_Over_A_Decision()
+    {
+        var state = new QueryState<ValueTuple<string>, string>(
+            ValueTuple.Create("closing"), _ => Task.FromResult("from-network"), null, null, null);
+
+        state.BeginRestore();
+
+        var deferredTooLate = false;
+        var lateDecisionRan = false;
+
+        // Deferred from inside the restore's own last act, which is the window the defect
+        // lives in: the restore has taken its decision and is about to report itself over, but
+        // its completion has not been set yet, so it still looks outstanding.
+        Assert.True(state.TryDeferUntilRestored(() =>
+        {
+            deferredTooLate = state.TryDeferUntilRestored(() => lateDecisionRan = true);
+        }));
+
+        state.CompleteRestore();
+
+        // A restore that is ending must say so rather than accept a decision it will never
+        // make. The caller then decides for itself, immediately. Accepting it instead drops
+        // the decision on the floor, and a query whose only decision was to fetch never does.
+        Assert.False(deferredTooLate);
+        Assert.False(lateDecisionRan);
+        Assert.False(state.IsRestoring);
     }
 
     [Fact]

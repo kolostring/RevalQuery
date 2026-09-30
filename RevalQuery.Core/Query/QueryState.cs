@@ -102,6 +102,7 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly object _restoreGate = new();
     private TaskCompletionSource? _restoreCompletion;
     private Action? _restoreDecider;
+    private bool _restoreEnding;
 
     /// <summary>
     /// Raised when any state property changes (data, status, fetch status).
@@ -336,7 +337,9 @@ public sealed class QueryState<TKey, TResponse>(
     /// <remarks>
     /// Returns false when there is no restore outstanding, which is the normal answer for a
     /// query with no persistence behind it and for a subscriber that arrives after the restore
-    /// is over. Those callers decide for themselves, immediately.
+    /// is over. It also returns false once the restore has begun ending, because the decision
+    /// it takes then is the last one it will make. Those callers decide for themselves,
+    /// immediately.
     /// </remarks>
     /// <param name="decide">
     /// Runs while the restore is still outstanding. A fetch it starts therefore has its fetch
@@ -347,6 +350,7 @@ public sealed class QueryState<TKey, TResponse>(
     {
         lock (_restoreGate)
         {
+            if (_restoreEnding) return false;
             if (_restoreCompletion is not { Task.IsCompleted: false }) return false;
 
             _restoreDecider = decide;
@@ -371,10 +375,15 @@ public sealed class QueryState<TKey, TResponse>(
         lock (_restoreGate)
         {
             completion = _restoreCompletion;
-            if (completion is null || completion.Task.IsCompleted) return;
+            if (completion is null || _restoreEnding) return;
 
             decide = _restoreDecider;
             _restoreDecider = null;
+
+            // Not derivable from the completion, which stays incomplete until the decision
+            // below has run. Without it a decision handed over in that window is stored and
+            // never made, and a query whose only decision was to fetch never fetches.
+            _restoreEnding = true;
         }
 
         try
