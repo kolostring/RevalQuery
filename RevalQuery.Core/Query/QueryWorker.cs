@@ -272,6 +272,15 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
     private void RunIfStaleNow()
     {
+        // Asked before the clock, because an invalidation outlives the restore that followed
+        // it. A restore writes the stored fetch time over the MinValue the invalidation left,
+        // and stored data can be recent enough to read as fresh.
+        if (Query.IsInvalidated)
+        {
+            RunIfAllowed();
+            return;
+        }
+
         var staleTime = EnsuredFetchOptions.StaleTime;
         var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
         if (elapsedTimeSinceUpdate > staleTime) RunIfAllowed();

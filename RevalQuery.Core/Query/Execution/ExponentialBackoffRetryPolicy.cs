@@ -1,4 +1,4 @@
-using RevalQuery.Core.Abstractions;
+﻿using RevalQuery.Core.Abstractions;
 using RevalQuery.Core.Configuration.Options;
 
 namespace RevalQuery.Core.Query.Execution;
@@ -29,14 +29,21 @@ public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
 
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
+            if (attempt > 0)
+            {
+                // Outside the try below on purpose. A delay calculator the caller supplied is
+                // not the handler, and counting its own failure as an attempt would burn every
+                // remaining retry and then hand back its exception in place of the error the
+                // query actually hit. A negative span, which Task.Delay rejects, is clamped
+                // rather than thrown on, because waiting no time is what it plainly means.
+                var delay = retryDelayCalculator(attempt);
+                if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
+
+                await Task.Delay(delay, cancellationToken);
+            }
+
             try
             {
-                if (attempt > 0)
-                {
-                    var delay = retryDelayCalculator(attempt);
-                    await Task.Delay(delay, cancellationToken);
-                }
-
                 return await handler();
             }
             catch (Exception ex) when (attempt < maxRetries && !cancellationToken.IsCancellationRequested)

@@ -99,6 +99,7 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly object _dataGate = new();
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
+    private bool _isInvalidated;
     private readonly object _restoreGate = new();
     private TaskCompletionSource? _restoreCompletion;
     private Action? _restoreDecider;
@@ -143,6 +144,21 @@ public sealed class QueryState<TKey, TResponse>(
     /// True when query has data (Status == QueryStatus.Resolved).
     /// </summary>
     public bool IsResolved => Status == QueryStatus.Resolved;
+
+    /// <summary>
+    /// True once the query has been invalidated and no fetch has succeeded since.
+    /// </summary>
+    /// <remarks>
+    /// Not derivable from <see cref="LastUpdatedAt"/>, which invalidation moves to MinValue:
+    /// that is also what a query that has never fetched reads, and a restore overwrites it with
+    /// the stored fetch time, which can look perfectly fresh. Without this, an invalidation
+    /// arriving while a load from persistence was outstanding was erased by the restore, and a
+    /// query with no observer to fetch on its behalf at that moment never refetched at all.
+    /// </remarks>
+    public bool IsInvalidated
+    {
+        get { lock (_dataGate) return _isInvalidated; }
+    }
 
     /// <summary>
     /// True when fetch operation is executing (FetchStatus == FetchStatus.Fetching).
@@ -265,6 +281,10 @@ public sealed class QueryState<TKey, TResponse>(
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = DateTimeOffset.UtcNow;
             _hasSettled = true;
+
+            // Cleared only by a fetch that produced data. A failure leaves the query still
+            // holding whatever the invalidation said was out of date.
+            _isInvalidated = false;
         }
     }
 
@@ -428,7 +448,11 @@ public sealed class QueryState<TKey, TResponse>(
     /// </summary>
     public void NotifyInvalidated()
     {
-        lock (_dataGate) _lastUpdatedAt = DateTimeOffset.MinValue;
+        lock (_dataGate)
+        {
+            _lastUpdatedAt = DateTimeOffset.MinValue;
+            _isInvalidated = true;
+        }
 
         OnInvalidated?.Invoke();
     }

@@ -36,6 +36,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
     private readonly object _gate = new();
 
     private Dictionary<string, TransferEntry>? _arrived;
+    private bool _isDisposed;
 
     /// <summary>
     /// Creates the transfer and subscribes it to the prerender's persisting phase.
@@ -86,7 +87,11 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
             return new ValueTask<PersistedQuery<TRes>?>((PersistedQuery<TRes>?)null);
         }
 
-        if (_serializerOptions.GetTypeInfo(typeof(TRes)) is not JsonTypeInfo<TRes> typeInfo)
+        // TryGetTypeInfo, because GetTypeInfo throws NotSupportedException for a type the
+        // resolver does not cover rather than returning null. A type the consumer left out of
+        // its context is a query the client fetches for itself, not a failure.
+        if (!_serializerOptions.TryGetTypeInfo(typeof(TRes), out var resolved) ||
+            resolved is not JsonTypeInfo<TRes> typeInfo)
         {
             return new ValueTask<PersistedQuery<TRes>?>((PersistedQuery<TRes>?)null);
         }
@@ -109,9 +114,23 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
         default;
 
     /// <summary>
-    /// Unsubscribes from the persisting phase.
+    /// Unsubscribes from the persisting phase. Idempotent.
     /// </summary>
-    public void Dispose() => _subscription.Dispose();
+    /// <remarks>
+    /// One instance is registered under two service types, so the container captures it for
+    /// disposal twice and calls this twice at the end of every scope. Whether unsubscribing
+    /// twice is harmless is the framework's business, not something to depend on.
+    /// </remarks>
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_isDisposed) return;
+            _isDisposed = true;
+        }
+
+        _subscription.Dispose();
+    }
 
     /// <summary>
     /// Dehydrates every resolved query into the framework's store.
@@ -131,8 +150,11 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
             // A key the encoder cannot address, or a type the consumer's resolver does not
             // know, is left for the client to fetch. Losing an optimisation is the right cost;
             // throwing here would fail the whole render.
+            // TryGetTypeInfo, because GetTypeInfo throws NotSupportedException for an
+            // uncovered type rather than returning null, and this runs inside the prerender's
+            // persisting callback where throwing is the whole-render failure described above.
             if (encoded is null) continue;
-            if (_serializerOptions.GetTypeInfo(snapshot.DataType) is not { } typeInfo) continue;
+            if (!_serializerOptions.TryGetTypeInfo(snapshot.DataType, out var typeInfo)) continue;
 
             queries[encoded] = new TransferEntry(
                 snapshot.DataType.ToString(),
