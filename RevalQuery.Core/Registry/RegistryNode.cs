@@ -22,10 +22,4 @@ internal sealed class RegistryNode
     /// The worker driving this node's query, or null when no fetch is being managed.
     /// </summary>
     public IDisposable? Worker { get; set; }
-
-    /// <summary>
-    /// This query's load from persistence. Completed when there is nothing to load, and
-    /// awaited before the worker decides whether the query's data is stale.
-    /// </summary>
-    public Task Restore { get; set; } = Task.CompletedTask;
 }

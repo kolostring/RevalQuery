@@ -105,7 +105,7 @@ public sealed class QueryClient : IDisposable
             // Flagged here rather than inside the task, so the query never reports itself
             // empty in the window between being created and the load starting.
             newState.BeginRestore();
-            node.Restore = Task.Run(() => LoadPersistedAsync(newState));
+            _ = Task.Run(() => LoadPersistedAsync(newState));
         }
 
         return newState;
@@ -475,7 +475,7 @@ public sealed class QueryClient : IDisposable
         if (node.Worker is QueryWorker<TKey, TRes> existing) return existing;
 
         var worker = new QueryWorker<TKey, TRes>(
-            _defaultOptions, _serviceProvider, state, _persistence, node.Restore);
+            _defaultOptions, _serviceProvider, state, _persistence);
         node.Worker = worker;
 
         return worker;
@@ -579,10 +579,11 @@ public sealed class QueryClient : IDisposable
         }
         finally
         {
-            // One notification for the whole restore, after the flag drops. Observers need it
-            // whether or not anything was stored: a query that found nothing stops loading and
-            // has an empty state to render.
-            state.EndRestore();
+            // One notification for the whole restore, after it ends. Ending it runs whatever
+            // decision was deferred to it, so a query that found nothing stored is already
+            // fetching by the time observers hear anything, and a query that found fresh data
+            // is already resolved. Neither reports a moment with nothing in progress.
+            state.CompleteRestore();
             NotifyChangedSafely(state);
         }
     }

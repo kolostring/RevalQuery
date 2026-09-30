@@ -99,7 +99,9 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly object _dataGate = new();
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
-    private bool _isRestoring;
+    private readonly object _restoreGate = new();
+    private TaskCompletionSource? _restoreCompletion;
+    private Action? _restoreDecider;
 
     /// <summary>
     /// Raised when any state property changes (data, status, fetch status).
@@ -152,16 +154,28 @@ public sealed class QueryState<TKey, TResponse>(
     public bool IsIdle => FetchStatus == FetchStatus.Idle;
 
     /// <summary>
-    /// True while a load from persistence is outstanding.
+    /// True while a restore is outstanding: from the query's creation until it knows what
+    /// follows the stored data, which is either that the data stands or that a fetch has
+    /// started.
     /// </summary>
     /// <remarks>
-    /// Deliberately not a FetchStatus value. A restore is not a fetch, and reporting one as
-    /// Fetching would turn CanFetch false for its duration and drop any invalidation arriving
-    /// meanwhile. See docs/adr/0005.
+    /// <para>Read from the restore's completion rather than held as a flag of its own, so
+    /// there is one answer to when a restore is over instead of two that stop agreeing.</para>
+    /// <para>Deliberately not a FetchStatus value. A restore is not a fetch, and reporting one
+    /// as Fetching would turn CanFetch false for its duration and drop any invalidation
+    /// arriving meanwhile. See docs/adr/0005 and docs/adr/0006.</para>
     /// </remarks>
     public bool IsRestoring
     {
-        get { lock (_dataGate) return _isRestoring; }
+        get { lock (_restoreGate) return _restoreCompletion is { Task.IsCompleted: false }; }
+    }
+
+    /// <summary>
+    /// Completes when this query's restore is over, or immediately when it never had one.
+    /// </summary>
+    public Task RestoreCompleted
+    {
+        get { lock (_restoreGate) return _restoreCompletion?.Task ?? Task.CompletedTask; }
     }
 
     /// <summary>
@@ -300,24 +314,82 @@ public sealed class QueryState<TKey, TResponse>(
     }
 
     /// <summary>
-    /// Marks a load from persistence as outstanding, so the query reports itself loading
-    /// rather than empty while it runs.
+    /// Opens a restore, so the query reports itself loading rather than empty until it knows
+    /// what follows the stored data.
     /// </summary>
     /// <remarks>
-    /// Call before starting the load, not from inside it: a query that has already rendered
-    /// its empty state before the flag goes up shows the blank flash this exists to remove.
+    /// Call before starting the read, not from inside it: a query that has already rendered
+    /// its empty state before the restore opens shows the blank flash this exists to remove.
     /// </remarks>
     public void BeginRestore()
     {
-        lock (_dataGate) _isRestoring = true;
+        lock (_restoreGate)
+        {
+            _restoreCompletion ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
     }
 
     /// <summary>
-    /// Marks the load from persistence as finished, whether or not it produced anything.
+    /// Hands the decision about what follows the stored data to a caller, to be made as part
+    /// of ending the restore.
     /// </summary>
-    public void EndRestore()
+    /// <remarks>
+    /// Returns false when there is no restore outstanding, which is the normal answer for a
+    /// query with no persistence behind it and for a subscriber that arrives after the restore
+    /// is over. Those callers decide for themselves, immediately.
+    /// </remarks>
+    /// <param name="decide">
+    /// Runs while the restore is still outstanding. A fetch it starts therefore has its fetch
+    /// status set before anything reports the restore finished.
+    /// </param>
+    /// <returns>True when the decision was taken over, so the caller must not also make it.</returns>
+    public bool TryDeferUntilRestored(Action decide)
     {
-        lock (_dataGate) _isRestoring = false;
+        lock (_restoreGate)
+        {
+            if (_restoreCompletion is not { Task.IsCompleted: false }) return false;
+
+            _restoreDecider = decide;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Ends the restore: makes the deferred decision, if one was handed over, and only then
+    /// reports the restore finished.
+    /// </summary>
+    /// <remarks>
+    /// The order is the whole point. Ending the restore first would leave an instant with no
+    /// restore and no fetch, and an observer notified in that instant renders an empty state
+    /// for one frame before the fetch it was about to start turns the spinner back on.
+    /// </remarks>
+    public void CompleteRestore()
+    {
+        Action? decide;
+        TaskCompletionSource? completion;
+
+        lock (_restoreGate)
+        {
+            completion = _restoreCompletion;
+            if (completion is null || completion.Task.IsCompleted) return;
+
+            decide = _restoreDecider;
+            _restoreDecider = null;
+        }
+
+        try
+        {
+            decide?.Invoke();
+        }
+        catch
+        {
+            // A decision that throws leaves the query unfetched, which its own caller will
+            // see. It must not leave the restore open, because nothing else will ever end it.
+        }
+        finally
+        {
+            completion.SetResult();
+        }
     }
 
     /// <summary>

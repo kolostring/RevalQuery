@@ -115,6 +115,9 @@ restarts. Supplied by the consuming application, not by this library.
 _Avoid_: Cache, backing store, L2, distributed cache
 
 **Restore**:
-Reading a query's data back out of persistence into the registry. Distinct from a fetch,
-which goes to the query's real source. A restore never makes data look newer than it was.
+Answering a query's data question from persistence rather than from its real source. It
+begins when the query is created and ends once the query knows what follows it: either
+the stored data stands, or a fetch has started because there was none or it was stale.
+Reading the store is the first part of a restore, not the whole of it. A restore never
+makes data look newer than it was.
 _Avoid_: Load, hydrate, rehydrate, warm

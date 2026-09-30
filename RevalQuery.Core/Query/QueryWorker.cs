@@ -39,7 +39,6 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     private readonly IRetryPolicy _retryPolicy;
     private readonly RevalQueryOptions _revalQueryOptions;
     private readonly IQueryPersistence? _persistence;
-    private readonly Task _restore;
     private readonly object _gate = new();
 
     private CoreFetchOptions EnsuredFetchOptions => _revalQueryOptions.FetchOptions.Apply(Query.FetchOptions);
@@ -59,24 +58,18 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     /// <param name="serviceProvider">Service provider for handler dependencies.</param>
     /// <param name="query">The query state to manage.</param>
     /// <param name="persistence">Optional durable store to save successful fetches to.</param>
-    /// <param name="restore">
-    /// The query's pending load from persistence, awaited before deciding whether its data is
-    /// stale. Completed when there is nothing to load.
-    /// </param>
     /// <param name="retryPolicy">Optional custom retry policy.</param>
     public QueryWorker(
         RevalQueryOptions revalQueryOptions,
         IServiceProvider serviceProvider,
         QueryState<TKey, TRes> query,
         IQueryPersistence? persistence = null,
-        Task? restore = null,
         IRetryPolicy? retryPolicy = null
     )
     {
         _serviceProvider = serviceProvider;
         _revalQueryOptions = revalQueryOptions;
         _persistence = persistence;
-        _restore = restore ?? Task.CompletedTask;
 
         Query = query;
         _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
@@ -221,30 +214,17 @@ public sealed class QueryWorker<TKey, TRes> : IDisposable where TKey : ITuple
     }
 
     /// <summary>
-    /// Runs the query if its data is stale (beyond StaleTime), once anything held in
-    /// persistence has had its chance to land. Called when a new subscriber is added.
+    /// Runs the query if its data is stale (beyond StaleTime). Called when a new subscriber is
+    /// added.
     /// </summary>
+    /// <remarks>
+    /// While a restore is outstanding the decision is handed to it rather than made here and
+    /// repeated later. The restore then makes it as its last act, so a fetch that follows a
+    /// restore has already started by the time anything reports the restore over.
+    /// </remarks>
     public void RunIfStale()
     {
-        if (_restore.IsCompleted)
-        {
-            RunIfStaleNow();
-            return;
-        }
-
-        _ = RunIfStaleAfterRestoreAsync();
-    }
-
-    private async Task RunIfStaleAfterRestoreAsync()
-    {
-        try
-        {
-            await _restore;
-        }
-        catch
-        {
-            // A failed restore leaves the query to fetch as if nothing was stored
-        }
+        if (Query.TryDeferUntilRestored(RunIfStaleNow)) return;
 
         RunIfStaleNow();
     }
