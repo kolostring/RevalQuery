@@ -18,6 +18,25 @@ internal interface IQueryWorker : IDisposable
     void CancelCurrentFetch();
 
     /// <summary>
+    /// Asks whether the worker can be let go now.
+    /// </summary>
+    /// <remarks>
+    /// False while a fetch is in flight, because the registry node is the only thing pointing
+    /// at that fetch: dropping the worker would put it beyond the reach of
+    /// <see cref="CancelCurrentFetch"/> and let the next caller start a second one beside it.
+    /// The worker remembers the request and raises <see cref="OnReleaseDue"/> once the fetch
+    /// settles.
+    /// </remarks>
+    /// <returns>True when the caller may dispose the worker.</returns>
+    bool TryRelease();
+
+    /// <summary>
+    /// Raised when a fetch that had delayed this worker's release has settled, so the release
+    /// can be attempted again.
+    /// </summary>
+    event Action? OnReleaseDue;
+
+    /// <summary>
     /// Cancels the fetch this worker has in flight, if any, and completes once it has unwound.
     /// </summary>
     /// <remarks>

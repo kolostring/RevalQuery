@@ -534,6 +534,10 @@ public sealed class QueryClient : IDisposable
 
         var worker = new QueryWorker<TKey, TRes>(
             _defaultOptions, _serviceProvider, state, _persistence);
+
+        // A release the worker refused because it was fetching is retried here, once that
+        // fetch has settled.
+        worker.OnReleaseDue += () => DisposeWorker(state.Key);
         node.Worker = worker;
 
         return worker;
@@ -576,10 +580,18 @@ public sealed class QueryClient : IDisposable
             if (node is null || node.State?.HasObservers == true) return;
 
             worker = node.Worker;
+            if (worker is null) return;
+
+            // A worker with a fetch in flight keeps its node. Clearing it would leave that
+            // fetch running with nothing pointing at it: CancelAsync could no longer reach it,
+            // and the next caller would be handed a second worker that fetched alongside it.
+            // The worker asks again once its fetch settles.
+            if (!worker.TryRelease()) return;
+
             node.Worker = null;
         }
 
-        worker?.Dispose();
+        worker.Dispose();
     }
 
     private void HandleEviction(ITuple key)
@@ -597,6 +609,10 @@ public sealed class QueryClient : IDisposable
             _registry.PruneNode(key);
         }
 
+        // Cancelled, unlike the release above. The state is leaving the registry, so a fetch
+        // still running has nowhere left to land, and letting it finish would write data to
+        // persistence for a query the cache has already forgotten.
+        worker?.CancelCurrentFetch();
         worker?.Dispose();
     }
 

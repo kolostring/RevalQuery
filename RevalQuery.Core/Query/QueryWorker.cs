@@ -50,6 +50,10 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     private CancellationTokenSource? _currentFetchCts;
     private TaskCompletionSource<FetchOutcome>? _inFlight;
     private bool _isDisposed;
+    private bool _releaseWhenSettled;
+
+    /// <inheritdoc />
+    public event Action? OnReleaseDue;
 
     /// <summary>
     /// Creates a QueryWorker for a specific query.
@@ -142,6 +146,19 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         }
 
         if (!wasEnabled) RunIfStale();
+    }
+
+    /// <inheritdoc />
+    public bool TryRelease()
+    {
+        lock (_gate)
+        {
+            if (_isDisposed) return true;
+            if (_inFlight is not { Task.IsCompleted: false }) return true;
+
+            _releaseWhenSettled = true;
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -322,6 +339,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         // Settled is the default for that case: the fetch did happen, and something downstream
         // of it threw, so retrying would repeat work rather than recover anything.
         var outcome = FetchOutcome.Settled;
+        bool releaseDue;
 
         try
         {
@@ -346,9 +364,18 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
                 // Inside the lock for the same reason. Continuations were asked to run
                 // asynchronously, so nothing joined to this task runs while it is held.
                 completion.TrySetResult(outcome);
+
+                releaseDue = _releaseWhenSettled;
+                _releaseWhenSettled = false;
             }
 
             fetchCts.Dispose();
+
+            // Raised off the lock, because the handler takes the registry's. Whether the
+            // release still applies is the registry's question, not this worker's: a component
+            // may have remounted while the fetch was running, and a fetch that supersedes this
+            // one may already be in flight.
+            if (releaseDue) OnReleaseDue?.Invoke();
         }
     }
 

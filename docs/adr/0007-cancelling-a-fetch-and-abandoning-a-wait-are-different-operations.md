@@ -67,7 +67,15 @@ fetch. This is the self-cancellation rejected above, reached by a second route: 
 a component unmounting during an unrelated `FetchQueryAsync` on the same key handed that caller
 an `OperationCanceledException` for a cancellation nobody asked for. `QueryClient.Dispose` is
 the one teardown that does cancel, and it asks explicitly before disposing each worker, because
-the scope owning the handler's services is going away with it.
+the scope owning the handler's services is going away with it. Eviction cancels too, because a
+query leaving the registry gives its fetch nowhere to land.
+
+Not cancelling means the release has to wait. The registry node is the only thing pointing at a
+live fetch, so a worker that were dropped while fetching would put that fetch beyond the reach
+of `CancelAsync` and let the next caller be handed a second worker fetching alongside it. A
+worker therefore refuses to be released while it is fetching and asks again once the fetch
+settles, and callers arriving meanwhile join the fetch already running rather than starting
+their own.
 
 A fetch requested after a cancel is a new fetch. Callers still join the one in flight, but not
 once its cancellation has been requested: joining there would answer a request made after the
