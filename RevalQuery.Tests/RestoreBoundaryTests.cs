@@ -35,7 +35,8 @@ public class RestoreBoundaryTests
         QueryClient client, QueryOptions<ValueTuple<string>, string> options)
     {
         var frames = new List<Frame>();
-        var gate = new Lock();
+        // Not System.Threading.Lock, which the net8.0 target of this project cannot see.
+        var gate = new object();
         QueryObserver<string>? observer = null;
 
         observer = client.Subscribe(options, () =>
