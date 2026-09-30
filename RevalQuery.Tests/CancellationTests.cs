@@ -167,6 +167,142 @@ public class CancellationTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
     }
 
+    [Fact]
+    public async Task Unsubscribing_Does_Not_Cancel_A_Fetch_Someone_Else_Is_Awaiting()
+    {
+        using var client = NewClient();
+
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+
+        static QueryOptions<ValueTuple<string>, string> Options(
+            TaskCompletionSource started, TaskCompletionSource release) =>
+            QueryOptions.Create<string>("unmounted", async _ =>
+            {
+                started.TrySetResult();
+                await release.Task;
+                return "from-network";
+            }).Build();
+
+        // A component watching the key, disabled so that it does not fetch on its own. Built
+        // from its own options because a query captures the handler of whichever options
+        // created it, so both must carry the same one.
+        var observer = client.Subscribe(
+            QueryOptions.Create<string>("unmounted", Options(started, release).Handler)
+                .Enabled(false).Build(),
+            () => { });
+
+        var fetch = client.FetchQueryAsync(Options(started, release));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The component unmounts. Its going away releases the worker, which used to cancel
+        // whatever that worker had in flight: a fetch this component never asked for and is
+        // not the one walking away from.
+        observer.Dispose();
+
+        release.TrySetResult();
+
+        Assert.Equal("from-network", await fetch.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task A_Handler_Failing_While_Cancelled_Records_No_Error()
+    {
+        using var client = NewClient();
+
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+
+        var options = QueryOptions.Create<string>("aborted", async _ =>
+        {
+            started.TrySetResult();
+            await release.Task;
+
+            // An aborted request surfacing as the handler's own exception type rather than an
+            // OperationCanceledException, which is what an HTTP client does with a socket the
+            // cancellation tore down.
+            throw new IOException("socket aborted");
+        }).ConfigureRetry(retry => retry.Retry(0)).Build();
+
+        var fetch = client.FetchQueryAsync(options);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var cancelling = client.CancelAsync("aborted");
+        release.TrySetResult();
+        await cancelling.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // CancelAsync promises a cancelled query keeps its data and records no error. Recording
+        // one here also marked the query settled, which permanently blocked any later restore.
+        var state = client.FindQuery<string>("aborted")!;
+        Assert.False(state.IsException);
+        Assert.Null(state.Exception);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
+    }
+
+    [Fact]
+    public async Task A_Fetch_Requested_After_A_Cancel_Does_Not_Inherit_It()
+    {
+        using var client = NewClient();
+
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var calls = 0;
+
+        var options = QueryOptions.Create<string>("superseded", async _ =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                started.TrySetResult();
+                await release.Task;
+            }
+
+            return "from-network";
+        }).Build();
+
+        var first = client.FetchQueryAsync(options);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var cancelling = client.CancelAsync("superseded");
+
+        // Arrives after the cancellation was requested and before the first fetch has finished
+        // unwinding. Joining that fetch would report it cancelled, which is an answer about a
+        // request made before this one existed.
+        var second = client.FetchQueryAsync(options);
+
+        release.TrySetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        await cancelling.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("from-network", await second.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task Disposing_The_Client_Cancels_The_Fetches_It_Was_Driving()
+    {
+        var client = NewClient();
+
+        var started = new TaskCompletionSource();
+
+        var options = QueryOptions.Create<string>("torn-down", async ctx =>
+        {
+            started.TrySetResult();
+            await Task.Delay(5000, ctx.CancellationToken ?? CancellationToken.None);
+            return "from-network";
+        }).Build();
+
+        var fetch = client.FetchQueryAsync(options);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The scope owning the client is ending, so the handler is about to reach for services
+        // that are going away and nobody is left to receive what it produces. This is the one
+        // teardown that does cancel.
+        client.Dispose();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => fetch.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
     // ---------- helpers ----------
 
     private static QueryClient NewClient() =>

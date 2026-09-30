@@ -144,7 +144,8 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         if (!wasEnabled) RunIfStale();
     }
 
-    private void CancelCurrentFetch()
+    /// <inheritdoc />
+    public void CancelCurrentFetch()
     {
         CancellationTokenSource? cts;
         lock (_gate) cts = _currentFetchCts;
@@ -268,7 +269,8 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     /// Executes the query handler with retry logic.
     /// Updates Query.Data, Query.Status on success.
     /// Sets Query.Exception, Query.Status on failure.
-    /// Concurrent callers join the fetch already in flight rather than starting a second one.
+    /// Concurrent callers join the fetch already in flight rather than starting a second one,
+    /// unless that fetch has already been asked to cancel, in which case they get a fresh one.
     /// </summary>
     /// <returns>
     /// What the run did. Use Query.Data to access the result of a settled one.
@@ -276,21 +278,43 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     public Task<FetchOutcome> RunAsync()
     {
         TaskCompletionSource<FetchOutcome> completion;
+        CancellationTokenSource fetchCts;
+        Task? superseded = null;
 
         lock (_gate)
         {
             if (_isDisposed) return Task.FromResult(FetchOutcome.NotRun);
-            if (_inFlight is { Task.IsCompleted: false }) return _inFlight.Task;
+
+            if (_inFlight is { Task.IsCompleted: false } running)
+            {
+                // A fetch whose cancellation has already been requested is not the fetch this
+                // caller asked for. Joining it would report FetchOutcome.Cancelled for a run
+                // requested after the cancel, and the caller would be told its own fresh fetch
+                // had been cancelled by something that happened before it started. Wait for
+                // that one to unwind instead, then fetch again.
+                if (_currentFetchCts is not { IsCancellationRequested: true }) return running.Task;
+
+                superseded = running.Task;
+            }
 
             completion = new TaskCompletionSource<FetchOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+            fetchCts = new CancellationTokenSource();
+
+            // Published together. A cancellation landing between the two would otherwise read a
+            // null source beside a live fetch, cancel nothing, and then wait out the very fetch
+            // it was meant to stop while its result was applied.
             _inFlight = completion;
+            _currentFetchCts = fetchCts;
         }
 
-        _ = RunCoreAsync(completion);
+        _ = RunCoreAsync(completion, fetchCts, superseded);
         return completion.Task;
     }
 
-    private async Task RunCoreAsync(TaskCompletionSource<FetchOutcome> completion)
+    private async Task RunCoreAsync(
+        TaskCompletionSource<FetchOutcome> completion,
+        CancellationTokenSource fetchCts,
+        Task? superseded)
     {
         // Everything below reports through completion exactly once. An observer callback
         // throwing must not strand it: a completion that never settles would leave every later
@@ -301,30 +325,41 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
         try
         {
-            outcome = await RunFetchAsync();
+            // The fetch this one replaces reports its own cancellation through its own outcome,
+            // so nothing it produces is needed here. Waiting for it is what keeps the two from
+            // overlapping: the one unwinding puts the fetch status back to idle as it goes, and
+            // an observer told fetching had stopped while this one was only starting would drop
+            // its spinner for a frame.
+            if (superseded is not null) await superseded.ConfigureAwait(false);
+
+            outcome = await RunFetchAsync(fetchCts);
         }
         finally
         {
-            completion.TrySetResult(outcome);
+            lock (_gate)
+            {
+                // Retired together, the way they were published. A source cleared while its
+                // own task was still incomplete would let the next caller join a fetch without
+                // being able to tell that it had been cancelled.
+                if (ReferenceEquals(_currentFetchCts, fetchCts)) _currentFetchCts = null;
+
+                // Inside the lock for the same reason. Continuations were asked to run
+                // asynchronously, so nothing joined to this task runs while it is held.
+                completion.TrySetResult(outcome);
+            }
+
+            fetchCts.Dispose();
         }
     }
 
-    private async Task<FetchOutcome> RunFetchAsync()
+    private async Task<FetchOutcome> RunFetchAsync(CancellationTokenSource fetchCts)
     {
-        var fetchCts = new CancellationTokenSource();
-
         lock (_gate)
         {
             // Released between RunAsync taking the lock and this line. Reporting that as a run
             // would let FetchQueryAsync return the query's data as though this call had
             // produced it, when nothing was fetched at all.
-            if (_isDisposed)
-            {
-                fetchCts.Dispose();
-                return FetchOutcome.NotRun;
-            }
-
-            _currentFetchCts = fetchCts;
+            if (_isDisposed) return FetchOutcome.NotRun;
         }
 
         var fetched = default(TRes);
@@ -333,6 +368,11 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
         try
         {
+            // Cancelled between RunAsync publishing this source and the handler being reached,
+            // which is the window a superseded fetch is waited out in. Starting the handler now
+            // would ignore a cancellation that had already been asked for.
+            fetchCts.Token.ThrowIfCancellationRequested();
+
             Query.FetchStatus = FetchStatus.Fetching;
             NotifyChangedSafely();
 
@@ -365,19 +405,25 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
             // caller awaiting this fetch asked for data and is getting none.
             cancelled = true;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!fetchCts.IsCancellationRequested)
         {
             Query.ApplyFailed(ex);
         }
+        catch (Exception)
+        {
+            // Cancellation was requested and the handler reported the abort as its own
+            // exception type rather than an OperationCanceledException: an aborted socket
+            // surfacing as an IOException, say. The retry policy stops retrying once
+            // cancellation is requested and rethrows whatever the handler produced, so this is
+            // where such a failure lands. Recording it would contradict CancelAsync, which
+            // promises a cancelled query records no error, and would mark the query settled
+            // and so block any later restore.
+            cancelled = true;
+        }
         finally
         {
-            lock (_gate)
-            {
-                if (ReferenceEquals(_currentFetchCts, fetchCts)) _currentFetchCts = null;
-            }
-
-            fetchCts.Dispose();
-
+            // The source outlives this method: RunCoreAsync retires it together with the
+            // completion, so that the two never disagree about whether a fetch is live.
             Query.FetchStatus = FetchStatus.Idle;
             NotifyChangedSafely();
         }
@@ -419,19 +465,26 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     }
 
     /// <summary>
-    /// Disposes the worker - cancels polling and current fetch, removes event handlers.
+    /// Stops the worker driving this query: ends polling, detaches from the query's events and
+    /// refuses any further run.
     /// </summary>
+    /// <remarks>
+    /// A fetch already in flight is left to finish. Disposal happens whenever the last
+    /// component watching a key unmounts, and a fetch some other caller is awaiting has nothing
+    /// to do with that component going away: cancelling it here handed that caller an
+    /// OperationCanceledException for a cancellation nobody asked for. Callers that do mean to
+    /// stop the fetch use <see cref="CancelCurrentFetch"/> or
+    /// <see cref="CancelCurrentFetchAsync"/> first.
+    /// </remarks>
     public void Dispose()
     {
         CancellationTokenSource? pollingCts;
-        CancellationTokenSource? fetchCts;
 
         lock (_gate)
         {
             if (_isDisposed) return;
             _isDisposed = true;
             pollingCts = _pollingCts;
-            fetchCts = _currentFetchCts;
         }
 
         Query.OnFirstSubscriberAdded -= StartPolling;
@@ -439,9 +492,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         Query.OnInvalidated -= HandleInvalidation;
         Query.OnCancelRequested -= CancelCurrentFetch;
 
-        // Cancelled, not disposed: the polling loop still holds its token, and the in-flight
-        // fetch disposes its own source when it settles.
+        // Cancelled, not disposed: the polling loop still holds its token.
         CancelSafely(pollingCts);
-        CancelSafely(fetchCts);
     }
 }

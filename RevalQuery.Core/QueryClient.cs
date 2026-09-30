@@ -435,7 +435,14 @@ public sealed class QueryClient : IDisposable
 
         _evictionPolicy.OnEvictionRequired -= HandleEviction;
 
-        foreach (var worker in workers) worker.Dispose();
+        // Cancelled before being disposed, which disposal alone no longer does. The scope that
+        // owns this client is ending, so a handler still running is about to reach for services
+        // that are going away, and no caller is left to receive what it produces.
+        foreach (var worker in workers)
+        {
+            worker.CancelCurrentFetch();
+            worker.Dispose();
+        }
 
         // Only stop a policy this client created. An injected one is the container's to dispose.
         if (_ownsEvictionPolicy) _ = _evictionPolicy.StopAsync();

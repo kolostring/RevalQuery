@@ -54,7 +54,26 @@ rather than a suggestion.
 
 A cancelled query keeps the data it already had and records no error. The library holds no
 history, so there is nothing to revert to and nothing to report: a fetch that was stopped never
-learned anything.
+learned anything. That holds however the handler reports the abort. An HTTP client whose socket
+was torn down raises its own exception type rather than an `OperationCanceledException`, and the
+retry policy stops retrying once cancellation is requested and rethrows whatever it was given,
+so the worker decides by asking the token rather than by looking at the exception. Recording
+such a failure would also mark the query settled, which permanently blocks any later restore.
+
+Releasing a worker is not cancelling. Disposal ends polling and detaches the worker from the
+query, but leaves a fetch in flight to finish, because a worker is released whenever the last
+component watching a key unmounts and that has nothing to do with whoever is awaiting the
+fetch. This is the self-cancellation rejected above, reached by a second route: before the fix
+a component unmounting during an unrelated `FetchQueryAsync` on the same key handed that caller
+an `OperationCanceledException` for a cancellation nobody asked for. `QueryClient.Dispose` is
+the one teardown that does cancel, and it asks explicitly before disposing each worker, because
+the scope owning the handler's services is going away with it.
+
+A fetch requested after a cancel is a new fetch. Callers still join the one in flight, but not
+once its cancellation has been requested: joining there would answer a request made after the
+cancel with a result about one made before it. Such a caller waits for the cancelled fetch to
+unwind and then gets a fresh one, rather than running alongside it, so the two never disagree
+about whether the query is fetching.
 
 Reaching an in-flight fetch from the registry needed a non-generic face for the worker, so
 `RegistryNode.Worker` is typed `IQueryWorker` rather than `IDisposable`. Both are internal.
