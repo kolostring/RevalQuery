@@ -24,7 +24,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 {
     /// <summary>
     /// Injected QueryClient - configured via DI.
-    /// Used for manual query operations like invalidation, prefetch, and fetch.
+    /// Used for manual query operations like invalidation and fetching.
     /// </summary>
     [Inject][NotNull] protected QueryClient? Client { get; set; }
 

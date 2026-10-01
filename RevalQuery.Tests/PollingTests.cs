@@ -7,13 +7,13 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-public class PrefetchPollingTests
+public class PollingTests
 {
     private const string Key = "poll";
 
     private readonly QueryClient _client;
 
-    public PrefetchPollingTests()
+    public PollingTests()
     {
         _client = new QueryClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
@@ -36,11 +36,11 @@ public class PrefetchPollingTests
     }
 
     [Fact]
-    public async Task PrefetchThenSubscribe_InitialDataFromCache()
+    public async Task DiscardedQueryAsyncThenSubscribe_InitialDataFromCache()
     {
         var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
 
-        _client.PrefetchQuery(queryOptions);
+        TestUtils.Discard(_client.QueryAsync(queryOptions));
         var state = _client.GetOrCreateQuery(queryOptions);
         var firstData = state.Data;
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
@@ -69,13 +69,13 @@ public class PrefetchPollingTests
     }
 
     [Fact]
-    public async Task PrefetchDoesNotStartPolling()
+    public async Task AQueryNobodyObservesDoesNotPoll()
     {
         var queryOptions = QueryOptions.Create(Key, UniqueHandler)
             .ConfigureFetch(b => b.RefetchInterval(TimeSpan.FromMilliseconds(50)))
             .Build();
 
-        _client.PrefetchQuery(queryOptions);
+        TestUtils.Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var firstData = ((QueryState<ValueTuple<string>, string>)_client.FindQuery(Key)!).Data;

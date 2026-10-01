@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
@@ -26,7 +27,7 @@ public class ReviewOfA700df3Tests
             return "value";
         }).Build();
 
-        var fetch = client.FetchQueryAsync(options);
+        var fetch = client.QueryAsync(options);
         await started.Task;
         await client.CancelAsync("cancelled");
 
@@ -49,14 +50,14 @@ public class ReviewOfA700df3Tests
             .ConfigureRetry(r => r.Retry(0))
             .Build();
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.FetchQueryAsync(options));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options));
 
         var state = client.FindQuery<string>("failed")!;
         Assert.True(state.IsException);
 
         // The load lands after the failure. Adopting it would leave Status resolved with
         // Exception still set, so a component branching on Exception renders an error next to
-        // data, and a later FetchQueryAsync returns stale data instead of throwing.
+        // data, and a later QueryAsync returns stale data instead of throwing.
         await Task.Delay(250);
 
         Assert.True(state.IsException);
@@ -77,10 +78,10 @@ public class ReviewOfA700df3Tests
             .ConfigureRetry(r => r.Retry(0))
             .Build();
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.FetchQueryAsync(options));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options));
 
         shouldFail = false;
-        Assert.Equal("value", await client.FetchQueryAsync(options));
+        Assert.Equal("value", await client.QueryAsync(options));
 
         // Resolved with a stale exception still hanging off it is the same broken shape a
         // restore over a failure produces: a component checking Exception renders an error
@@ -104,7 +105,7 @@ public class ReviewOfA700df3Tests
             throw new InvalidOperationException("boom");
         }).ConfigureRetry(r => r.Retry(0)).Build();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.FetchQueryAsync(options));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryAsync(options));
     }
 
     private static QueryClient NewClient(IQueryPersistence? persistence = null) =>
@@ -116,7 +117,7 @@ public class ReviewOfA700df3Tests
             System.Runtime.CompilerServices.ITuple key, CancellationToken ct = default)
         {
             await Task.Delay(loadDelayMs, ct);
-            return (PersistedQuery<TRes>?)(object)new PersistedQuery<string>(stored, DateTimeOffset.UtcNow);
+            return (PersistedQuery<TRes>?)(object)new PersistedQuery<string>(stored, new QueryFreshness(DateTimeOffset.UtcNow));
         }
 
         public ValueTask SaveAsync<TRes>(

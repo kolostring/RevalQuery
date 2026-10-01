@@ -71,9 +71,32 @@ public static class CatalogService
             Stock: 3 + product.Id * 2);
     }
 
+    /// <summary>
+    /// Every search term this service was actually asked for, newest last. The autocomplete
+    /// page renders it to show which keystrokes reached the service and which were answered
+    /// from the registry.
+    /// </summary>
+    /// <remarks>
+    /// Recorded here rather than at the call site, because the call site cannot tell: a caller
+    /// that gets fresh data back from <c>QueryAsync</c> never learns whether the handler ran.
+    /// Only the service knows what it received.
+    /// </remarks>
+    public static IReadOnlyList<string> SearchRequests
+    {
+        get { lock (Gate) return [.. SearchLog]; }
+    }
+
+    private static readonly List<string> SearchLog = [];
+
     /// <summary>Searches product names.</summary>
     public static async Task<List<Product>> SearchAsync(string term, CancellationToken ct = default)
     {
+        lock (Gate)
+        {
+            SearchLog.Add($"\"{term}\" at {DateTimeOffset.Now:HH:mm:ss}");
+            if (SearchLog.Count > 50) SearchLog.RemoveAt(0);
+        }
+
         await Task.Delay(500, ct);
 
         return string.IsNullOrWhiteSpace(term)

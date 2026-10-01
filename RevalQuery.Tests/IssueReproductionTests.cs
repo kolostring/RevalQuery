@@ -134,12 +134,12 @@ public class IssueReproductionTests
     // ---------- Issue 3: worker lifecycle ----------
 
     [Fact]
-    public async Task Issue3_PrefetchQuery_Releases_Its_Worker_When_The_Fetch_Settles()
+    public async Task Issue3_A_Discarded_QueryAsync_Releases_Its_Worker_When_The_Fetch_Settles()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions());
 
-        client.PrefetchQuery(QueryOptions.Create("prefetched", Handler).Build());
+        TestUtils.Discard(client.QueryAsync(QueryOptions.Create("prefetched", Handler).Build()));
         await WaitUntil(() => client.FindQuery("prefetched")?.IsResolved == true);
         await WaitUntil(() => WorkerCount(client) == 0);
 
@@ -154,12 +154,12 @@ public class IssueReproductionTests
     }
 
     [Fact]
-    public async Task Issue3_FetchQueryAsync_Releases_Its_Worker_Too()
+    public async Task Issue3_An_Awaited_QueryAsync_Releases_Its_Worker_Too()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions());
 
-        await client.FetchQueryAsync(QueryOptions.Create("fetched", Handler).Build());
+        await client.QueryAsync(QueryOptions.Create("fetched", Handler).Build());
 
         Assert.Equal(0, WorkerCount(client));
         Assert.NotNull(client.FindQuery("fetched"));
@@ -183,7 +183,7 @@ public class IssueReproductionTests
     // ---------- Issue 4: QueryClient is callable from any thread ----------
 
     [Fact]
-    public async Task Issue4_Concurrent_PrefetchQuery_Keeps_The_Registry_Intact()
+    public async Task Issue4_Concurrent_QueryAsync_Keeps_The_Registry_Intact()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -196,10 +196,13 @@ public class IssueReproductionTests
             var opts = QueryOptions.Create(key, SpinHandler).Build();
 
             using var barrier = new Barrier(16);
-            var tasks = Enumerable.Range(0, 16).Select(_ => Task.Run(() =>
+            // Awaited rather than discarded. QueryAsync reports everything through its task,
+            // so a discard here would hand the failures bag nothing to collect and the
+            // assertion below would pass on an empty set whatever the registry did.
+            var tasks = Enumerable.Range(0, 16).Select(_ => Task.Run(async () =>
             {
                 barrier.SignalAndWait();
-                try { client.PrefetchQuery(opts); }
+                try { await client.QueryAsync(opts); }
                 catch (Exception ex) { failures.Add($"{ex.GetType().Name}: {ex.Message}"); }
             })).ToArray();
             await Task.WhenAll(tasks);
@@ -225,7 +228,7 @@ public class IssueReproductionTests
         var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Run(() =>
         {
             barrier.SignalAndWait();
-            return client.FetchQueryAsync(opts);
+            return client.QueryAsync(opts);
         })));
 
         Assert.All(results, r => Assert.Equal("slow", r));

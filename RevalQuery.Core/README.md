@@ -36,11 +36,9 @@ public sealed class QueryClient
         Action onStateHasChanged
     );
 
-    // Fire-and-forget prefetch
-    public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> options);
-
-    // Awaitable fetch - throws on error. The token abandons the wait, not the fetch.
-    public async Task<TRes> FetchQueryAsync<TKey, TRes>(
+    // The whole imperative surface. Serves fresh cached data without calling the handler,
+    // fetches otherwise, throws on error. The token abandons the wait, not the fetch.
+    public async Task<TRes> QueryAsync<TKey, TRes>(
         QueryOptions<TKey, TRes> options,
         CancellationToken cancellationToken = default
     );
@@ -93,7 +91,7 @@ finally
 `IQueryState.Cancel()` is the low-level trigger for one query. It returns immediately without
 waiting for the fetch to unwind.
 
-The `CancellationToken` on `FetchQueryAsync` does something different: it abandons the wait, not
+The `CancellationToken` on `QueryAsync` does something different: it abandons the wait, not
 the fetch. Cancelling it ends the await with an `OperationCanceledException` while the fetch runs
 on, and its result still lands in the registry. That is deliberate. The fetch is shared with
 every other caller joined to it, and an autocomplete that abandons a request on the next
@@ -263,8 +261,9 @@ synchronised, because `QueryComponentBase` already routes them through
 `InvokeAsync`.
 
 Disposal is enforced asymmetrically. Once the client is disposed, anything a live render
-reaches throws `ObjectDisposedException`: `Subscribe`, `PrefetchQuery`, `FetchQueryAsync`,
-`GetOrCreateQuery` and `ApplyOptions`. Tearing down stays silent: unsubscribing, cancelling
+reaches reports `ObjectDisposedException`: `Subscribe`, `QueryAsync`, `GetOrCreateQuery` and
+`ApplyOptions`. `QueryAsync` is async, so it faults its task rather than throwing from the
+call. Tearing down stays silent: unsubscribing, cancelling
 and disposing an observer are no-ops. Blazor does not specify whether component disposal
 runs before or after the DI scope that owns the client, so a component tearing down second
 must not throw.

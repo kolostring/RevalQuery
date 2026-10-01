@@ -123,7 +123,7 @@ public class CancellationTests
         }).Build();
 
         using var cts = new CancellationTokenSource();
-        var fetch = client.FetchQueryAsync(options, cts.Token);
+        var fetch = client.QueryAsync(options, cts.Token);
 
         await started.Task;
         await cts.CancelAsync();
@@ -153,12 +153,12 @@ public class CancellationTests
             return "from-network";
         }).ConfigureRetry(retry => retry.Retry(0)).Build();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.FetchQueryAsync(options));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryAsync(options));
 
         // The failure is still on the query, because nothing clears it until a fetch succeeds.
         Assert.True(client.FindQuery<string>("stale-error")!.IsException);
 
-        var second = client.FetchQueryAsync(options);
+        var second = client.QueryAsync(options);
         await secondStarted.Task;
         await client.CancelAsync("stale-error");
 
@@ -192,7 +192,7 @@ public class CancellationTests
                 .Enabled(false).Build(),
             () => { });
 
-        var fetch = client.FetchQueryAsync(Options(started, release));
+        var fetch = client.QueryAsync(Options(started, release));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // The component unmounts. Its going away releases the worker, which used to cancel
@@ -224,7 +224,7 @@ public class CancellationTests
             throw new IOException("socket aborted");
         }).ConfigureRetry(retry => retry.Retry(0)).Build();
 
-        var fetch = client.FetchQueryAsync(options);
+        var fetch = client.QueryAsync(options);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var cancelling = client.CancelAsync("aborted");
@@ -260,7 +260,7 @@ public class CancellationTests
             return "from-network";
         }).Build();
 
-        var first = client.FetchQueryAsync(options);
+        var first = client.QueryAsync(options);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         var cancelling = client.CancelAsync("superseded");
@@ -268,7 +268,7 @@ public class CancellationTests
         // Arrives after the cancellation was requested and before the first fetch has finished
         // unwinding. Joining that fetch would report it cancelled, which is an answer about a
         // request made before this one existed.
-        var second = client.FetchQueryAsync(options);
+        var second = client.QueryAsync(options);
 
         release.TrySetResult();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
@@ -291,7 +291,7 @@ public class CancellationTests
             return "from-network";
         }).Build();
 
-        var fetch = client.FetchQueryAsync(options);
+        var fetch = client.QueryAsync(options);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // The scope owning the client is ending, so the handler is about to reach for services

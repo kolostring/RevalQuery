@@ -149,11 +149,13 @@ public sealed class QueryState<TKey, TResponse>(
     /// True once the query has been invalidated and no fetch has succeeded since.
     /// </summary>
     /// <remarks>
-    /// Not derivable from <see cref="LastUpdatedAt"/>, which invalidation moves to MinValue:
-    /// that is also what a query that has never fetched reads, and a restore overwrites it with
-    /// the stored fetch time, which can look perfectly fresh. Without this, an invalidation
-    /// arriving while a load from persistence was outstanding was erased by the restore, and a
-    /// query with no observer to fetch on its behalf at that moment never refetched at all.
+    /// Not derivable from <see cref="LastUpdatedAt"/>. Invalidation leaves the clock alone, so
+    /// nothing in the timestamp records that it happened; and even when invalidation did move
+    /// the clock to MinValue, that was also what a query that had never fetched read, and a
+    /// restore overwrote it with the stored fetch time, which can look perfectly fresh. Without
+    /// this flag, an invalidation arriving while a load from persistence was outstanding was
+    /// erased by the restore, and a query with no observer to fetch on its behalf at that
+    /// moment never refetched at all.
     /// </remarks>
     public bool IsInvalidated
     {
@@ -246,25 +248,50 @@ public sealed class QueryState<TKey, TResponse>(
     }
 
     /// <summary>
-    /// Marks the query data as stale (needs refetching).
+    /// When this query's data arrived and whether it has been invalidated since, read together
+    /// so the pair cannot describe two different moments.
     /// </summary>
-    [Obsolete("Use NotifyInvalidated, which also tells the worker to refetch. This only moves " +
-              "the clock, so a query marked stale this way refetches at some unpredictable " +
-              "later moment rather than now.")]
-    public void SetStale()
+    public QueryFreshness Freshness
     {
-        lock (_dataGate) _lastUpdatedAt = DateTimeOffset.MinValue;
+        get { lock (_dataGate) return new QueryFreshness(_lastUpdatedAt, _isInvalidated); }
     }
 
     /// <summary>
-    /// Marks the query data as fresh (successfully fetched).
+    /// Whether this query's data should be refetched, given the options in force for it.
     /// </summary>
-    [Obsolete("Use ApplyFetched, which records the data, the status and the timestamp as one " +
-              "step. Moving the clock on its own leaves the query looking fresh while holding " +
-              "whatever data it already had.")]
-    public void SetFresh()
+    /// <remarks>
+    /// <para>Staleness is a property of the data, not of whether anything is observing it, so
+    /// this answers for any caller: a subscription deciding whether to fetch on mount, and an
+    /// imperative <c>QueryAsync</c> deciding whether to serve from cache.</para>
+    /// <para>The order of the four questions is the mechanism, not a style choice:</para>
+    /// <list type="number">
+    /// <item>A query whose clock has never been set is stale, so a static query still fetches
+    /// the first time. TanStack's equivalent rung tests for the absence of data rather than of
+    /// a timestamp. The two agree everywhere but one path: <see cref="Data"/> is publicly
+    /// settable and the optimistic-update pattern writes it without touching the clock, so a
+    /// static query holding only an optimistic value is stale here and fresh there. Refetching
+    /// an unconfirmed value is the better answer, and the mutation invalidates on settle
+    /// anyway.</item>
+    /// <item>A static query is otherwise fresh, asked before invalidation so that
+    /// <see cref="NotifyInvalidated"/> cannot drag it into a refetch. This is the whole
+    /// difference between static and a very long <see cref="CoreFetchOptions.StaleTime"/>.</item>
+    /// <item>An invalidated query is stale whatever the clock says.</item>
+    /// <item>Otherwise the age of the data is compared against StaleTime.</item>
+    /// </list>
+    /// <para>Taken under the one lock, so the timestamp and the invalidation flag read here
+    /// belong to the same moment rather than to two that a fetch landed between.</para>
+    /// </remarks>
+    /// <param name="fetchOptions">The query's fetch options with global defaults applied.</param>
+    public bool IsStale(CoreFetchOptions fetchOptions)
     {
-        lock (_dataGate) _lastUpdatedAt = DateTimeOffset.UtcNow;
+        lock (_dataGate)
+        {
+            if (_lastUpdatedAt == DateTimeOffset.MinValue) return true;
+            if (fetchOptions.Static) return false;
+            if (_isInvalidated) return true;
+
+            return DateTimeOffset.UtcNow - _lastUpdatedAt > fetchOptions.StaleTime;
+        }
     }
 
     /// <summary>
@@ -315,12 +342,12 @@ public sealed class QueryState<TKey, TResponse>(
     /// <remarks>
     /// A failed fetch counts as settled. Adopting over one would leave the query resolved with
     /// its exception still set, so a component branching on Exception renders an error beside
-    /// data, and FetchQueryAsync returns stale data where it should have thrown.
+    /// data, and QueryAsync returns stale data where it should have thrown.
     /// </remarks>
     /// <param name="data">The restored data.</param>
-    /// <param name="lastUpdatedAt">When that data was originally fetched.</param>
+    /// <param name="freshness">What the stored copy knew about that data's age.</param>
     /// <returns>True when the data was adopted.</returns>
-    public bool TryRestore(TResponse data, DateTimeOffset lastUpdatedAt)
+    public bool TryRestore(TResponse data, QueryFreshness freshness)
     {
         lock (_dataGate)
         {
@@ -329,7 +356,14 @@ public sealed class QueryState<TKey, TResponse>(
             Data = data;
             Exception = null;
             Status = QueryStatus.Resolved;
-            _lastUpdatedAt = lastUpdatedAt;
+            _lastUpdatedAt = freshness.LastUpdatedAt;
+
+            // Or-ed, never assigned. An invalidation that arrived while this load was in flight
+            // is about the query, not about the copy on disk, and a stored false would erase
+            // it: that is the defect ADR 0005 exists for. A stored true adds an invalidation
+            // the other side never got to act on.
+            _isInvalidated |= freshness.IsInvalidated;
+
             return true;
         }
     }
@@ -430,7 +464,8 @@ public sealed class QueryState<TKey, TResponse>(
         {
             if (Status != QueryStatus.Resolved || Data is null) return null;
 
-            return new QuerySnapshot(Key, typeof(TResponse), Data, _lastUpdatedAt);
+            return new QuerySnapshot(
+                Key, typeof(TResponse), Data, new QueryFreshness(_lastUpdatedAt, _isInvalidated));
         }
     }
 
@@ -443,16 +478,23 @@ public sealed class QueryState<TKey, TResponse>(
     }
 
     /// <summary>
-    /// Notifies that the query has been invalidated.
-    /// Sets LastUpdatedAt to MinValue and triggers OnInvalidated.
+    /// Marks the query invalidated and triggers OnInvalidated. Leaves the data and the moment
+    /// it arrived exactly as they were.
     /// </summary>
+    /// <remarks>
+    /// <para>The mark stays dumb. It records that an invalidation happened and nothing else;
+    /// whether that produces a refetch is decided later, by <see cref="IsStale"/>, which is
+    /// where a static query is allowed to ignore it.</para>
+    /// <para>It does not move <see cref="LastUpdatedAt"/> to MinValue. <see
+    /// cref="IsInvalidated"/> already carries the decision, and the clock move corrupted a
+    /// public, persisted value: an invalidated query reported data from year one while holding
+    /// data from a minute ago. It also cost the staleness decision a state it needs, because
+    /// one timestamp cannot mean "never fetched", "invalidated" and "fetched long ago" at
+    /// once.</para>
+    /// </remarks>
     public void NotifyInvalidated()
     {
-        lock (_dataGate)
-        {
-            _lastUpdatedAt = DateTimeOffset.MinValue;
-            _isInvalidated = true;
-        }
+        lock (_dataGate) _isInvalidated = true;
 
         OnInvalidated?.Invoke();
     }

@@ -54,7 +54,7 @@ public class EvictionRaceTests
             while (Volatile.Read(ref rounds) < StormRounds)
             {
                 var fetches = Enumerable.Range(0, 8)
-                    .Select(_ => Settle(client.FetchQueryAsync(options)))
+                    .Select(_ => Settle(client.QueryAsync(options)))
                     .ToArray();
 
                 // An eviction this eager can dispose a worker out from under a fetch, so a

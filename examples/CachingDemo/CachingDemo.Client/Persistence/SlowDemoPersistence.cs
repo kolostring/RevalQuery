@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using RevalQuery.Core.Abstractions.Persistence;
+using RevalQuery.Core.Abstractions.Query;
 
 namespace CachingDemo.Client.Persistence;
 
@@ -27,7 +28,7 @@ public sealed class SlowDemoPersistence : IQueryPersistence
     /// previous run of the app left behind.
     /// </summary>
     public static void Seed<TRes>(ITuple key, TRes data, DateTimeOffset lastUpdatedAt) =>
-        Store[Encode(key)] = new PersistedQuery<TRes>(data, lastUpdatedAt);
+        Store[Encode(key)] = new PersistedQuery<TRes>(data, new QueryFreshness(lastUpdatedAt));
 
     /// <inheritdoc />
     public async ValueTask<PersistedQuery<TRes>?> LoadAsync<TRes>(ITuple key, CancellationToken ct = default)

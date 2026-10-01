@@ -1,6 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query;
@@ -37,7 +38,7 @@ public class LoadingDuringRestoreTests
     public async Task A_Query_Waiting_On_A_Restore_Is_Loading_But_Not_Fetching()
     {
         var persistence = new GatedPersistence(
-            new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow));
+            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         using var client = NewClient(persistence);
 

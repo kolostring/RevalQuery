@@ -1,6 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query;
@@ -114,7 +115,7 @@ public class RestoreBoundaryTests
             sp,
             new RevalQueryOptions(),
             persistence: new Store(
-                new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow),
+                new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)),
                 TimeSpan.FromMilliseconds(150)));
 
         var options = QueryOptions.Create<string>("fresh", _ =>

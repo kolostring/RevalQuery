@@ -44,7 +44,7 @@ dotnet run --project examples/MudBlazorDemo
 | Page | What it shows |
 | --- | --- |
 | `/products` | A query's `IsLoading` drives `MudTable.Loading`, and selecting a row enables a detail query that was disabled until then. |
-| `/autocomplete` | `MudAutocomplete` wants a search function rather than a render loop, so this one answers from `FindQuery` and falls back to `FetchQueryAsync`. Note that `FetchQueryAsync` always fetches: stale time is consulted when a subscriber arrives, not there. |
+| `/autocomplete` | `MudAutocomplete` wants a search function rather than a render loop, so this one calls `QueryAsync` and nothing else. It consults the query's stale time, so a term typed again is answered from the registry without reaching the service, and the token it takes abandons the wait rather than the fetch. |
 | `/reviews` | A `MudForm` posts through `UseMutation`, which invalidates the reviews key on success. |
 
 Integrating with a component library needs nothing special: `AddRevalQuery()` in `Program.cs`,

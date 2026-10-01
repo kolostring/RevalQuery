@@ -1,6 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
@@ -36,7 +37,7 @@ public class InvalidateDuringRestoreTests
         // Fresh stored data and a long StaleTime again, so only the invalidation can force a
         // fetch. The restore writes that stored timestamp over the MinValue the invalidation
         // left behind, which is what used to erase it.
-        var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow));
+        var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions(), persistence: persistence);
@@ -77,7 +78,7 @@ public class InvalidateDuringRestoreTests
 
         // Stored data is fresh, and StaleTime is long, so after the restore the query is
         // NOT stale. Only the invalidation should be able to force a fetch.
-        var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow));
+        var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions(), persistence: persistence);

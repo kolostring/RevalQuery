@@ -28,10 +28,6 @@ One further attempt after a failed one. A retry count never includes the first a
 so zero retries still calls the handler once.
 _Avoid_: Attempt, max attempts
 
-**Prefetch**:
-Populating a query's data without any component subscribing to it.
-_Avoid_: Warm, preload, eager fetch
-
 **Cancel**:
 Stopping a query's in-flight fetch and discarding whatever it would have produced. The
 query keeps the data it already had and records no error, because a cancelled fetch
@@ -81,8 +77,8 @@ _Avoid_: Active, paused, on
 
 ### Freshness and removal
 
-Three distinct ideas that are easy to conflate. A query can be stale without being
-invalidated, and invalidated without being evicted.
+Ideas that are easy to conflate. A query can be stale without being invalidated, and
+invalidated without being evicted.
 
 **Fresh**:
 Data young enough to be reused without refetching.
@@ -90,11 +86,20 @@ _Avoid_: Valid, current, hot
 
 **Stale**:
 Data old enough to be refetched, but still shown to components while the refetch runs.
+Staleness belongs to the data, not to whether anything is observing it, so any caller can
+ask.
 _Avoid_: Expired, invalid, dirty
+
+**Static**:
+Data declared never to go stale. A static query is not refetched for age, and not refetched
+by an invalidation either, which is what separates it from data with a very long fresh
+window.
+_Avoid_: Permanent, pinned, frozen, immutable
 
 **Invalidate**:
 Marking a query and everything beneath its key as stale, and telling subscribed
-components to refetch now. The data survives.
+components to refetch now. The data survives. Static queries are the one exception, and
+ignore it.
 _Avoid_: Refresh, clear, reset, purge
 
 **Evict**:

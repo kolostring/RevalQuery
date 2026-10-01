@@ -1,10 +1,11 @@
 ﻿using System.Text.Json.Serialization;
+using RevalQuery.Core.Abstractions.Query;
 
 namespace RevalQuery.Blazor.Prerender;
 
 /// <summary>
-/// One transferred query: its data as JSON, the type that JSON was written for, and the moment
-/// the data was fetched.
+/// One transferred query: its data as JSON, the type that JSON was written for, and what the
+/// prerender knew about that data's age.
 /// </summary>
 /// <param name="Type">
 /// The query's result type, as Type.ToString writes it. Checked on the way back in, so a key
@@ -14,8 +15,13 @@ namespace RevalQuery.Blazor.Prerender;
 /// releases and quietly turn the transfer off.
 /// </param>
 /// <param name="Json">The query's data, already serialised by the consumer's resolver.</param>
-/// <param name="LastUpdatedAt">When the data was fetched.</param>
-internal sealed record TransferEntry(string Type, string Json, DateTimeOffset LastUpdatedAt);
+/// <param name="Freshness">
+/// When the data was fetched, and whether the prerender invalidated it. Carried whole rather
+/// than picked apart: an invalidation used to cross this boundary only by accident, encoded in
+/// a timestamp moved to MinValue, and stopped crossing at all once that move was dropped. See
+/// docs/adr/0008.
+/// </param>
+internal sealed record TransferEntry(string Type, string Json, QueryFreshness Freshness);
 
 /// <summary>
 /// Everything one prerender hands to the client, keyed by encoded query key.

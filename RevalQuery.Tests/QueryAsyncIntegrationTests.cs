@@ -6,23 +6,23 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-public class PrefetchFetchIntegrationTests
+public class QueryAsyncIntegrationTests
 {
     private const string Key = "prefetch";
 
     private readonly QueryClient _client;
 
-    public PrefetchFetchIntegrationTests()
+    public QueryAsyncIntegrationTests()
     {
         _client = new QueryClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
 
     [Fact]
-    public async Task SubscribeAfterPrefetch_UsesCachedData()
+    public async Task SubscribeAfterDiscardedQueryAsync_UsesCachedData()
     {
         var queryOptions = QueryOptions.Create(Key, CachedHandler).Build();
 
-        _client.PrefetchQuery(queryOptions);
+        TestUtils.Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var observer = _client.Subscribe(queryOptions, () => { });
@@ -32,11 +32,11 @@ public class PrefetchFetchIntegrationTests
     }
 
     [Fact]
-    public async Task SubscribeAfterFetch_UsesCachedData()
+    public async Task SubscribeAfterQueryAsync_UsesCachedData()
     {
         var queryOptions = QueryOptions.Create(Key, FetchedHandler).Build();
 
-        await _client.FetchQueryAsync(queryOptions);
+        await _client.QueryAsync(queryOptions);
         var observer = _client.Subscribe(queryOptions, () => { });
         await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
 
@@ -45,13 +45,13 @@ public class PrefetchFetchIntegrationTests
     }
 
     [Fact]
-    public async Task InvalidateAfterPrefetch_TriggersRefetch()
+    public async Task InvalidateAfterQueryAsync_TriggersRefetch()
     {
         var queryOptions = QueryOptions.Create(Key, StaticDataHandler)
             .ConfigureFetch(b => b.StaleTime(TimeSpan.FromSeconds(30)))
             .Build();
 
-        _client.PrefetchQuery(queryOptions);
+        TestUtils.Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var observer = _client.Subscribe(queryOptions, () => { });
@@ -66,13 +66,13 @@ public class PrefetchFetchIntegrationTests
     }
 
     [Fact]
-    public async Task PrefetchQuery_WithEnabledFalse_StillFetches()
+    public async Task QueryAsync_WithEnabledFalse_StillFetches()
     {
         var queryOptions = QueryOptions.Create(Key, DataHandler)
             .Enabled(false)
             .Build();
 
-        _client.PrefetchQuery(queryOptions);
+        TestUtils.Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var state = _client.FindQuery(Key);

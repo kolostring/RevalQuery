@@ -5,7 +5,8 @@ namespace RevalQuery.Core.Configuration.Options;
 /// </summary>
 public record CoreFetchOptions(
     TimeSpan RefetchInterval,
-    TimeSpan StaleTime
+    TimeSpan StaleTime,
+    bool Static = false
 )
 {
     /// <summary>
@@ -25,7 +26,8 @@ public record CoreFetchOptions(
             ? this
             : new CoreFetchOptions(
                 options.RefetchInterval ?? RefetchInterval,
-                options.StaleTime ?? StaleTime
+                options.StaleTime ?? StaleTime,
+                options.Static ?? Static
             );
     }
 }
@@ -35,7 +37,8 @@ public record CoreFetchOptions(
 /// </summary>
 public sealed record FetchOptions(
     TimeSpan? RefetchInterval = null,
-    TimeSpan? StaleTime = null
+    TimeSpan? StaleTime = null,
+    bool? Static = null
 )
 {
     /// <summary>
@@ -54,6 +57,7 @@ public sealed class FetchOptionsBuilder
 {
     private TimeSpan? _refetchInterval;
     private TimeSpan? _staleTime;
+    private bool? _static;
 
     /// <summary>
     /// Creates a builder, optionally starting from options already set.
@@ -64,6 +68,7 @@ public sealed class FetchOptionsBuilder
         if (existing == null) return;
         _refetchInterval = existing.RefetchInterval;
         _staleTime = existing.StaleTime;
+        _static = existing.Static;
     }
 
     /// <summary>
@@ -85,13 +90,29 @@ public sealed class FetchOptionsBuilder
     }
 
     /// <summary>
+    /// Declares the data never to go stale, so it is served from cache however old it is.
+    /// </summary>
+    /// <remarks>
+    /// Not a very long <see cref="StaleTime"/>. A static query is also left alone by
+    /// invalidation, which no duration achieves: the staleness decision asks whether the query
+    /// is static before it asks whether it was invalidated. The query still fetches once, when
+    /// it has no data, and a polling interval still drives it if one is set.
+    /// </remarks>
+    public FetchOptionsBuilder NeverStale()
+    {
+        _static = true;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the FetchOptions.
     /// </summary>
     public FetchOptions Build()
     {
         return new FetchOptions(
             _refetchInterval,
-            _staleTime
+            _staleTime,
+            _static
         );
     }
 

@@ -27,22 +27,17 @@ public class DisposalTests
         Assert.Throws<ObjectDisposedException>(() => client.Subscribe(Options("a").Build(), () => { }));
     }
 
+    // Was two tests, one per imperative method. The collapse leaves one method, and with it
+    // one error channel: QueryAsync is async, so a disposed client faults the task it returns
+    // rather than throwing from the call. A caller discarding the task sees this only through
+    // the catch it writes around the discard.
     [Fact]
-    public void PrefetchQuery_After_Disposal_Throws()
+    public async Task QueryAsync_After_Disposal_Throws()
     {
         var client = NewClient();
         client.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => client.PrefetchQuery(Options("b").Build()));
-    }
-
-    [Fact]
-    public async Task FetchQueryAsync_After_Disposal_Throws()
-    {
-        var client = NewClient();
-        client.Dispose();
-
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.FetchQueryAsync(Options("c").Build()));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.QueryAsync(Options("c").Build()));
     }
 
     [Fact]

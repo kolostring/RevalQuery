@@ -8,7 +8,7 @@ status: accepted
 
 `CancelAsync(key)` cancels: the in-flight fetch of every query under the key prefix stops, its
 result is discarded even if the handler produced one anyway, and the call completes once they
-have all unwound. `FetchQueryAsync`'s `CancellationToken` abandons: the caller's await ends with
+have all unwound. `QueryAsync`'s `CancellationToken` abandons: the caller's await ends with
 an `OperationCanceledException` while the fetch runs on and its result still lands in the
 registry.
 
@@ -22,7 +22,7 @@ fetch should not land.
 
 ## Considered options
 
-Cancelling the fetch from `FetchQueryAsync`'s token was the obvious reading of the parameter and
+Cancelling the fetch from `QueryAsync`'s token was the obvious reading of the parameter and
 is what a reader will expect. We rejected it because it destroys the cache entry that is the
 point of fetching at all, and because it lets one of several joined callers cancel the others'
 work. The XML docs say plainly that the token abandons the wait, since the surprising behaviour
@@ -64,7 +64,7 @@ Releasing a worker is not cancelling. Disposal ends polling and detaches the wor
 query, but leaves a fetch in flight to finish, because a worker is released whenever the last
 component watching a key unmounts and that has nothing to do with whoever is awaiting the
 fetch. This is the self-cancellation rejected above, reached by a second route: before the fix
-a component unmounting during an unrelated `FetchQueryAsync` on the same key handed that caller
+a component unmounting during an unrelated `QueryAsync` on the same key handed that caller
 an `OperationCanceledException` for a cancellation nobody asked for. `QueryClient.Dispose` is
 the one teardown that does cancel, and it asks explicitly before disposing each worker, because
 the scope owning the handler's services is going away with it. Eviction cancels too, because a

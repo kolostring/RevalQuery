@@ -44,12 +44,12 @@ public class ReviewOf1784595Tests
         scope.GetRequiredService<PrerenderTransfer>();
         var client = scope.GetRequiredService<QueryClient>();
 
-        await client.FetchQueryAsync(
+        await client.QueryAsync(
             QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
 
         // GetTypeInfo throws NotSupportedException here rather than returning null, so the
         // persisting callback failed and took the whole prerender with it.
-        await client.FetchQueryAsync(
+        await client.QueryAsync(
             QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build());
 
         await PersistentStateHarness.PersistAsync(state);
@@ -78,7 +78,7 @@ public class ReviewOf1784595Tests
         var serverScope = serverProvider.CreateScope().ServiceProvider;
         serverScope.GetRequiredService<PrerenderTransfer>();
 
-        await serverScope.GetRequiredService<QueryClient>().FetchQueryAsync(
+        await serverScope.GetRequiredService<QueryClient>().QueryAsync(
             QueryOptions.Create("gizmo", static _ => Task.FromResult(new Gizmo(2))).Build());
 
         await PersistentStateHarness.PersistAsync(serverState);

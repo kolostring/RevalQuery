@@ -248,9 +248,21 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         });
     }
 
+    /// <summary>
+    /// Refetches on an invalidation, unless the query is static.
+    /// </summary>
+    /// <remarks>
+    /// The static check belongs here, at the refetch decision, rather than at the mark in
+    /// QueryClient.Invalidate. Invalidation is one thing and refetching is another: a static
+    /// query that was invalidated is still invalidated, and reports so, it simply does not act
+    /// on it. Putting the check at the mark would make the two the same thing and leave the
+    /// query claiming it was never invalidated at all.
+    /// </remarks>
     private void HandleInvalidation()
     {
         if (_isDisposed) return;
+        if (EnsuredFetchOptions.Static) return;
+
         RunIfAllowed();
     }
 
@@ -272,18 +284,10 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
     private void RunIfStaleNow()
     {
-        // Asked before the clock, because an invalidation outlives the restore that followed
-        // it. A restore writes the stored fetch time over the MinValue the invalidation left,
-        // and stored data can be recent enough to read as fresh.
-        if (Query.IsInvalidated)
-        {
-            RunIfAllowed();
-            return;
-        }
-
-        var staleTime = EnsuredFetchOptions.StaleTime;
-        var elapsedTimeSinceUpdate = DateTimeOffset.UtcNow - Query.LastUpdatedAt;
-        if (elapsedTimeSinceUpdate > staleTime) RunIfAllowed();
+        // The ordering the decision needs lives on the query, where the timestamp and the
+        // invalidation flag can be read as one, and where every caller asking whether data is
+        // stale gets the same answer.
+        if (Query.IsStale(EnsuredFetchOptions)) RunIfAllowed();
     }
 
     private void RunIfAllowed()
@@ -393,7 +397,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         lock (_gate)
         {
             // Released between RunAsync taking the lock and this line. Reporting that as a run
-            // would let FetchQueryAsync return the query's data as though this call had
+            // would let QueryAsync return the query's data as though this call had
             // produced it, when nothing was fetched at all.
             if (_isDisposed) return FetchOutcome.NotRun;
         }
@@ -491,7 +495,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
         try
         {
-            await _persistence.SaveAsync(Query.Key, new PersistedQuery<TRes>(data, Query.LastUpdatedAt));
+            await _persistence.SaveAsync(Query.Key, new PersistedQuery<TRes>(data, Query.Freshness));
         }
         catch
         {

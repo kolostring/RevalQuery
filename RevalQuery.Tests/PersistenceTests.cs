@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
@@ -23,7 +24,7 @@ public class PersistenceTests
         var entry = persistence.Read<string>(ValueTuple.Create("saved"));
         Assert.NotNull(entry);
         Assert.Equal("from-handler", entry.Data);
-        Assert.Equal(state.LastUpdatedAt, entry.LastUpdatedAt);
+        Assert.Equal(state.LastUpdatedAt, entry.Freshness.LastUpdatedAt);
     }
 
     [Fact]
@@ -31,7 +32,7 @@ public class PersistenceTests
     {
         var fetchedAt = DateTimeOffset.UtcNow.AddHours(-3);
         var persistence = new InMemoryPersistence();
-        persistence.Write(ValueTuple.Create("restored"), new PersistedQuery<string>("from-disk", fetchedAt));
+        persistence.Write(ValueTuple.Create("restored"), new PersistedQuery<string>("from-disk", new QueryFreshness(fetchedAt)));
 
         using var client = NewClient(persistence);
         using var handlerGate = new SemaphoreSlim(0);
@@ -59,7 +60,7 @@ public class PersistenceTests
     public async Task A_Fetch_That_Already_Landed_Is_Not_Overwritten_By_The_Load()
     {
         var persistence = new SlowPersistence(
-            new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow.AddHours(-3)));
+            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))));
 
         using var client = NewClient(persistence);
 
@@ -117,7 +118,7 @@ public class PersistenceTests
         QueryClient client, string key, string result)
     {
         var options = QueryOptions.Create(key, _ => Task.FromResult(result)).Build();
-        await client.FetchQueryAsync(options);
+        await client.QueryAsync(options);
         return client.FindQuery<string>(key)!;
     }
 

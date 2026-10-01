@@ -75,7 +75,7 @@ public class PrerenderTransferTests
         var serverState = PersistentStateHarness.CreateEmpty(out var written);
         var (server, _, serverProvider) = Host(serverState);
 
-        var fetched = await server.FetchQueryAsync(ServerQuery("widget"));
+        var fetched = await server.QueryAsync(ServerQuery("widget"));
         Assert.Equal(new Widget(7, "from server"), fetched);
         Assert.Equal(1, _serverCalls);
 
@@ -102,6 +102,69 @@ public class PrerenderTransferTests
         clientProvider.Dispose();
     }
 
+    // The transfer used to carry invalidation only by accident: NotifyInvalidated moved the
+    // timestamp to MinValue, and MinValue crossed as a timestamp. Dropping that move removed
+    // the accident, so the flag now crosses on its own. A query the prerender invalidated must
+    // arrive invalidated, however fresh its data looks and however long the client's StaleTime.
+    [Fact]
+    public async Task An_Invalidation_From_The_Prerender_Crosses_To_The_Client()
+    {
+        _serverCalls = 0;
+        _clientCalls = 0;
+
+        var serverState = PersistentStateHarness.CreateEmpty(out var written);
+        var (server, _, serverProvider) = Host(serverState);
+
+        await server.QueryAsync(ServerQuery("widget"));
+
+        // Fetched a moment ago, so nothing about the clock says this needs refetching.
+        server.Invalidate("widget");
+
+        await PersistentStateHarness.PersistAsync(serverState);
+        serverProvider.Dispose();
+
+        var clientState = PersistentStateHarness.CreateFrom(written);
+        var (client, _, clientProvider) = Host(clientState);
+
+        var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
+
+        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
+
+        Assert.Equal(1, _clientCalls);
+        Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
+
+        observer.Dispose();
+        clientProvider.Dispose();
+    }
+
+    // The control: the same transfer without the invalidation is reused, so the test above is
+    // about the flag crossing and not about the client refetching regardless.
+    [Fact]
+    public async Task A_Transfer_Without_An_Invalidation_Is_Reused()
+    {
+        _serverCalls = 0;
+        _clientCalls = 0;
+
+        var serverState = PersistentStateHarness.CreateEmpty(out var written);
+        var (server, _, serverProvider) = Host(serverState);
+
+        await server.QueryAsync(ServerQuery("widget"));
+        await PersistentStateHarness.PersistAsync(serverState);
+        serverProvider.Dispose();
+
+        var clientState = PersistentStateHarness.CreateFrom(written);
+        var (client, _, clientProvider) = Host(clientState);
+
+        var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
+        await Task.Delay(300);
+
+        Assert.Equal(0, _clientCalls);
+        Assert.Equal(new Widget(7, "from server"), observer.Query.Data);
+
+        observer.Dispose();
+        clientProvider.Dispose();
+    }
+
     [Fact]
     public async Task Stale_Transferred_Data_Is_Shown_And_Then_Refetched()
     {
@@ -111,7 +174,7 @@ public class PrerenderTransferTests
         var serverState = PersistentStateHarness.CreateEmpty(out var written);
         var (server, _, serverProvider) = Host(serverState);
 
-        await server.FetchQueryAsync(ServerQuery("widget"));
+        await server.QueryAsync(ServerQuery("widget"));
         await PersistentStateHarness.PersistAsync(serverState);
         serverProvider.Dispose();
 
@@ -126,7 +189,9 @@ public class PrerenderTransferTests
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
 
-        await Task.Delay(400);
+        // Polled rather than slept on. The refetch waits out a restore, and a fixed delay that
+        // covers that on an idle machine does not cover it under a full suite.
+        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
 
         // The transfer landed and was then replaced, because the data it carried was older than
         // the stale time. Restoring LastUpdatedAt verbatim is what makes that decision possible.
@@ -145,7 +210,7 @@ public class PrerenderTransferTests
         var serverState = PersistentStateHarness.CreateEmpty(out var written);
         var (server, _, serverProvider) = Host(serverState);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => server.FetchQueryAsync(
+        await Assert.ThrowsAnyAsync<Exception>(() => server.QueryAsync(
             QueryOptions.Create("widget", static _ =>
                 Task.FromException<Widget>(new InvalidOperationException("boom"))).Build()));
 
@@ -180,10 +245,10 @@ public class PrerenderTransferTests
 
         // ("k", "1") and ("k", 1) print the same; ("a/b", "c") and ("a", "b/c") join the same.
         // The encoding has to keep all four apart or one query serves another's data.
-        await server.FetchQueryAsync(Named(("k", "1"), "text one"));
-        await server.FetchQueryAsync(Named(("k", 1), "number one"));
-        await server.FetchQueryAsync(Named(("a/b", "c"), "slash left"));
-        await server.FetchQueryAsync(Named(("a", "b/c"), "slash right"));
+        await server.QueryAsync(Named(("k", "1"), "text one"));
+        await server.QueryAsync(Named(("k", 1), "number one"));
+        await server.QueryAsync(Named(("a/b", "c"), "slash left"));
+        await server.QueryAsync(Named(("a", "b/c"), "slash right"));
 
         await PersistentStateHarness.PersistAsync(serverState);
         serverProvider.Dispose();
@@ -249,7 +314,7 @@ public class PrerenderTransferTests
         var scope = provider.CreateScope().ServiceProvider;
         var client = scope.GetRequiredService<QueryClient>();
 
-        await client.FetchQueryAsync(ServerQuery("widget"));
+        await client.QueryAsync(ServerQuery("widget"));
         await Task.Delay(200);
 
         // The transfer takes the IQueryPersistence slot too, so a store registered alongside it

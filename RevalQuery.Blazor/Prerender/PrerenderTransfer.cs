@@ -99,7 +99,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
         var data = JsonSerializer.Deserialize(entry.Json, typeInfo);
 
         return new ValueTask<PersistedQuery<TRes>?>(
-            data is null ? null : new PersistedQuery<TRes>(data, entry.LastUpdatedAt));
+            data is null ? null : new PersistedQuery<TRes>(data, entry.Freshness));
     }
 
     /// <summary>
@@ -159,7 +159,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
             queries[encoded] = new TransferEntry(
                 snapshot.DataType.ToString(),
                 JsonSerializer.Serialize(snapshot.Data, typeInfo),
-                snapshot.LastUpdatedAt);
+                snapshot.Freshness);
         }
 
         if (queries.Count == 0) return Task.CompletedTask;

@@ -1,6 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Caching.Eviction;
@@ -30,7 +31,7 @@ namespace RevalQuery.Tests;
 /// dropping its records instead of evicting early when it grows past its bound.</para>
 /// <para>Two are structural. They describe an invariant and exercise the normal path, but
 /// cannot provoke the interleaving that breaks it, because no API opens the window:</para>
-/// <para>FetchQueryAsync_Does_Not_Return_Data_It_Never_Fetched needs the worker released
+/// <para>QueryAsync_Does_Not_Return_Data_It_Never_Fetched needs the worker released
 /// between PrepareRun returning and RunAsync being entered, which is a few instructions with
 /// nothing in between to hook.</para>
 /// <para>Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling needs a subscriber to
@@ -76,7 +77,7 @@ public class ReviewFindingsTests
     /// guards cannot be forced open.
     /// </summary>
     [Fact]
-    public async Task FetchQueryAsync_Does_Not_Return_Data_It_Never_Fetched()
+    public async Task QueryAsync_Does_Not_Return_Data_It_Never_Fetched()
     {
         using var client = NewClient();
 
@@ -87,9 +88,9 @@ public class ReviewFindingsTests
             return "value";
         }).Build();
 
-        var fetch = client.FetchQueryAsync(options);
+        var fetch = client.QueryAsync(options);
         await Task.Delay(5);
-        client.PrefetchQuery(options);
+        TestUtils.Discard(client.QueryAsync(options));
 
         Assert.Equal("value", await fetch);
     }
@@ -134,7 +135,7 @@ public class ReviewFindingsTests
         // A delay makes the load genuinely asynchronous, which is the case that matters: a
         // synchronous adapter would land before the stale check ran no matter what.
         var persistence = new StubPersistence(
-            new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow), loadDelayMs: 30);
+            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)), loadDelayMs: 30);
         using var client = NewClient(persistence);
 
         var calls = 0;
@@ -157,7 +158,7 @@ public class ReviewFindingsTests
     public async Task Stale_Persisted_Data_Still_Refetches()
     {
         var persistence = new StubPersistence(
-            new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow.AddHours(-3)), loadDelayMs: 30);
+            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))), loadDelayMs: 30);
         using var client = NewClient(persistence);
 
         var options = QueryOptions.Create("stale", _ => Task.FromResult("from-network"))
@@ -182,13 +183,13 @@ public class ReviewFindingsTests
     public async Task A_Late_Restore_Never_Overwrites_A_Landed_Fetch()
     {
         var persistence = new StubPersistence(
-            new PersistedQuery<string>("from-disk", DateTimeOffset.UtcNow.AddHours(-3)),
+            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))),
             loadDelayMs: 120);
         using var client = NewClient(persistence);
 
         var options = QueryOptions.Create("late", _ => Task.FromResult("from-network")).Build();
 
-        await client.FetchQueryAsync(options);
+        await client.QueryAsync(options);
         var landedAt = client.FindQuery("late")!.LastUpdatedAt;
 
         await Task.Delay(250);

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using RevalQuery.Core.Abstractions.Query;
 
 namespace RevalQuery.Core.Abstractions.Persistence;
 
@@ -48,12 +49,13 @@ public interface IQueryPersistence
 }
 
 /// <summary>
-/// One persisted query: its data and the moment that data was fetched.
+/// One persisted query: its data, and what the query knew about that data's age.
 /// </summary>
 /// <typeparam name="TRes">The query's result type.</typeparam>
 /// <param name="Data">The stored data.</param>
-/// <param name="LastUpdatedAt">
-/// When the data was fetched. Restored verbatim, so data that was already stale when the
-/// process stopped is still stale on the next start and refetches immediately.
+/// <param name="Freshness">
+/// Restored verbatim, so data that was already stale when the process stopped is still stale on
+/// the next start and refetches immediately, and an invalidation that was never acted on is
+/// still outstanding rather than forgotten.
 /// </param>
-public sealed record PersistedQuery<TRes>(TRes Data, DateTimeOffset LastUpdatedAt);
+public sealed record PersistedQuery<TRes>(TRes Data, QueryFreshness Freshness);

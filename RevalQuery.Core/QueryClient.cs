@@ -168,53 +168,26 @@ public sealed class QueryClient : IDisposable
     public Task CancelAsync(string key) => CancelAsync(ValueTuple.Create(key));
 
     /// <summary>
-    /// Prefetches data into the registry without subscribing.
-    /// Fire-and-forget - triggers fetch immediately, no return value.
-    /// Useful for preloading data before component mounts.
-    /// </summary>
-    /// <typeparam name="TKey">The key type.</typeparam>
-    /// <typeparam name="TRes">The response type.</typeparam>
-    /// <param name="queryOptions">Query configuration.</param>
-    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public void PrefetchQuery<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
-        where TKey : ITuple
-    {
-        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
-
-        // Registered before returning, so a key already taken by another result type is
-        // reported to the caller rather than lost in an unobserved task.
-        PrepareRun(options);
-        _ = PrefetchCoreAsync(options);
-    }
-
-    /// <summary>
-    /// Runs a prefetch that nobody awaits, absorbing the failures a caller would otherwise
-    /// have handled.
+    /// Fetches a query's data and returns it, or returns what the registry already holds when
+    /// that data is still fresh.
     /// </summary>
     /// <remarks>
-    /// A prefetch is fire and forget by contract, and a handler's own exception is already
-    /// recorded on the query. What is left here is the run failing to happen at all, which a
-    /// discarded task would surface as an unobserved task exception long after the fact.
+    /// <para>The whole imperative surface. There is no separate prefetch: a caller that does
+    /// not want the result discards the task and handles its failure, which is the same call
+    /// with a different error policy rather than a different operation. A caller that wants
+    /// the cache honoured however old the data is asks for it on the query, with
+    /// <see cref="FetchOptionsBuilder.NeverStale"/>.</para>
+    /// <para>Staleness is judged from the options passed to this call, against the data the
+    /// query already holds. It is the same question <see cref="Subscribe"/> asks, answered by
+    /// the same method, so a component and a route loader looking at one key agree about
+    /// whether it needs refetching. Those options are not written onto the query: they decide
+    /// this call, and leave the polling and freshness any subscriber configured alone.</para>
+    /// <para>Callers arriving while a fetch is already running join it rather than starting a
+    /// second one.</para>
+    /// <para>The query is released again afterwards. Nothing subscribed to it here, so it goes
+    /// on the eviction list and must outlive its own freshness window to be worth caching:
+    /// <c>GcTime</c> has to exceed <c>StaleTime</c>, and both default to five minutes.</para>
     /// </remarks>
-    private async Task PrefetchCoreAsync<TKey, TRes>(QueryOptions<TKey, TRes> options)
-        where TKey : ITuple
-    {
-        try
-        {
-            await RunAndReleaseAsync(options);
-        }
-        catch
-        {
-            // Nobody is waiting for this, and the query carries whatever state the attempt left
-        }
-    }
-
-    /// <summary>
-    /// Fetches data and returns the result.
-    /// Unlike PrefetchQuery, this awaits completion and returns data.
-    /// Callers arriving while a fetch is already running join it instead of starting a second one.
-    /// Throws exception on failure.
-    /// </summary>
     /// <typeparam name="TKey">The key type.</typeparam>
     /// <typeparam name="TRes">The response type.</typeparam>
     /// <param name="queryOptions">Query configuration.</param>
@@ -225,26 +198,43 @@ public sealed class QueryClient : IDisposable
     /// the next keystroke still wants the answer cached for the backspace that follows.
     /// Use <see cref="CancelAsync(ITuple)"/> to stop the fetch itself.
     /// </param>
-    /// <returns>The fetched data.</returns>
+    /// <returns>The fetched data, or the cached data when it was still fresh.</returns>
     /// <exception cref="Exception">Throws if the query fails.</exception>
     /// <exception cref="OperationCanceledException">
     /// The fetch was cancelled, or <paramref name="cancellationToken"/> was.
     /// </exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public async Task<TRes> FetchQueryAsync<TKey, TRes>(
+    public async Task<TRes> QueryAsync<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions,
         CancellationToken cancellationToken = default)
         where TKey : ITuple
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        // Registered before the await, so a key already taken by another result type throws
-        // from the call rather than from the task it returned.
-        PrepareRun(options);
+        // Registered before anything is awaited, so a key already taken by another result type
+        // is reported on the first task this method returns rather than discovered later by
+        // whoever happens to subscribe. This method is async, so that report is a faulted task
+        // and not a throw from the call: a caller discarding the task sees it only through the
+        // catch they write around the discard.
+        var (state, _) = PrepareRun(options);
+
+        // Judged against what the query holds now. An outstanding restore is deliberately not
+        // waited for: ADR 0006 has restores never hold a fetch up, and an adapter that is slow
+        // or wedged would otherwise hang every imperative caller behind it. The race is already
+        // handled at the other end, where TryRestore refuses to overwrite a fetch that landed
+        // first. The cost is that stored data misses the freshness test on the very first call
+        // for a key, and that call fetches instead.
+        if (!state.IsStale(_defaultOptions.FetchOptions.Apply(options.FetchOptions)))
+        {
+            // Nothing subscribed here, so the query goes back on the eviction list exactly as
+            // it would after a fetch.
+            ReleaseIfUnobserved(state);
+            return state.Data!;
+        }
 
         // WaitAsync rather than a token passed into the run: the fetch is shared with every
         // other caller joined to it, and one caller walking away must not take it from them.
-        var (state, outcome) = await RunAndReleaseAsync(options).WaitAsync(cancellationToken);
+        var (ran, outcome) = await RunAndReleaseAsync(options).WaitAsync(cancellationToken);
 
         // Checked before the exception, which belongs to the query rather than to this call.
         // A fetch cancelled while an older failure still sat on the state would otherwise
@@ -254,12 +244,12 @@ public sealed class QueryClient : IDisposable
             // Returning Data here would hand back null, or another caller's older result, as
             // though this call had fetched it. The caller asked for data and there is none.
             throw new OperationCanceledException(
-                $"Query {DescribeKey(state.Key)} was cancelled before it produced data.");
+                $"Query {DescribeKey(ran.Key)} was cancelled before it produced data.");
         }
 
-        if (state.IsException) throw state.Exception!;
+        if (ran.IsException) throw ran.Exception!;
 
-        return state.Data!;
+        return ran.Data!;
     }
 
     /// <summary>
@@ -453,8 +443,8 @@ public sealed class QueryClient : IDisposable
     /// emptied. Callers hold the lock, so the answer cannot change under them.
     /// </summary>
     /// <remarks>
-    /// Guards the entry points a live render reaches: Subscribe, PrefetchQuery,
-    /// FetchQueryAsync, GetOrCreateQuery and ApplyOptions. A component rendering against a
+    /// Guards the entry points a live render reaches: Subscribe, QueryAsync,
+    /// GetOrCreateQuery and ApplyOptions. A component rendering against a
     /// disposed client is a bug, and one that silently created a query would also create a
     /// worker with nothing left to dispose it.
     ///
@@ -560,7 +550,7 @@ public sealed class QueryClient : IDisposable
 
     /// <summary>
     /// Stops the worker for a query nobody is watching and puts the query on the eviction list.
-    /// Used after a prefetch or a one-off fetch, which create no observer of their own.
+    /// Used after a QueryAsync call, which creates no observer of its own.
     /// </summary>
     private void ReleaseIfUnobserved<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
@@ -649,7 +639,7 @@ public sealed class QueryClient : IDisposable
 
             // TryRestore refuses once a fetch has landed, so the older stored data cannot
             // overwrite a fresher result that arrived while this load was in flight.
-            state.TryRestore(persisted.Data, persisted.LastUpdatedAt);
+            state.TryRestore(persisted.Data, persisted.Freshness);
         }
         finally
         {

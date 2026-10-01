@@ -63,7 +63,7 @@ public class OrphanedFetchTests
 
         observer.Dispose();
 
-        var fetch = client.FetchQueryAsync(options);
+        var fetch = client.QueryAsync(options);
         await Task.Delay(100);
 
         release.TrySetResult();

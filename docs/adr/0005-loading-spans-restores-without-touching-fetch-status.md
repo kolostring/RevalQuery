@@ -11,9 +11,16 @@ We deliberately did **not** model restoring as a `FetchStatus` value.
 
 `FetchStatus` is load-bearing beyond display. `CanFetch` is `FetchStatus == Idle &&
 IsEnabled`, so reporting `Fetching` during a restore turns `CanFetch` false. An
-`Invalidate` arriving mid-restore is then dropped, the restore lands and writes the stored
-timestamp over the `MinValue` that `NotifyInvalidated` wrote, nothing is stale any more,
-and the query never refetches. The user is left on stale data with no way to tell.
+`Invalidate` arriving mid-restore is then dropped, the restore lands and overwrites what the
+query knew about the age of its data, nothing is stale any more, and the query never
+refetches. The user is left on stale data with no way to tell.
+
+When this was written, the overwrite was literal: `NotifyInvalidated` moved `LastUpdatedAt`
+to `MinValue` and the restore wrote the stored timestamp back over it. ADR 0008 dropped that
+move, and invalidation now travels as a flag of its own that a restore or-s into rather than
+replaces. The argument is unchanged — a dropped invalidation is still a defect, and the
+conclusion below still holds — but the mechanism it describes is gone, so the sentence above
+no longer names it.
 
 Today that cannot happen, because `CanFetch` is true throughout the restore: the
 invalidation fetches immediately and `TryRestore` then declines on `_hasSettled`.
