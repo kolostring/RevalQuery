@@ -35,8 +35,8 @@ public class InvalidateDuringRestoreTests
         var handlerCalls = 0;
 
         // Fresh stored data and a long StaleTime again, so only the invalidation can force a
-        // fetch. The restore writes that stored timestamp over the MinValue the invalidation
-        // left behind, which is what used to erase it.
+        // fetch. The restore brings its own freshness, and the |= in TryRestore is what keeps
+        // the invalidation set rather than letting the stored value clear it.
         var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();

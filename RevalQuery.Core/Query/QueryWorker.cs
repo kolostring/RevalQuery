@@ -107,12 +107,14 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     }
 
     /// <summary>
-    /// Adopts options rebuilt by a re-render, together with the new enabled flag of the observer
-    /// that rebuilt them.
+    /// Adopts options brought by a render, together with the enabled flag of the observer that
+    /// brought them.
     /// </summary>
     /// <remarks>
     /// <para>Fetch, retry and cache options belong to the query, not to the observer, so the
     /// most recent render of any component watching this key wins.</para>
+    /// <para>Called on a new subscription as well as on a re-render, so a component never
+    /// spends its first render running on options somebody else configured.</para>
     /// <para>A query that has just become enabled fetches if its data is stale, exactly as a
     /// query gaining its first subscriber does. This is what makes the dependent-query pattern
     /// work: a component renders once with Enabled(false), then again with Enabled(true) once
@@ -249,21 +251,28 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     }
 
     /// <summary>
-    /// Refetches on an invalidation, unless the query is static.
+    /// Refetches on an invalidation, if the invalidation left the query stale.
     /// </summary>
     /// <remarks>
-    /// The static check belongs here, at the refetch decision, rather than at the mark in
+    /// <para>The decision belongs here, at the refetch, rather than at the mark in
     /// QueryClient.Invalidate. Invalidation is one thing and refetching is another: a static
     /// query that was invalidated is still invalidated, and reports so, it simply does not act
     /// on it. Putting the check at the mark would make the two the same thing and leave the
-    /// query claiming it was never invalidated at all.
+    /// query claiming it was never invalidated at all.</para>
+    /// <para>It asks <see cref="QueryState{TKey,TResponse}.IsStale"/> rather than re-deciding
+    /// staleness from <c>Static</c> alone, so an invalidation and a new subscriber reach the
+    /// same answer. A static query that has never produced data is stale on the first rung and
+    /// does refetch, which is what keeps a retry button wired to Invalidate alive after a
+    /// failed first fetch.</para>
+    /// <para>Deliberately the undeferred form: an invalidation arriving while a restore is
+    /// outstanding acts now, and <c>TryRestore</c> declines afterwards rather than the
+    /// invalidation waiting and being overwritten.</para>
     /// </remarks>
     private void HandleInvalidation()
     {
         if (_isDisposed) return;
-        if (EnsuredFetchOptions.Static) return;
 
-        RunIfAllowed();
+        RunIfStaleNow();
     }
 
     /// <summary>

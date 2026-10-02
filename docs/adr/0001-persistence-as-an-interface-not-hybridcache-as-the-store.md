@@ -1,4 +1,4 @@
----
+﻿---
 status: accepted
 ---
 
@@ -49,5 +49,8 @@ Query data is loaded lazily when a query is created, where the result type is kn
 rather than rehydrated in bulk at startup, which would require the library to track
 types it has no reason to know.
 
-`LastUpdatedAt` is saved and restored verbatim, so restored data is correctly stale and
-refetches immediately instead of appearing fresh.
+Freshness is saved and restored verbatim, so restored data is correctly stale and
+refetches immediately instead of appearing fresh. `PersistedQuery<TRes>` carries a
+`QueryFreshness` for this, holding the last-updated timestamp alongside the invalidation
+flag; it was a bare `DateTimeOffset` when this record was written, and only the name of
+the field has moved since.

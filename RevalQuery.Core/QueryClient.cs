@@ -180,13 +180,19 @@ public sealed class QueryClient : IDisposable
     /// <para>Staleness is judged from the options passed to this call, against the data the
     /// query already holds. It is the same question <see cref="Subscribe"/> asks, answered by
     /// the same method, so a component and a route loader looking at one key agree about
-    /// whether it needs refetching. Those options are not written onto the query: they decide
-    /// this call, and leave the polling and freshness any subscriber configured alone.</para>
+    /// whether it needs refetching.</para>
+    /// <para>Those options are also adopted by the query, the way every entry point's are: the
+    /// most recent one wins. A loader cannot freeze a key, though, because a component's
+    /// options are adopted when it subscribes and again on every re-render, so a subscriber
+    /// always overrules the loader that happened to create the query before it.</para>
     /// <para>Callers arriving while a fetch is already running join it rather than starting a
     /// second one.</para>
     /// <para>The query is released again afterwards. Nothing subscribed to it here, so it goes
     /// on the eviction list and must outlive its own freshness window to be worth caching:
-    /// <c>GcTime</c> has to exceed <c>StaleTime</c>, and both default to five minutes.</para>
+    /// <c>GcTime</c> has to exceed <c>StaleTime</c>. The defaults satisfy that on their own --
+    /// <c>StaleTime</c> is zero and <c>GcTime</c> five minutes -- but a long <c>StaleTime</c>
+    /// needs a <c>GcTime</c> raised to match, or the entry is evicted before it is ever served
+    /// from cache.</para>
     /// </remarks>
     /// <typeparam name="TKey">The key type.</typeparam>
     /// <typeparam name="TRes">The response type.</typeparam>
@@ -217,6 +223,17 @@ public sealed class QueryClient : IDisposable
         // and not a throw from the call: a caller discarding the task sees it only through the
         // catch they write around the discard.
         var (state, _) = PrepareRun(options);
+
+        // Checked here rather than left to the WaitAsync below, which only sees a token
+        // cancelled while a fetch is actually outstanding. A caller who has already walked
+        // away must not be handed data because the registry happened to be warm, or because
+        // the handler happened to complete synchronously. The release is the same one both
+        // exits below do: PrepareRun registered a worker and nothing has subscribed to it.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            ReleaseIfUnobserved(state);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
 
         // Judged against what the query holds now. An outstanding restore is deliberately not
         // waited for: ADR 0006 has restores never hold a fetch up, and an adapter that is slow
@@ -333,6 +350,12 @@ public sealed class QueryClient : IDisposable
 
             worker = GetOrCreateWorker(state);
         }
+
+        // Subscribing to a query somebody else created has to adopt these options, not inherit
+        // theirs. Without this a component only reaches ApplyOptions on its second render, so
+        // until then it runs on whatever a route loader or an earlier component asked for --
+        // and a NeverStale() loader would leave it permanently unrefreshable.
+        worker.ApplyOptions(options, observer);
 
         worker.RunIfStale();
 

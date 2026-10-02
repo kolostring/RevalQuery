@@ -1,4 +1,4 @@
-namespace RevalQuery.Core.Configuration.Options;
+﻿namespace RevalQuery.Core.Configuration.Options;
 
 /// <summary>
 /// Internal immutable fetch options with applied defaults.
@@ -90,13 +90,18 @@ public sealed class FetchOptionsBuilder
     }
 
     /// <summary>
-    /// Declares the data never to go stale, so it is served from cache however old it is.
+    /// Declares the data never to go stale, so it is served from cache for as long as the
+    /// cache holds it.
     /// </summary>
     /// <remarks>
-    /// Not a very long <see cref="StaleTime"/>. A static query is also left alone by
+    /// <para>Not a very long <see cref="StaleTime"/>. A static query is also left alone by
     /// invalidation, which no duration achieves: the staleness decision asks whether the query
     /// is static before it asks whether it was invalidated. The query still fetches once, when
-    /// it has no data, and a polling interval still drives it if one is set.
+    /// it has no data, and a polling interval still drives it if one is set.</para>
+    /// <para><c>GcTime</c> still bounds how long the data lasts -- five minutes by default --
+    /// so an unobserved static query is evicted and refetched like any other. The usual advice
+    /// to keep <c>GcTime</c> above <c>StaleTime</c> has nothing to size against here: set
+    /// <c>GcTime</c> to however long the value is worth keeping.</para>
     /// </remarks>
     public FetchOptionsBuilder NeverStale()
     {

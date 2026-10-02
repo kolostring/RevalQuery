@@ -1,4 +1,4 @@
----
+﻿---
 status: accepted
 ---
 
@@ -204,8 +204,19 @@ stops when data is present, which it never did. **Static** enters the freshness 
 taking TanStack's word so the two libraries stay mappable. **Invalidate** gains the exception
 it now has.
 
-`GcTime` must exceed `StaleTime` or a cached entry can never serve a hit. Both default to five
-minutes, so an unobserved query written by `QueryAsync` becomes eligible for eviction the
-instant its fetch settles and races its own freshness window. This is not new and it matches
-TanStack, whose `scheduleGc` fires on zero observers the same way, but it caught this repo's
-own example and so it is now written down.
+`GcTime` must exceed `StaleTime` or a cached entry can never serve a hit. The defaults do not
+collide, `StaleTime` being zero against a `GcTime` of five minutes, but they do not protect
+anyone either: an unobserved query written by `QueryAsync` becomes eligible for eviction the
+instant its fetch settles, so a `StaleTime` raised towards `GcTime` leaves the entry racing
+its own freshness window. This is not new and it matches TanStack, whose `scheduleGc` fires
+on zero observers the same way, but it caught this repo's own example and so it is now
+written down.
+
+A caller's options are adopted by the query, and the last one in wins. That was already true
+of a re-render, through `ApplyOptions`, but not of a first subscription: a component whose
+key was created by a `QueryAsync` call ran on the loader's options until its second render,
+which with `NeverStale()` meant permanently. `Subscribe` now adopts them the way a re-render
+does. TanStack settles the same question the same way -- `QueryObserver.setOptions` calls
+`query.setOptions` on mount, and `fetchQuery` writes its own options through `query.fetch` --
+with the component still winning, because it writes on every render and the loader writes
+once.
