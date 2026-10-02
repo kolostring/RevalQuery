@@ -181,10 +181,11 @@ public sealed class QueryClient : IDisposable
     /// query already holds. It is the same question <see cref="Subscribe"/> asks, answered by
     /// the same method, so a component and a route loader looking at one key agree about
     /// whether it needs refetching.</para>
-    /// <para>Those options are also adopted by the query, the way every entry point's are: the
-    /// most recent one wins. A loader cannot freeze a key, though, because a component's
-    /// options are adopted when it subscribes and again on every re-render, so a subscriber
-    /// always overrules the loader that happened to create the query before it.</para>
+    /// <para>These options decide this call. They are written onto the query only when this
+    /// call is what creates it; against a query that already exists they are not, so a loader
+    /// asking for <see cref="FetchOptionsBuilder.NeverStale"/> serves itself from cache without
+    /// changing what any subscriber asked for. Nor can it freeze a key it did create, because a
+    /// component's options are adopted when it subscribes and again on every re-render.</para>
     /// <para>Callers arriving while a fetch is already running join it rather than starting a
     /// second one.</para>
     /// <para>The query is released again afterwards. Nothing subscribed to it here, so it goes

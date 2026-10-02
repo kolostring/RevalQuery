@@ -113,6 +113,7 @@ var options = QueryOptions.Create(
 
 // Extend configuration
 options.ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)));
+options.ConfigureFetch(f => f.NeverStale()); // or: never refetch for age, see Freshness
 options.ConfigureRetry(r => r.Retry(3));   // three retries, so up to four calls
 options.ConfigureCache(c => c.GcTime(TimeSpan.FromMinutes(10)));
 options.Enabled(true);
@@ -178,10 +179,11 @@ Global options via `RevalQueryOptions`.
 ```csharp
 services.AddRevalQuery(options =>
 {
-    // Default fetch options (RefetchInterval, StaleTime)
+    // Default fetch options (RefetchInterval, StaleTime, Static)
     options.FetchOptions = new CoreFetchOptions(
         RefetchInterval: TimeSpan.FromMinutes(5),
-        StaleTime: TimeSpan.FromMinutes(1)
+        StaleTime: TimeSpan.FromMinutes(1),
+        Static: false
     );
 
     // Default retry options: three retries after a failure, so up to four calls
@@ -196,6 +198,67 @@ services.AddRevalQuery(options =>
     // Add plugins
     options.QueryPluginsPipeline.Add(new MyPlugin());
 });
+```
+
+---
+
+## Freshness
+
+`StaleTime` is how long data is reused without refetching. It defaults to **zero**, so data is
+stale the moment it lands and the next subscriber refetches.
+
+Staleness belongs to the data, not to whether anything is observing it, so every entry point
+asks the same question and gets the same answer. A component subscribing and a `QueryAsync`
+call looking at one key agree about whether it needs refetching.
+
+A query is stale when any of these holds, asked in this order:
+
+1. It has never successfully fetched.
+2. It is **not** static, and it was invalidated.
+3. It is **not** static, and its data is older than `StaleTime`.
+
+### Static queries
+
+`NeverStale()` declares that data never goes stale. It is not the same as a very long
+`StaleTime`, and the difference is the ordering above: a static query also ignores
+`Invalidate`, which no duration achieves.
+
+```csharp
+options.ConfigureFetch(f => f.NeverStale());
+```
+
+Use it for data that cannot change within a session — a currency list, a country table, a
+feature flag snapshot pinned at login. A static query still fetches once, because having no
+data is checked before staleness, and a polling `RefetchInterval` still drives it if one is
+set.
+
+What it costs you is the ability to refresh that key on demand. `Invalidate` will not move it,
+deliberately, and it will go on reporting `IsInvalidated` as true after one. To refresh a
+static query, subscribe to it with options that do not declare it static, or change its key.
+
+Which options are in force is worth being precise about. A subscriber's are adopted by the
+query when it subscribes and again on every re-render, so the most recent render wins. A
+`QueryAsync` call's are adopted only if that call creates the query; against one that already
+exists they decide that call alone. A loader can therefore read a key `NeverStale()` without
+making it static for the components that subscribe to it.
+
+### GcTime bounds all of this
+
+`GcTime` is how long a query with no observers survives in the registry. If it is shorter than
+the window you expect to serve from cache, the entry is evicted before it is ever reused.
+
+The defaults do not collide — `StaleTime` zero against a `GcTime` of five minutes — but they
+do not protect you either. Raise `StaleTime` towards `GcTime` and the two start racing, and a
+query reached only through `QueryAsync` is the worst case: nothing subscribes to it, so it
+joins the eviction list the moment its fetch settles.
+
+A static query has no freshness window to compare against, so `GcTime` is the only thing
+bounding its cache lifetime. Raise it to match how long you actually want the data kept.
+
+```csharp
+options
+    .ConfigureFetch(f => f.NeverStale())
+    .ConfigureCache(c => c.GcTime(TimeSpan.FromHours(1)));
 ```
 
 ---

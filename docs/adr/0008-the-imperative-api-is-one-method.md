@@ -212,11 +212,18 @@ its own freshness window. This is not new and it matches TanStack, whose `schedu
 on zero observers the same way, but it caught this repo's own example and so it is now
 written down.
 
-A caller's options are adopted by the query, and the last one in wins. That was already true
-of a re-render, through `ApplyOptions`, but not of a first subscription: a component whose
-key was created by a `QueryAsync` call ran on the loader's options until its second render,
-which with `NeverStale()` meant permanently. `Subscribe` now adopts them the way a re-render
-does. TanStack settles the same question the same way -- `QueryObserver.setOptions` calls
-`query.setOptions` on mount, and `fetchQuery` writes its own options through `query.fetch` --
-with the component still winning, because it writes on every render and the loader writes
-once.
+A subscriber's options are adopted by the query, and the last one in wins. That was already
+true of a re-render, through `ApplyOptions`, but not of a first subscription: a component
+whose key was created by a `QueryAsync` call ran on the loader's options until its second
+render, which with `NeverStale()` meant permanently. `Subscribe` now adopts them the way a
+re-render does. TanStack settles the same question the same way -- `QueryObserver.setOptions`
+calls `query.setOptions` on mount -- with the component winning, because it writes on every
+render and a loader writes at most once.
+
+`QueryAsync` is the exception, and deliberately. Its options are written onto the query only
+when the call is what creates it; against a query that already exists they decide that call
+and nothing more. So a loader asking for `NeverStale()` serves itself from cache without
+making the key static for the components that subscribe to it. TanStack's `fetchQuery` does
+write through `query.fetch`, and we diverge because nothing imperative here has a render loop
+to correct it afterwards: a component rewrites its options on every render and can recover
+from a bad one, while a loader writes once and whatever it left behind stands.
