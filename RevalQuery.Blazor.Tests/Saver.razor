@@ -1,0 +1,23 @@
+@inject QueryClient Client
+<QueryHost Scope="Q" />
+<button @onclick="Save">save</button>
+@if (Show)
+{
+    <p class="status">@Mut.Status</p>
+    <p class="data">@Mut.Data</p>
+}
+@code {
+    [Parameter] public Task Gate { get; set; } = Task.CompletedTask;
+    [Parameter] public string Label { get; set; } = "saved";
+    [Parameter] public bool Show { get; set; } = true;
+    [Parameter] public int Tick { get; set; }
+    public MutationState<Req, string>? Last;
+    // The handler holds this render's label, so a click after a re-render needs the re-read options
+    MutationState<Req, string> Mut => Last = Q.Mutation(Handler(Label));
+    MutationOptionsBuilder<Req, string> Handler(string label) =>
+        MutationOptions.Create<Req, string>(async _ => { await Gate; return label; });
+    Task Save() => (Last ?? throw new InvalidOperationException()).ExecuteAsync(new Req("x"));
+    public sealed record Req(string Name);
+    QueryScope? _q;
+    QueryScope Q => _q ??= Client.CreateScope(this);
+}

@@ -1,5 +1,6 @@
 ﻿<Solution>
   <Project Path="RevalQuery.Blazor/RevalQuery.Blazor.csproj" />
+  <Project Path="RevalQuery.Blazor.Tests/RevalQuery.Blazor.Tests.csproj" />
   <Project Path="RevalQuery.Core/RevalQuery.Core.csproj" />
   <Project Path="RevalQuery.Tests/RevalQuery.Tests.csproj" />
   <Folder Name="/examples/">

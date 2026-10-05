@@ -10,6 +10,7 @@ using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
+using RevalQuery.Core.Scope;
 
 namespace RevalQuery.Core;
 
@@ -55,6 +56,22 @@ public sealed class QueryClient : IDisposable
         _ownsEvictionPolicy = evictionPolicy is null;
         _evictionPolicy = evictionPolicy ?? new TtlQueryGarbageCollector(defaultOptions);
         _evictionPolicy.OnEvictionRequired += HandleEviction;
+    }
+
+    /// <summary>
+    /// Creates a scope: the place one component reads its queries and mutations through, so it
+    /// holds no observers of its own.
+    /// </summary>
+    /// <remarks>
+    /// The caller disposes the scope with the component. A framework adapter attaches a host to
+    /// it; see <see cref="QueryScope"/>.
+    /// </remarks>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public QueryScope CreateScope()
+    {
+        lock (_gate) ThrowIfDisposedLocked();
+
+        return new QueryScope(this);
     }
 
     /// <summary>

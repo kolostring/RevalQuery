@@ -1,0 +1,30 @@
+@inject Fx Fx
+@inject QueryClient Client
+<QueryHost Scope="Q" />
+<p class="own">@Q.Query(Fx.Detail(0)).Data</p>
+@if (Kind == "popover")
+{
+    <Popover>
+        @foreach (var id in Ids)
+        {
+            <span class="item">@Q.Query(Fx.Detail(id)).Data</span>
+        }
+    </Popover>
+}
+else
+{
+    <Gated Gate="Gate">
+        @foreach (var id in Ids)
+        {
+            <span class="item">@Q.Query(Fx.Detail(id)).Data</span>
+        }
+    </Gated>
+}
+@code {
+    [Parameter] public string Kind { get; set; } = "popover";
+    [Parameter] public List<int> Ids { get; set; } = [];
+    [Parameter] public Task Gate { get; set; } = Task.CompletedTask;
+    [Parameter] public int Tick { get; set; }
+    QueryScope? _q;
+    QueryScope Q => _q ??= Client.CreateScope(this);
+}

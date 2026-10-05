@@ -1,0 +1,17 @@
+@* Hides its content on every parameter set and shows it again only when the gate opens: the
+   shape of a data grid that loads its rows asynchronously. *@
+@if (_ready)
+{
+    @ChildContent
+}
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public Task Gate { get; set; } = Task.CompletedTask;
+    bool _ready;
+    protected override async Task OnParametersSetAsync()
+    {
+        _ready = false;
+        await Gate;
+        _ready = true;
+    }
+}

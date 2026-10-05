@@ -77,6 +77,29 @@ Whether an observer permits its query to fetch. A disabled observer keeps the ca
 data and stops triggering work.
 _Avoid_: Active, paused, on
 
+### Components
+
+How a component reads from the library, and who looks after its subscriptions.
+
+**Scope**:
+Everything one component reads, owned in one place. The component reads through it on every
+render and never holds an observer itself; the scope subscribes what was read, re-applies options
+on every read, and releases what a render stopped reading. A read is identified by its call site,
+or by an explicit slot, and each site holds a set of query keys.
+_Avoid_: Context, session, subscription group
+
+**Host**:
+The framework adapter connected to a scope. It tells the component to render when an observer
+reports a change, reports each finished render to the scope, and disposes the scope with the
+component. A scope has one host at a time.
+_Avoid_: Owner, provider, wrapper
+
+**Sweep**:
+What a scope does when a render completes: for every call site read since the previous sweep,
+release the keys at that site that were not read, then start counting reads afresh. A site that was
+not read releases nothing, so a hidden branch keeps its queries until it renders again.
+_Avoid_: Garbage collection, cleanup, expiry
+
 ### Freshness and removal
 
 Ideas that are easy to conflate. A query can be stale without being invalidated, and

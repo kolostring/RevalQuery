@@ -1,0 +1,14 @@
+@* Renders its content in a later batch than its parent's, the way a popover or an inline
+   dialog does through a provider. *@
+@if (_shown)
+{
+    @ChildContent
+}
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    bool _shown;
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _ = InvokeAsync(() => { _shown = true; StateHasChanged(); });
+    }
+}

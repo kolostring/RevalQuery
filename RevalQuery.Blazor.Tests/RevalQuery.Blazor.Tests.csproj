@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <!-- Every framework the library targets, so none of them ships only compiled. -->
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>RevalQuery.Blazor.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="bunit" Version="1.40.0" />
+    <!-- bunit 1.40.0 brings 1.2.0, which carries an advisory. A test-only HTML parser, so the newer one is safe to float. -->
+    <PackageReference Include="AngleSharp" Version="1.8.3" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RevalQuery.Core\RevalQuery.Core.csproj" />
+    <ProjectReference Include="..\RevalQuery.Blazor\RevalQuery.Blazor.csproj" />
+  </ItemGroup>
+
+</Project>

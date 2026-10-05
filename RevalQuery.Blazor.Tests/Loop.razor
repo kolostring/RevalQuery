@@ -1,0 +1,13 @@
+@inject Fx Fx
+@inject QueryClient Client
+<QueryHost Scope="Q" />
+@foreach (var id in Ids)
+{
+    <span class="item">@Q.Query(Fx.Detail(id)).Data</span>
+}
+@code {
+    [Parameter] public List<int> Ids { get; set; } = [];
+    [Parameter] public int Tick { get; set; }
+    QueryScope? _q;
+    QueryScope Q => _q ??= Client.CreateScope(this);
+}
