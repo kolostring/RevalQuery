@@ -95,19 +95,19 @@ scope.RenderCompleted();
 ```
 
 A read is identified by its call site (`[CallerFilePath]`, `[CallerLineNumber]`), or by an explicit
-slot: `scope.Query(options, ("rows", 0))` and `scope.Mutation(key, options)`. A call site holds a
+slot: `scope.Query(("rows", 0), options)` and `scope.Mutation(key, options)`. A call site holds a
 set of query keys, so a loop or a helper method called with different keys holds one query per
 key, and two reads of one key share one observer, which is released when no call site holds it.
-Pass a tuple as a slot: a plain string binds to the call-site overload as its file name.
+A slot is any value compared by value, such as `"rows"` or `("rows", 0)`.
 
 `RenderCompleted` is the sweep. For every call site read since the previous sweep, the keys at that
 site that were not read are released, as a disposed observer releases them. A call site that was not
 read releases nothing, reads between sweeps count towards the next one, and nothing in the rule reads
 a clock. Mutations are never swept and live until the scope is disposed.
 
-The host is told when an observer reports a change from anywhere but inside the `Query` or
-`Mutation` call being made, since that one only describes what the render is about to read. A change
-that arrives before a host attaches is delivered once on `Attach`. A scope has one host at a time:
+The host is told whenever an observer reports a change, including one raised inside a `Query` or
+`Mutation` call, since the reader may be a child or a later batch rather than the owner's render. A
+read that starts a fetch therefore costs the owner one extra render, which settles. A change that arrives before a host attaches is delivered once on `Attach`. A scope has one host at a time:
 attaching a second throws until the first handle is disposed. `Dispose` is idempotent and disposes
 every observer, and reads on a disposed scope throw `ObjectDisposedException`.
 

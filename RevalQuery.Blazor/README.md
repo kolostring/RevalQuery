@@ -163,9 +163,9 @@ data stays for `GcTime`. A call site that was not read at all releases nothing. 
 handlers, or from content that renders in a later batch such as a popover, count towards the next
 render's sweep, so such a read can delay a release by one render.
 
-**Explicit slot.** `Q.Query(options, slot)` identifies the read by a value of your choosing in
-place of the call site, for the case in [Known limitations](#known-limitations). Pass a tuple, for
-example `("rows", 0)`. A plain string binds to the call-site overload as its file name.
+**Explicit slot.** `Q.Query(slot, options)` identifies the read by a value of your choosing in
+place of the call site, for the case in [Known limitations](#known-limitations). Any value compared
+by value works, for example `"rows"` or `("rows", 0)`.
 
 **Static handlers:** Handlers must be `static`. Using `static` ensures compilation error if the handler accidentally captures component state. This guarantees pure, stateless functions that won't cause memory leaks or stale closures.
 
@@ -229,7 +229,7 @@ until an alternative is found.
    is released and recreated. Give the child's read its own getter, or an explicit slot:
 
    ```csharp
-   Q.Query(options, ("rows", 0))
+   Q.Query(("rows", 0), options)
    ```
 
 ---

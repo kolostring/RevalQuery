@@ -181,22 +181,22 @@ public class QueryScopeTests
         using var scope = client.CreateScope();
         var calls = 0;
 
-        var one = scope.Query(Opts("both", () => calls++), ("site", 1));
-        var two = scope.Query(Opts("both", () => calls++), ("site", 2));
+        var one = scope.Query(("site", 1), Opts("both", () => calls++));
+        var two = scope.Query(("site", 2), Opts("both", () => calls++));
         scope.RenderCompleted();
 
         Assert.Same(one, two);
         Assert.Equal(1, calls);
 
         // The first site moves on. The second still holds the key.
-        scope.Query(Opts("other"), ("site", 1));
-        scope.Query(Opts("both"), ("site", 2));
+        scope.Query(("site", 1), Opts("other"));
+        scope.Query(("site", 2), Opts("both"));
         scope.RenderCompleted();
         Assert.True(Observed(client, "both"));
 
         // Now neither does, and the one observer is released once.
-        scope.Query(Opts("other"), ("site", 1));
-        scope.Query(Opts("another"), ("site", 2));
+        scope.Query(("site", 1), Opts("other"));
+        scope.Query(("site", 2), Opts("another"));
         scope.RenderCompleted();
         Assert.False(Observed(client, "both"));
     }
@@ -209,12 +209,12 @@ public class QueryScopeTests
 
         // One line, so one call site, but two slots
         foreach (var key in new[] { "a", "b" })
-            scope.Query(Opts(key), ("rows", key));
+            scope.Query(("rows", key), Opts(key));
         scope.RenderCompleted();
 
         // The slot for "a" reads another key: only that slot is judged
-        scope.Query(Opts("c"), ("rows", "a"));
-        scope.Query(Opts("b"), ("rows", "b"));
+        scope.Query(("rows", "a"), Opts("c"));
+        scope.Query(("rows", "b"), Opts("b"));
         scope.RenderCompleted();
 
         Assert.False(Observed(client, "a"));
@@ -229,12 +229,34 @@ public class QueryScopeTests
         using var scope = client.CreateScope();
 
         var byLine = scope.Query(QueryOptions.Create<string>("built", _ => Task.FromResult("built")));
-        var bySlot = scope.Query(QueryOptions.Create<string>("slotted", _ => Task.FromResult("slotted")), new object());
+        var bySlot = scope.Query(new object(), QueryOptions.Create<string>("slotted", _ => Task.FromResult("slotted")));
 
         Assert.NotNull(byLine);
         Assert.NotNull(bySlot);
         Assert.True(Observed(client, "built"));
         Assert.True(Observed(client, "slotted"));
+    }
+
+    [Fact]
+    public void A_String_Slot_Is_A_Slot_And_Never_A_File_Name()
+    {
+        using var client = NewClient();
+        using var scope = client.CreateScope();
+
+        // Two reads through one string slot: the slot is judged as one site, so the second
+        // sweep releases the key the slot stopped reading. Under a call-site overload it would not.
+        scope.Query("text", Opts("a"));
+        scope.Query("text", QueryOptions.Create<string>("b", _ => Task.FromResult("b")));
+        scope.RenderCompleted();
+
+        scope.Query("text", Opts("b"));
+        scope.RenderCompleted();
+
+        Assert.False(Observed(client, "a"));
+        Assert.True(Observed(client, "b"));
+
+        scope.Mutation("text", MutationOptions.Create<Req, string>(_ => Task.FromResult("m")));
+        scope.Mutation("text", MutationOptions.Create<Req, string>(_ => Task.FromResult("m")).Build());
     }
 
     [Fact]
@@ -259,18 +281,18 @@ public class QueryScopeTests
         var calls = 0;
 
         // Disabled on the first render, enabled on the second: the second must fetch
-        scope.Query(QueryOptions.Create<string>("toggle", _ =>
+        scope.Query("slot", QueryOptions.Create<string>("toggle", _ =>
         {
             calls++;
             return Task.FromResult("d");
-        }).Enabled(false), ("slot", 0));
+        }).Enabled(false));
         Assert.Equal(0, calls);
 
-        var state = scope.Query(QueryOptions.Create<string>("toggle", _ =>
+        var state = scope.Query("slot", QueryOptions.Create<string>("toggle", _ =>
         {
             calls++;
             return Task.FromResult("d");
-        }).Enabled(true), ("slot", 0));
+        }).Enabled(true));
 
         await TestUtils.WaitForStateAsync(state, s => s.IsResolved);
         Assert.Equal(1, calls);
@@ -368,7 +390,10 @@ public class QueryScopeTests
         using var host = scope.Attach(() => changed.TrySetResult());
 
         var state = scope.Query(Gated("slow", gate));
-        Assert.False(changed.Task.IsCompleted);
+
+        // Starting the fetch was reported, from inside the read. Wait for the next change.
+        Assert.True(changed.Task.IsCompleted);
+        changed = Signal();
 
         gate.SetResult();
         await changed.Task;
@@ -377,19 +402,24 @@ public class QueryScopeTests
     }
 
     [Fact]
-    public void A_Change_Raised_While_Reading_Is_Not_Forwarded()
+    public void A_Change_Raised_While_Reading_Is_Forwarded_Like_Any_Other()
     {
         using var client = NewClient();
         using var scope = client.CreateScope();
         var changed = 0;
         using var host = scope.Attach(() => Interlocked.Increment(ref changed));
 
-        // The handler completes on this thread, inside the read, so the data is already there
-        // when the read returns and the notification would only ask for the render in progress.
+        // The handler completes on this thread, inside the read. The reader may be a child that
+        // renders in a later batch, so the owner cannot assume it is the one reading.
         var state = scope.Query(Opts("sync"));
 
         Assert.True(state.IsResolved);
-        Assert.Equal(0, changed);
+        Assert.True(changed > 0);
+
+        // Reading the settled key again changes nothing
+        var settled = changed;
+        scope.Query(Opts("sync"));
+        Assert.Equal(settled, changed);
     }
 
     [Fact]
@@ -415,7 +445,6 @@ public class QueryScopeTests
         using var scope = client.CreateScope();
         var changed = 0;
 
-        scope.Query(Opts("quiet"));
         using var host = scope.Attach(() => changed++);
 
         Assert.Equal(0, changed);
@@ -443,8 +472,10 @@ public class QueryScopeTests
         var gate = Signal();
         var changed = 0;
 
+        var link = scope.Attach(() => changed++);
         var state = scope.Query(Gated("late", gate));
-        scope.Attach(() => changed++).Dispose();
+        link.Dispose();
+        changed = 0;
 
         gate.SetResult();
         await TestUtils.WaitForStateAsync(state, s => s.IsResolved);
@@ -482,9 +513,10 @@ public class QueryScopeTests
 
         var state = scope.Query(Gated("gone", gate));
         scope.Dispose();
+        changed = 0;
 
         Assert.Throws<ObjectDisposedException>(() => scope.Query(Opts("x")));
-        Assert.Throws<ObjectDisposedException>(() => scope.Query(Opts("x"), new object()));
+        Assert.Throws<ObjectDisposedException>(() => scope.Query(new object(), Opts("x")));
         Assert.Throws<ObjectDisposedException>(() =>
             scope.Mutation(MutationOptions.Create<Req, string>(_ => Task.FromResult("x")).Build()));
         Assert.Throws<ObjectDisposedException>(() => scope.Attach(() => { }));

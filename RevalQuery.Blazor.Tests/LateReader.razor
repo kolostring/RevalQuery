@@ -1,0 +1,17 @@
+@* Shows a state that only a child, rendered in a later batch, reads. The page itself reads
+   nothing, so only a notification from the scope can make it show the child's result. *@
+@inject Fx Fx
+@inject QueryClient Client
+<QueryHost Scope="Q" />
+<p id="own">@(_seen?.Data ?? "none")</p>
+<Popover>
+    @{ _seen = Q.Query(Fx.Detail(1)); }
+    <span class="item">@_seen.Data</span>
+</Popover>
+@code {
+    IQueryState<string>? _seen;
+    public int Renders;
+    protected override void OnAfterRender(bool firstRender) => Renders++;
+    QueryScope? _q;
+    QueryScope Q => _q ??= Client.CreateScope(this);
+}

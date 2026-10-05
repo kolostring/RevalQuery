@@ -1,0 +1,16 @@
+@* Gives the host a new scope whenever Id changes, the way a page that re-creates its scope would. *@
+@inject Fx Fx
+@inject QueryClient Client
+<QueryHost Scope="_scope" />
+<p id="out">@_scope.Query(Fx.Detail(Id)).Data</p>
+@code {
+    [Parameter] public int Id { get; set; }
+    QueryScope _scope = default!;
+    int _scopeId = -1;
+    protected override void OnParametersSet()
+    {
+        if (_scopeId == Id) return;
+        _scopeId = Id;
+        _scope = Client.CreateScope(this);
+    }
+}

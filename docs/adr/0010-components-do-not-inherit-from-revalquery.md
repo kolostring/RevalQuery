@@ -47,11 +47,14 @@ re-render wanted, and a component that implements `IHandleEvent` without `Compon
 re-rendered by whatever it does for an event. The scope is a reference type, so Blazor hands it to
 the host again on every parent render and `OnAfterRender` runs for every one.
 
-A notification raised on the thread that is inside `Query()` or `Mutation()` is not forwarded. It is
-the observer reporting what that render is about to read, which includes a handler that completed
-synchronously, and forwarding it would render the page twice for one change. One raised before any
-host has attached is kept and delivered once on attach, so a read in `OnInitialized` does not lose a
-change to the gap before the host exists. A scope takes one host at a time.
+Every notification is forwarded, including one raised inside `Query()` or `Mutation()`. Dropping
+those assumed the page's own render was the reader, and it is not when the reader is a child, a
+popover, a later batch or `OnAfterRender`: the page would then show stale state. The cost is one
+extra render of the owner when a read starts a fetch. It settles, because that render re-reads a key
+whose state has not changed, which notifies nothing. One raised before any host has attached is kept
+and delivered once on attach, so a read in `OnInitialized` does not lose a change to the gap before
+the host exists. A scope takes one host at a time, and a `QueryHost` handed a different scope
+disposes the one it replaces.
 
 Nothing in the design reads a clock. What is released is a function of which call sites were read
 and when renders completed, so a test of it is a test of render cycles and needs no delay.
@@ -125,5 +128,5 @@ Two reads on one line share a site. That is harmless for queries, since a site h
 means one mutation for mutations, which are keyed by site: use `Q.Mutation(key, options)` when each
 needs its own.
 
-`Query(options, slot)` takes an `object`, and a string passed as the slot binds to the call-site
-overload as its file name. Pass a tuple.
+The explicit slot comes first, `Query(slot, options)`, as `Mutation(key, options)` does, so a string
+slot cannot bind to the call-site overload as its file name.

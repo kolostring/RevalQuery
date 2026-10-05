@@ -50,15 +50,39 @@ public class QueryHostTests : TestContext
     }
 
     [Fact]
-    public void A_Query_That_Completes_During_The_Read_Costs_No_Extra_Render()
+    public async Task A_Query_That_Completes_During_The_Read_Costs_One_Extra_Render_That_Settles()
     {
         var fx = NewFx();
         var cut = RenderComponent<Basic>(p => p.Add(c => c.Id, 1));
+        await Flush(cut);
 
-        // The handler finished inside Query(), so the notification only described the render
-        // already in progress and was not forwarded
+        // The notification raised inside Query() is forwarded like any other, so the page renders
+        // once more. That render only re-reads a settled key, which notifies nothing, so it ends there.
         Assert.Equal("item1", cut.Find("#out").TextContent);
-        Assert.Equal(1, cut.Instance.Renders);
+        var renders = cut.Instance.Renders;
+        Assert.InRange(renders, 1, 2);
+
+        await Flush(cut);
+        await Flush(cut);
+
+        Assert.Equal(renders, cut.Instance.Renders);
+        Assert.Equal(1, fx.CallsFor(1));
+    }
+
+    [Fact]
+    public async Task A_Read_In_A_Later_Batch_That_Changes_State_Re_Renders_The_Page()
+    {
+        var fx = NewFx();
+        var cut = RenderComponent<LateReader>();
+
+        cut.WaitForAssertion(() => Assert.Equal("item1", cut.Find("#own").TextContent));
+        await Flush(cut);
+
+        var renders = cut.Instance.Renders;
+        await Flush(cut);
+        await Flush(cut);
+
+        Assert.Equal(renders, cut.Instance.Renders);
         Assert.Equal(1, fx.CallsFor(1));
     }
 
@@ -138,10 +162,9 @@ public class QueryHostTests : TestContext
         var cut = RenderComponent<InChild>(p => p.Add(c => c.Kind, "popover").Add(c => c.Ids, [1, 2, 3]));
         cut.WaitForAssertion(() => Assert.Equal(3, WithData(cut)));
 
-        // The first render after the change still counts the reads the popover made in its own
-        // batch before it, which no sweep has seen: key 2 goes at the render after that.
+        // The first sweep after the change may still count reads the popover made in its own
+        // batch before it, so key 2 goes at that sweep or the render after it.
         cut.SetParametersAndRender(p => p.Add(c => c.Ids, [1, 3]));
-        Assert.True(fx.Observed(2));
 
         cut.SetParametersAndRender(p => p.Add(c => c.Tick, 1));
         await Flush(cut);
@@ -255,6 +278,20 @@ public class QueryHostTests : TestContext
     }
 
     [Fact]
+    public void Swapping_The_Scope_Disposes_The_Old_One_And_Releases_Its_Queries()
+    {
+        var fx = NewFx();
+        var cut = RenderComponent<Swapper>(p => p.Add(c => c.Id, 1));
+        Assert.True(fx.Observed(1));
+
+        cut.SetParametersAndRender(p => p.Add(c => c.Id, 2));
+
+        Assert.False(fx.Observed(1));
+        Assert.True(fx.Observed(2));
+        Assert.Equal(1, fx.Eviction.RegisteredCount(1));
+    }
+
+    [Fact]
     public void A_Host_Without_A_Scope_Says_So()
     {
         NewFx();
@@ -283,12 +320,12 @@ public class QueryHostTests : TestContext
         var cut = RenderComponent<HandOwner>();
 
         cut.Instance.Scope!.Query(fx.Detail(1));
-        Assert.Equal(0, cut.Instance.Events);
+        cut.WaitForState(() => cut.Instance.Events > 0);
+        var events = cut.Instance.Events;
 
         gate.SetResult();
 
-        cut.WaitForState(() => cut.Instance.Events > 0);
-        Assert.Equal(1, cut.Instance.Events);
+        cut.WaitForState(() => cut.Instance.Events > events);
     }
 
     /// <summary>

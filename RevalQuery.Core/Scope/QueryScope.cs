@@ -85,10 +85,6 @@ public sealed class QueryScope : IDisposable
     private bool _pending;
     private bool _isDisposed;
 
-    // Set on a thread while it is inside Query() or Mutation(). A notification raised there
-    // is an observer reporting what the render is about to read anyway, so it is not forwarded.
-    [ThreadStatic] private static QueryScope? _reading;
-
     internal QueryScope(QueryClient client) => _client = client;
 
     private sealed class HostLink(Action onChanged) : IDisposable
@@ -123,7 +119,7 @@ public sealed class QueryScope : IDisposable
         [CallerFilePath] string file = "",
         [CallerLineNumber] int line = 0)
         where TKey : ITuple =>
-        Query(options, (file, line));
+        Query((file, line), options);
 
     /// <summary>Reads a query, keyed by the call site, from a builder.</summary>
     /// <inheritdoc cref="Query{TKey, TRes}(QueryOptions{TKey, TRes}, string, int)"/>
@@ -132,7 +128,7 @@ public sealed class QueryScope : IDisposable
         [CallerFilePath] string file = "",
         [CallerLineNumber] int line = 0)
         where TKey : ITuple =>
-        Query(builder.Build(), (file, line));
+        Query((file, line), builder.Build());
 
     /// <summary>
     /// Reads a query under an explicit slot instead of the call site. The workaround for a call
@@ -140,14 +136,12 @@ public sealed class QueryScope : IDisposable
     /// distinguish.
     /// </summary>
     /// <remarks>
-    /// Slots compare by value, so a tuple such as <c>("rows", page)</c> works. Do not pass a
-    /// string: overload resolution prefers the call-site overload, which takes a string as its
-    /// file name. Wrap it, for example <c>("rows", 0)</c>.
+    /// Slots compare by value, so <c>"rows"</c> and a tuple such as <c>("rows", page)</c> both work.
     /// </remarks>
-    /// <param name="options">Query configuration, rebuilt by this render.</param>
     /// <param name="slot">Identity of the read, in place of the call site.</param>
+    /// <param name="options">Query configuration, rebuilt by this render.</param>
     /// <inheritdoc cref="Query{TKey, TRes}(QueryOptions{TKey, TRes}, string, int)" path="/typeparam|/exception"/>
-    public IQueryState<TRes> Query<TKey, TRes>(QueryOptions<TKey, TRes> options, object slot)
+    public IQueryState<TRes> Query<TKey, TRes>(object slot, QueryOptions<TKey, TRes> options)
         where TKey : ITuple
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -162,62 +156,52 @@ public sealed class QueryScope : IDisposable
             if (existing is not null) MarkRead(slot, options.Key, existing);
         }
 
-        var prior = _reading;
-        _reading = this;
-
-        try
+        if (existing is not null)
         {
-            if (existing is not null)
-            {
-                existing.Observer.SetOptions(options);
-                return existing.Observer.Query;
-            }
-
-            var observer = _client.Subscribe(options, OnObserverChanged);
-            QueryEntry<TKey, TRes>? loser = null;
-            QueryEntry<TKey, TRes>? created = null;
-
-            lock (_gate)
-            {
-                if (_isDisposed)
-                {
-                    loser = new QueryEntry<TKey, TRes>(observer);
-                }
-                else if (Find<TKey, TRes>(options.Key) is { } raced)
-                {
-                    // Another thread read the same key while this one was subscribing.
-                    loser = new QueryEntry<TKey, TRes>(observer);
-                    MarkRead(slot, options.Key, raced);
-                    existing = raced;
-                }
-                else
-                {
-                    created = new QueryEntry<TKey, TRes>(observer);
-                    _queries[options.Key] = created;
-                    MarkRead(slot, options.Key, created);
-                }
-            }
-
-            if (loser is not null)
-            {
-                loser.Dispose();
-                ObjectDisposedException.ThrowIf(existing is null, this);
-                return existing!.Observer.Query;
-            }
-
-            return observer.Query;
+            existing.Observer.SetOptions(options);
+            return existing.Observer.Query;
         }
-        finally
+
+        var observer = _client.Subscribe(options, OnObserverChanged);
+        QueryEntry<TKey, TRes>? loser = null;
+        QueryEntry<TKey, TRes>? created = null;
+
+        lock (_gate)
         {
-            _reading = prior;
+            if (_isDisposed)
+            {
+                loser = new QueryEntry<TKey, TRes>(observer);
+            }
+            else if (Find<TKey, TRes>(options.Key) is { } raced)
+            {
+                // Another thread read the same key while this one was subscribing.
+                loser = new QueryEntry<TKey, TRes>(observer);
+                MarkRead(slot, options.Key, raced);
+                existing = raced;
+            }
+            else
+            {
+                created = new QueryEntry<TKey, TRes>(observer);
+                _queries[options.Key] = created;
+                MarkRead(slot, options.Key, created);
+            }
         }
+
+        if (loser is not null)
+        {
+            loser.Dispose();
+            ObjectDisposedException.ThrowIf(existing is null, this);
+            return existing!.Observer.Query;
+        }
+
+        return observer.Query;
     }
 
     /// <summary>Reads a query under an explicit slot, from a builder.</summary>
-    /// <inheritdoc cref="Query{TKey, TRes}(QueryOptions{TKey, TRes}, object)"/>
-    public IQueryState<TRes> Query<TKey, TRes>(QueryOptionsBuilder<TKey, TRes> builder, object slot)
+    /// <inheritdoc cref="Query{TKey, TRes}(object, QueryOptions{TKey, TRes})"/>
+    public IQueryState<TRes> Query<TKey, TRes>(object slot, QueryOptionsBuilder<TKey, TRes> builder)
         where TKey : ITuple =>
-        Query(builder.Build(), slot);
+        Query(slot, builder.Build());
 
     /// <summary>
     /// Reads a mutation, keyed by the call site. Creates it on the first read and re-applies
@@ -269,41 +253,31 @@ public sealed class QueryScope : IDisposable
             existing = _mutations.TryGetValue(id, out var found) ? (MutationEntry<TParams, TRes>)found : null;
         }
 
-        var prior = _reading;
-        _reading = this;
-
-        try
+        if (existing is not null)
         {
-            if (existing is not null)
-            {
-                existing.Observer.SetOptions(options);
-                return existing.Observer.State;
-            }
-
-            var observer = _client.CreateMutation(options, OnObserverChanged);
-            MutationEntry<TParams, TRes>? raced = null;
-            var disposed = false;
-
-            lock (_gate)
-            {
-                if (_isDisposed) disposed = true;
-                else if (_mutations.TryGetValue(id, out var found)) raced = (MutationEntry<TParams, TRes>)found;
-                else _mutations[id] = new MutationEntry<TParams, TRes>(observer);
-            }
-
-            if (disposed || raced is not null)
-            {
-                observer.Dispose();
-                ObjectDisposedException.ThrowIf(disposed, this);
-                return raced!.Observer.State;
-            }
-
-            return observer.State;
+            existing.Observer.SetOptions(options);
+            return existing.Observer.State;
         }
-        finally
+
+        var observer = _client.CreateMutation(options, OnObserverChanged);
+        MutationEntry<TParams, TRes>? raced = null;
+        var disposed = false;
+
+        lock (_gate)
         {
-            _reading = prior;
+            if (_isDisposed) disposed = true;
+            else if (_mutations.TryGetValue(id, out var found)) raced = (MutationEntry<TParams, TRes>)found;
+            else _mutations[id] = new MutationEntry<TParams, TRes>(observer);
         }
+
+        if (disposed || raced is not null)
+        {
+            observer.Dispose();
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return raced!.Observer.State;
+        }
+
+        return observer.State;
     }
 
     /// <summary>Reads a mutation under an explicit key, from a builder.</summary>
@@ -360,13 +334,14 @@ public sealed class QueryScope : IDisposable
     // ---- host ----
 
     /// <summary>
-    /// Attaches the component's host, which is told whenever an observer reports a change that
-    /// the render in progress was not about to read anyway.
+    /// Attaches the component's host, which is told whenever an observer reports a change,
+    /// including one raised by a read.
     /// </summary>
     /// <remarks>
     /// One host at a time: attaching while another is attached throws, and disposing the returned
     /// handle frees the scope for the next. A change reported before any host attached is kept
-    /// and delivered once, now. <paramref name="onChanged"/> may be called from any thread.
+    /// and delivered once, now. A read that starts a fetch reports a change, so the owner renders
+    /// once more, and that render's reads report nothing new. <paramref name="onChanged"/> may be called from any thread.
     /// </remarks>
     /// <param name="onChanged">Asks the component to render again.</param>
     /// <returns>A handle that detaches the host.</returns>
@@ -406,8 +381,6 @@ public sealed class QueryScope : IDisposable
 
     private void OnObserverChanged()
     {
-        if (ReferenceEquals(_reading, this)) return;
-
         HostLink? host;
 
         lock (_gate)
