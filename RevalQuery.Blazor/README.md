@@ -50,11 +50,7 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 
     IQueryState<List<string>> Suggestions => UseQuery(
         key: ("search", SearchTerm),
-        handler: async static ctx =>
-        {
-            var res = await SearchService.SearchAsync(ctx.Key.SearchTerm);
-            return QueryResult.Success(res);
-        },
+        handler: async static ctx => await SearchService.SearchAsync(ctx.Key.Item2),
         options => options
             .ConfigureFetch(fetch => fetch
                 .StaleTime(TimeSpan.FromMinutes(5))
@@ -100,7 +96,7 @@ browser refetching what the server already fetched.
 Inherit from `QueryComponentBase`:
 
 ```razor
-@inherit QueryComponentBase
+@inherits QueryComponentBase
 ```
 
 ---
@@ -277,9 +273,12 @@ IQueryState<User> User => UseQuery(
 
 ## Reactive options
 
-Options are rebuilt on every render and applied on every render. `Enabled`, `StaleTime`,
-`RefetchInterval`, retry and cache options all take effect the moment a re-render changes
-them; only the key decides which query the call watches.
+Options are rebuilt on every render and handed to the slot's observer on every render, through
+`QueryObserver.SetOptions`. `Enabled`, `StaleTime`, `RefetchInterval`, retry and cache options
+all take effect the moment a re-render changes them. The key decides which query the call
+watches, and the observer follows it: when the key changes, `SetOptions` moves the observer to
+the new key's query, releases the old one to the cache for its `GcTime`, and leaves any fetch
+the old one had in flight to finish. There is nothing to dispose or resubscribe.
 
 That is what makes the dependent-query pattern work. Render once disabled, and again enabled
 once the value the key depends on arrives:

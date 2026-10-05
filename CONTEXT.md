@@ -50,8 +50,10 @@ what a component reads from.
 _Avoid_: Cache entry, result, model
 
 **Observer**:
-One component's subscription to a query state. A query with no observers is a
-candidate for eviction.
+One component's subscription to whichever query its current options name. It follows
+the key: new options either re-apply to the query it is on or move it to another, and the
+caller keeps the one observer throughout. A query with no observers is a candidate for
+eviction.
 _Avoid_: Subscriber, listener, watcher
 
 **Query status**:

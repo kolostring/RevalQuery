@@ -326,14 +326,18 @@ public sealed class QueryClient : IDisposable
     /// <typeparam name="TRes">The response type.</typeparam>
     /// <param name="queryOptions">Query configuration including key and handler.</param>
     /// <param name="onStateHasChanged">Callback to invoke StateHasChanged on the component.</param>
-    /// <returns>A QueryObserver that should be disposed when component is disposed.</returns>
+    /// <returns>
+    /// A QueryObserver that should be disposed when component is disposed. Hand it new options
+    /// with <see cref="QueryObserver{TKey, TRes}.SetOptions"/> on every render and it follows
+    /// the key; <see cref="Observe"/> does both steps.
+    /// </returns>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public QueryObserver<TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
+    public QueryObserver<TKey, TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
         where TKey : ITuple
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        QueryObserver<TRes> observer;
+        QueryObserver<TKey, TRes> observer;
         QueryWorker<TKey, TRes> worker;
 
         // Registering the query, subscribing to it and giving it a worker happen together.
@@ -343,7 +347,8 @@ public sealed class QueryClient : IDisposable
         {
             var state = GetOrCreateQueryLocked(options);
 
-            observer = new QueryObserver<TRes>(
+            observer = new QueryObserver<TKey, TRes>(
+                this,
                 state,
                 onStateHasChanged,
                 options.Enabled
@@ -353,7 +358,7 @@ public sealed class QueryClient : IDisposable
         }
 
         // Subscribing to a query somebody else created has to adopt these options, not inherit
-        // theirs. Without this a component only reaches ApplyOptions on its second render, so
+        // theirs. Without this a component only reaches SetOptions on its second render, so
         // until then it runs on whatever a route loader or an earlier component asked for --
         // and a NeverStale() loader would leave it permanently unrefreshable.
         worker.ApplyOptions(options, observer);
@@ -389,41 +394,111 @@ public sealed class QueryClient : IDisposable
     }
 
     /// <summary>
-    /// Re-applies options to an existing subscription whose key has not changed.
+    /// Subscribes the first time it is called with a slot, and hands the slot its new options
+    /// every time after.
     /// </summary>
     /// <remarks>
-    /// Called on every re-render that reaches the same query, so that Enabled, StaleTime,
-    /// RefetchInterval, RetryOptions and CacheOptions stay reactive rather than being frozen at
-    /// the render that first created the query. Does nothing when the query has since left the
-    /// registry.
+    /// <para>The whole of what a component does on a render, for a caller that has nothing like
+    /// <c>QueryComponentBase</c> to do it for them. The slot is the caller's: a field of the
+    /// component, dispose it with the component. The observer inside it follows the key, so the
+    /// caller never compares one.</para>
+    /// <para>Returns the state to read from, which is a different object after a key change.
+    /// Call it from the property a render reads rather than caching what it returned.</para>
     /// </remarks>
     /// <typeparam name="TKey">The key type.</typeparam>
     /// <typeparam name="TRes">The response type.</typeparam>
-    /// <param name="observer">The observer returned by the original Subscribe call.</param>
-    /// <param name="queryOptions">The rebuilt query configuration.</param>
-    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public void ApplyOptions<TKey, TRes>(QueryObserver<TRes> observer, QueryOptions<TKey, TRes> queryOptions)
+    /// <param name="slot">The caller's observer, null until the first call.</param>
+    /// <param name="queryOptions">The query configuration for this render.</param>
+    /// <param name="onStateHasChanged">Callback to re-render. Used only when the slot is created.</param>
+    /// <returns>The query state the slot now watches.</returns>
+    /// <exception cref="InvalidOperationException">The key is registered with another result type.</exception>
+    /// <exception cref="ObjectDisposedException">The client or the slot's observer was disposed.</exception>
+    public IQueryState<TRes> Observe<TKey, TRes>(
+        ref QueryObserver<TKey, TRes>? slot,
+        QueryOptions<TKey, TRes> queryOptions,
+        Action onStateHasChanged)
+        where TKey : ITuple
+    {
+        if (slot is null)
+        {
+            slot = Subscribe(queryOptions, onStateHasChanged);
+        }
+        else
+        {
+            slot.SetOptions(queryOptions);
+        }
+
+        return slot.Query;
+    }
+
+    /// <summary>
+    /// Points an observer at the query its new options name: the one it is on when the key is
+    /// unchanged, another when it is not.
+    /// </summary>
+    /// <remarks>
+    /// <para>Called on every render, so the same-key path is the common one and must stay
+    /// cheap: it adopts the options and does nothing else unless that made the query newly
+    /// enabled or changed its polling interval, both of which the worker decides.</para>
+    /// <para>A move resolves the new query before anything is released, so a result type clash
+    /// throws with the observer exactly where it was. It attaches to the new query in the same
+    /// lock hold that finds it, for the reason <see cref="Subscribe"/> does everything in one:
+    /// an eviction landing in a gap would drop the state the observer is about to report. Only
+    /// then is the old query released, the same release a disposal makes. The observer is
+    /// briefly subscribed to both, which costs nothing: it forwards notifications from the new
+    /// one alone.</para>
+    /// <para>Does not cancel a fetch the old query has in flight. Releasing its last observer
+    /// stops its polling and puts it on the eviction list, and its worker, which cannot be
+    /// disposed under a running fetch, is let go once the fetch settles.</para>
+    /// <para>An observer lock is taken first and the registry's second, and never the other
+    /// way round, so a switch and a disposal of the same observer cannot interleave.</para>
+    /// </remarks>
+    internal void SetObserverOptions<TKey, TRes>(
+        QueryObserver<TKey, TRes> observer,
+        QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        if (observer.Query is not QueryState<TKey, TRes> state) return;
-
         QueryWorker<TKey, TRes> worker;
+        var moved = false;
 
-        lock (_gate)
+        lock (observer.Gate)
         {
-            ThrowIfDisposedLocked();
+            observer.ThrowIfDisposedLocked();
 
-            // An observer outlives its state only if the state was evicted, which cannot happen
-            // while it has one. Checked anyway: driving a state the registry has let go would
-            // give it a worker nothing owns.
-            if (!ReferenceEquals(_registry.PeekNode(state.Key)?.State, state)) return;
+            (QueryState<TKey, TRes> Query, Action Handler)? left = null;
 
-            worker = GetOrCreateWorker(state);
+            lock (_gate)
+            {
+                // Throws for a disposed client and for a clash of result types, in both cases
+                // before anything has been attached or detached.
+                var state = GetOrCreateQueryLocked(options);
+
+                if (!ReferenceEquals(state, observer.Current))
+                {
+                    // The observer's own enabled flag is set before it subscribes, as it is
+                    // for a new subscription, so the query reads as enabled the moment it has
+                    // an observer and the worker below does not mistake that for a toggle.
+                    observer.Enabled = options.Enabled;
+                    left = observer.Attach(state);
+                    moved = true;
+                }
+
+                // Also the still-in-registry check for an unchanged key: the state came from
+                // the registry a line ago, so a worker made for it has an owner. An observer
+                // whose state was evicted, which cannot happen while it is subscribed to it,
+                // would have found a fresh state here and moved to it.
+                worker = GetOrCreateWorker(state);
+            }
+
+            if (left is { } previous) observer.Detach(previous.Query, previous.Handler);
         }
 
         worker.ApplyOptions(options, observer);
+
+        // A new subscription fetches if its data is stale. An unchanged key does not: the
+        // worker has already decided whether turning the query on warrants one.
+        if (moved) worker.RunIfStale();
     }
 
     /// <summary>
@@ -468,7 +543,7 @@ public sealed class QueryClient : IDisposable
     /// </summary>
     /// <remarks>
     /// Guards the entry points a live render reaches: Subscribe, QueryAsync,
-    /// GetOrCreateQuery and ApplyOptions. A component rendering against a
+    /// GetOrCreateQuery and SetOptions. A component rendering against a
     /// disposed client is a bug, and one that silently created a query would also create a
     /// worker with nothing left to dispose it.
     ///

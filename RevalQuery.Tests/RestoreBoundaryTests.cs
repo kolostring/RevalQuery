@@ -32,13 +32,13 @@ public class RestoreBoundaryTests
     /// </summary>
     private sealed record Frame(bool IsLoading, bool IsRestoring, bool IsFetching, bool IsPending);
 
-    private static (List<Frame> Frames, QueryObserver<string> Observer) Watch(
+    private static (List<Frame> Frames, QueryObserver<ValueTuple<string>, string> Observer) Watch(
         QueryClient client, QueryOptions<ValueTuple<string>, string> options)
     {
         var frames = new List<Frame>();
         // Not System.Threading.Lock, which the net8.0 target of this project cannot see.
         var gate = new object();
-        QueryObserver<string>? observer = null;
+        QueryObserver<ValueTuple<string>, string>? observer = null;
 
         observer = client.Subscribe(options, () =>
         {

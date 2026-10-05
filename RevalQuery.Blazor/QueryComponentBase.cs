@@ -115,19 +115,14 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
 
         if (_observerSlots.TryGetValue(slotId, out var existing))
         {
-            var obs = (QueryObserver<TRes>)existing;
-            var query = (QueryState<TKey, TRes>)obs.Query;
+            var existingObserver = (QueryObserver<TKey, TRes>)existing;
 
-            if (query.Key.Equals(queryOptions.Key))
-            {
-                // The key is what decides which query this slot watches; everything else was
-                // rebuilt by this render and has to take effect now. Skipping this is what used
-                // to make Enabled non-reactive, and the dependent-query pattern with it.
-                Client.ApplyOptions(obs, queryOptions);
-                return query;
-            }
-
-            obs.Dispose();
+            // Everything this render rebuilt takes effect now, the key included: the observer
+            // either re-applies the options to the query it is on or moves to the one the new
+            // key names. Skipping this is what used to make Enabled non-reactive, and the
+            // dependent-query pattern with it.
+            existingObserver.SetOptions(queryOptions);
+            return existingObserver.Query;
         }
 
         var observer = Client.Subscribe(queryOptions, () => { InvokeAsync(StateHasChanged); });

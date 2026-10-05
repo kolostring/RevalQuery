@@ -30,8 +30,16 @@ Main entry point for query management.
 ```csharp
 public sealed class QueryClient
 {
-    // Subscribe component to query - returns observer
-    public QueryObserver<TRes> Subscribe<TKey, TRes>(
+    // Subscribe component to query - returns observer. Call observer.SetOptions(options) on
+    // every render and the observer follows the key.
+    public QueryObserver<TKey, TRes> Subscribe<TKey, TRes>(
+        QueryOptions<TKey, TRes> options,
+        Action onStateHasChanged
+    );
+
+    // Subscribe the first time, SetOptions every time after. Returns the state to read from.
+    public IQueryState<TRes> Observe<TKey, TRes>(
+        ref QueryObserver<TKey, TRes>? slot,
         QueryOptions<TKey, TRes> options,
         Action onStateHasChanged
     );
@@ -52,6 +60,43 @@ public sealed class QueryClient
     public Task CancelAsync(string key);
 }
 ```
+
+### Observing from your own component
+
+An observer is one component's subscription to whichever query its current options name.
+`QueryObserver.SetOptions` is called on every render: against the same key it re-applies
+`Enabled`, `StaleTime`, `RefetchInterval`, retry and cache options, and against a new key it
+moves the observer to that query. The old query is released the way a disposal releases it, so
+it stays cached for its `GcTime`, and a fetch it had in flight is left to finish. The observer
+changes, `observer.Query` is a different object afterwards, and the caller holds one slot for
+the life of the component.
+
+`Observe` is the whole render step. Outside `QueryComponentBase`, keep a field per query as the
+slot, read it through a property, and dispose the slots with the component:
+
+```csharp
+public sealed class ProductPage : ComponentBase, IDisposable
+{
+    [Inject] QueryClient Client { get; set; } = null!;
+    [Parameter] public int CategoryId { get; set; }
+
+    private QueryObserver<(string, int), List<Product>>? _products;
+
+    // ByCategory returns the built QueryOptions<(string, int), List<Product>>
+    IQueryState<List<Product>> ProductList =>
+        Client.Observe(ref _products, ProductQueries.ByCategory(CategoryId), Rerender);
+
+    private void Rerender() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => _products?.Dispose();
+}
+```
+
+When `CategoryId` changes the next read of `ProductList` switches the slot to the new category's
+query and returns its state, fetching if its data is stale. `Dispose` is safe to call more
+than once. `SetOptions` after the observer or the client is disposed throws
+`ObjectDisposedException`, and a key already registered with another result type throws
+`InvalidOperationException` with the observer left on the query it was on.
 
 ### Cancelling
 
@@ -164,7 +209,7 @@ public static class UserQueries
 **Usage:**
 ```csharp
 // In component or QueryClient
-var query = client.Subscribe(UserQueries.GetUserOptions(userId), OnStateChanged);
+var observer = client.Subscribe(UserQueries.GetUserOptions(userId).Build(), OnStateChanged);
 
 // For invalidation
 client.Invalidate(UserQueries.GetKey(userId));
@@ -324,8 +369,8 @@ synchronised, because `QueryComponentBase` already routes them through
 `InvokeAsync`.
 
 Disposal is enforced asymmetrically. Once the client is disposed, anything a live render
-reaches reports `ObjectDisposedException`: `Subscribe`, `QueryAsync`, `GetOrCreateQuery` and
-`ApplyOptions`. `QueryAsync` is async, so it faults its task rather than throwing from the
+reaches reports `ObjectDisposedException`: `Subscribe`, `QueryAsync`, `GetOrCreateQuery`,
+`Observe` and `QueryObserver.SetOptions`. `QueryAsync` is async, so it faults its task rather than throwing from the
 call. Tearing down stays silent: unsubscribing, cancelling
 and disposing an observer are no-ops. Blazor does not specify whether component disposal
 runs before or after the DI scope that owns the client, so a component tearing down second
