@@ -23,10 +23,6 @@ namespace RevalQuery.Blazor.Prerender;
 /// </remarks>
 public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
 {
-    /// <summary>
-    /// The key the whole payload is persisted under. One entry, not one per query, because the
-    /// framework reads it back on a trimmed runtime and only a string is safe to ask it for.
-    /// </summary>
     internal const string StateKey = "RevalQuery.PrerenderTransfer";
 
     private readonly PersistentComponentState _state;
@@ -80,16 +76,11 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
             return new ValueTask<PersistedQuery<TRes>?>((PersistedQuery<TRes>?)null);
         }
 
-        // A key reused for a different result type must produce nothing rather than an object
-        // of the wrong shape that happened to deserialise.
         if (entry.Type != typeof(TRes).ToString())
         {
             return new ValueTask<PersistedQuery<TRes>?>((PersistedQuery<TRes>?)null);
         }
 
-        // TryGetTypeInfo, because GetTypeInfo throws NotSupportedException for a type the
-        // resolver does not cover rather than returning null. A type the consumer left out of
-        // its context is a query the client fetches for itself, not a failure.
         if (!_serializerOptions.TryGetTypeInfo(typeof(TRes), out var resolved) ||
             resolved is not JsonTypeInfo<TRes> typeInfo)
         {
@@ -132,9 +123,6 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
         _subscription.Dispose();
     }
 
-    /// <summary>
-    /// Dehydrates every resolved query into the framework's store.
-    /// </summary>
     private Task PersistAsync()
     {
         var client = _serviceProvider.GetService<QueryClient>();
@@ -147,12 +135,6 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
         {
             var encoded = QueryKeyEncoder.TryEncode(snapshot.Key);
 
-            // A key the encoder cannot address, or a type the consumer's resolver does not
-            // know, is left for the client to fetch. Losing an optimisation is the right cost;
-            // throwing here would fail the whole render.
-            // TryGetTypeInfo, because GetTypeInfo throws NotSupportedException for an
-            // uncovered type rather than returning null, and this runs inside the prerender's
-            // persisting callback where throwing is the whole-render failure described above.
             if (encoded is null) continue;
             if (!_serializerOptions.TryGetTypeInfo(snapshot.DataType, out var typeInfo)) continue;
 
@@ -172,10 +154,6 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Reads what the prerender sent, once. Queries are created over the life of the client, so
-    /// the payload is taken on the first lookup and kept, not taken per lookup.
-    /// </summary>
     private Dictionary<string, TransferEntry> Arrived()
     {
         lock (_gate)
@@ -190,8 +168,6 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
 
     private Dictionary<string, TransferEntry>? Take()
     {
-        // string, not the payload type: the framework deserialises this one itself, and on a
-        // trimmed runtime anything needing reflected metadata comes back empty. See ADR 0004.
         if (!_state.TryTakeFromJson<string>(StateKey, out var payload) || payload is null) return null;
 
         try
@@ -201,7 +177,6 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
         }
         catch (JsonException)
         {
-            // A payload this version cannot read leaves every query to fetch normally
             return null;
         }
     }

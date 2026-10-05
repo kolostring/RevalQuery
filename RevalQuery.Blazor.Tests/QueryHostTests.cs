@@ -7,11 +7,6 @@ using RevalQuery.Core.Scope;
 
 namespace RevalQuery.Blazor.Tests;
 
-/// <summary>
-/// Real components rendered by bUnit, with handlers held open by completion sources. Nothing
-/// here sleeps: a test waits for the render it expects, and asserts on quiet by flushing the
-/// renderer's dispatcher rather than by waiting out a delay.
-/// </summary>
 public class QueryHostTests : TestContext
 {
     private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -24,15 +19,12 @@ public class QueryHostTests : TestContext
         return fx;
     }
 
-    // Everything queued on the dispatcher before this call has run when it returns
     private Task Flush(IRenderedFragment cut) => cut.InvokeAsync(() => { });
 
     private static string[] Items(IRenderedFragment cut) =>
         cut.FindAll(".item").Select(e => e.TextContent).ToArray();
 
     private static int WithData(IRenderedFragment cut) => Items(cut).Count(t => t.StartsWith("item"));
-
-    // ---- loading to data ----
 
     [Fact]
     public void A_Query_Goes_From_Loading_To_Data_Without_The_Page_Asking_To_Render()
@@ -56,8 +48,6 @@ public class QueryHostTests : TestContext
         var cut = RenderComponent<Basic>(p => p.Add(c => c.Id, 1));
         await Flush(cut);
 
-        // The notification raised inside Query() is forwarded like any other, so the page renders
-        // once more. That render only re-reads a settled key, which notifies nothing, so it ends there.
         Assert.Equal("item1", cut.Find("#out").TextContent);
         var renders = cut.Instance.Renders;
         Assert.InRange(renders, 1, 2);
@@ -85,8 +75,6 @@ public class QueryHostTests : TestContext
         Assert.Equal(renders, cut.Instance.Renders);
         Assert.Equal(1, fx.CallsFor(1));
     }
-
-    // ---- release ----
 
     [Fact]
     public void Switching_Key_Releases_The_Old_Query_And_Keeps_The_New_One()
@@ -134,8 +122,6 @@ public class QueryHostTests : TestContext
         });
     }
 
-    // ---- reads that happen away from the page's own render ----
-
     [Fact]
     public async Task Content_Rendered_In_A_Later_Batch_Is_Not_Released_And_Nothing_Refetches()
     {
@@ -151,7 +137,6 @@ public class QueryHostTests : TestContext
 
         Assert.All(new[] { 1, 2, 3 }, id => Assert.True(fx.Observed(id), $"{id} was released"));
 
-        // The page's own query and one per row, each fetched once at StaleTime zero
         Assert.Equal(4, fx.TotalCalls);
     }
 
@@ -162,8 +147,6 @@ public class QueryHostTests : TestContext
         var cut = RenderComponent<InChild>(p => p.Add(c => c.Kind, "popover").Add(c => c.Ids, [1, 2, 3]));
         cut.WaitForAssertion(() => Assert.Equal(3, WithData(cut)));
 
-        // The first sweep after the change may still count reads the popover made in its own
-        // batch before it, so key 2 goes at that sweep or the render after it.
         cut.SetParametersAndRender(p => p.Add(c => c.Ids, [1, 3]));
 
         cut.SetParametersAndRender(p => p.Add(c => c.Tick, 1));
@@ -187,7 +170,6 @@ public class QueryHostTests : TestContext
         for (var tick = 1; tick <= 3; tick++)
             cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick).Add(c => c.Gate, gate.Task));
 
-        // The child is showing nothing, so nothing read the rows, and nothing was released
         Assert.Empty(Items(cut));
         Assert.All(new[] { 1, 2, 3 }, id => Assert.True(fx.Observed(id)));
 
@@ -200,8 +182,6 @@ public class QueryHostTests : TestContext
         Assert.All(new[] { 1, 2, 3 }, id => Assert.Equal(0, fx.Eviction.RegisteredCount(id)));
     }
 
-    // ---- known limitation ----
-
     [Fact]
     public void A_Hidden_Branch_Keeps_Its_Query_Until_It_Renders_Again()
     {
@@ -211,7 +191,6 @@ public class QueryHostTests : TestContext
         cut.SetParametersAndRender(p => p.Add(c => c.Show, false));
         for (var tick = 1; tick <= 3; tick++) cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick));
 
-        // Documented: nothing says the branch will not come back, so its query stays
         Assert.Empty(cut.FindAll(".item"));
         Assert.True(fx.Observed(1));
 
@@ -220,8 +199,6 @@ public class QueryHostTests : TestContext
         Assert.Equal("item1", cut.Find(".item").TextContent);
         Assert.Equal(1, fx.CallsFor(1));
     }
-
-    // ---- mutations ----
 
     [Fact]
     public async Task A_Running_Mutation_Survives_Renders_And_Its_State_Reaches_The_Page()
@@ -235,7 +212,6 @@ public class QueryHostTests : TestContext
         cut.Find("button").Click();
         cut.WaitForAssertion(() => Assert.Equal("Fetching", cut.Find(".status").TextContent));
 
-        // Nothing reads it while it runs, through renders that each complete a sweep
         cut.SetParametersAndRender(p => p.Add(c => c.Show, false));
         for (var tick = 1; tick <= 3; tick++) cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick));
 
@@ -259,8 +235,6 @@ public class QueryHostTests : TestContext
 
         cut.WaitForAssertion(() => Assert.Equal("second", cut.Find(".data").TextContent));
     }
-
-    // ---- host ----
 
     [Fact]
     public void Disposing_The_Page_Disposes_The_Scope_And_Releases_Every_Query()
@@ -328,10 +302,6 @@ public class QueryHostTests : TestContext
         cut.WaitForState(() => cut.Instance.Events > events);
     }
 
-    /// <summary>
-    /// An owner that implements the handler itself and derives from nothing. It renders its host
-    /// in <see cref="HandleEventAsync"/>, as a component that cares about events would.
-    /// </summary>
     private sealed class HandOwner : IComponent, IHandleEvent
     {
         private RenderHandle _handle;
@@ -369,7 +339,6 @@ public class QueryHostTests : TestContext
 
 internal static class TestUtils
 {
-    /// <summary>Waits for a condition a notification cannot be awaited on, bounded only so a failure ends.</summary>
     public static async Task UntilAsync(Func<bool> condition)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));

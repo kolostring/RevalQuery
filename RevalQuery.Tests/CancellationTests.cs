@@ -8,10 +8,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// What cancelling a query means: the fetch stops, its result is dropped even when the handler
-/// never read its token, and the caller knows when both have happened.
-/// </summary>
 public class CancellationTests
 {
     [Fact]
@@ -21,9 +17,6 @@ public class CancellationTests
 
         var started = new TaskCompletionSource();
 
-        // No token anywhere in the handler, which is the case this test exists for. A query
-        // written like this used to apply its result long after the cancellation, because
-        // cancelling only signalled a token nothing was reading.
         var options = QueryOptions.Create<string>("ignored", async _ =>
         {
             started.TrySetResult();
@@ -34,18 +27,11 @@ public class CancellationTests
         var observer = client.Subscribe(options, () => { });
         await started.Task;
 
-        // The low-level trigger, which returns without waiting, so the write below happens
-        // while the handler is still running. That is the race: the handler finishes later and
-        // its result would land on top.
         observer.Query.Cancel();
         observer.Query.Data = "optimistic";
 
-        // Waited for rather than slept past. The handler has no token to observe, so it runs to
-        // its own end and the query goes idle only then; how long that takes depends on the
-        // machine, and the point of the test is what it does when it gets there.
         await TestUtils.WaitUntilAsync(() => observer.Query.IsIdle);
 
-        // Given a moment to land on top, which is what the defect did.
         await Task.Delay(100);
 
         Assert.Equal("optimistic", observer.Query.Data);
@@ -71,9 +57,6 @@ public class CancellationTests
 
         await client.CancelAsync("unwind");
 
-        // No delay and no polling in between. The moment the await returns, the fetch is over
-        // and nothing it produced can still land, which is what makes this usable before an
-        // optimistic update.
         Assert.True(observer.Query.IsIdle);
         Assert.Null(observer.Query.Data);
     }
@@ -98,8 +81,6 @@ public class CancellationTests
 
         Assert.True(started.Wait(TimeSpan.FromSeconds(2)));
 
-        // The prefix, not either key. CancelAsync covers the same set as Invalidate, so the
-        // two can be used on the same key.
         await client.CancelAsync(ValueTuple.Create("users"));
 
         Assert.True(first.Query.IsIdle);
@@ -130,8 +111,6 @@ public class CancellationTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
 
-        // The caller walked away; the fetch did not. Cancelling it too would throw away the
-        // cache entry that makes the next keystroke, or the backspace after it, instant.
         await TestUtils.WaitUntilAsync(() => client.FindQuery<string>("abandoned")?.Data is not null);
         Assert.Equal("from-network", client.FindQuery<string>("abandoned")!.Data);
     }
@@ -155,15 +134,12 @@ public class CancellationTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryAsync(options));
 
-        // The failure is still on the query, because nothing clears it until a fetch succeeds.
         Assert.True(client.FindQuery<string>("stale-error")!.IsException);
 
         var second = client.QueryAsync(options);
         await secondStarted.Task;
         await client.CancelAsync("stale-error");
 
-        // This call was cancelled. Reporting the earlier call's exception would tell the
-        // caller about an error its own fetch never hit.
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
     }
 
@@ -184,9 +160,6 @@ public class CancellationTests
                 return "from-network";
             }).Build();
 
-        // A component watching the key, disabled so that it does not fetch on its own. Built
-        // from its own options because a query captures the handler of whichever options
-        // created it, so both must carry the same one.
         var observer = client.Subscribe(
             QueryOptions.Create<string>("unmounted", Options(started, release).Handler)
                 .Enabled(false).Build(),
@@ -195,9 +168,6 @@ public class CancellationTests
         var fetch = client.QueryAsync(Options(started, release));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // The component unmounts. Its going away releases the worker, which used to cancel
-        // whatever that worker had in flight: a fetch this component never asked for and is
-        // not the one walking away from.
         observer.Dispose();
 
         release.TrySetResult();
@@ -218,9 +188,6 @@ public class CancellationTests
             started.TrySetResult();
             await release.Task;
 
-            // An aborted request surfacing as the handler's own exception type rather than an
-            // OperationCanceledException, which is what an HTTP client does with a socket the
-            // cancellation tore down.
             throw new IOException("socket aborted");
         }).ConfigureRetry(retry => retry.Retry(0)).Build();
 
@@ -231,8 +198,6 @@ public class CancellationTests
         release.TrySetResult();
         await cancelling.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // CancelAsync promises a cancelled query keeps its data and records no error. Recording
-        // one here also marked the query settled, which permanently blocked any later restore.
         var state = client.FindQuery<string>("aborted")!;
         Assert.False(state.IsException);
         Assert.Null(state.Exception);
@@ -265,9 +230,6 @@ public class CancellationTests
 
         var cancelling = client.CancelAsync("superseded");
 
-        // Arrives after the cancellation was requested and before the first fetch has finished
-        // unwinding. Joining that fetch would report it cancelled, which is an answer about a
-        // request made before this one existed.
         var second = client.QueryAsync(options);
 
         release.TrySetResult();
@@ -294,16 +256,11 @@ public class CancellationTests
         var fetch = client.QueryAsync(options);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // The scope owning the client is ending, so the handler is about to reach for services
-        // that are going away and nobody is left to receive what it produces. This is the one
-        // teardown that does cancel.
         client.Dispose();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => fetch.WaitAsync(TimeSpan.FromSeconds(5)));
     }
-
-    // ---------- helpers ----------
 
     private static QueryClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());

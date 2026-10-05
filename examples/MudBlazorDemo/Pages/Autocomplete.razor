@@ -59,19 +59,10 @@
                     async static ctx => await CatalogService.SearchAsync(
                         ctx.Key.Item2, ctx.CancellationToken ?? default))
                 .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
-                // Longer than the stale time, deliberately. Nothing subscribes to a query made
-                // this way, so it goes on the eviction list the moment its fetch settles. With
-                // the default GcTime of five minutes it would be collected exactly when its own
-                // freshness window ran out, and could never serve a hit.
                 .ConfigureCache(c => c.GcTime(TimeSpan.FromMinutes(30)))
                 .Build(),
-            // MudBlazor cancels a search the moment the next keystroke supersedes it. The token
-            // abandons this await, not the fetch: the request already on the wire runs on and
-            // its result still lands in the registry, ready for the backspace that follows.
             ct);
 
-        // MudAutocomplete awaits this from its own component, so nothing here repaints the page
-        // unless the page asks for it.
         await InvokeAsync(StateHasChanged);
 
         return results;

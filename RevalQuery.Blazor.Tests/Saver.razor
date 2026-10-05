@@ -12,7 +12,6 @@
     [Parameter] public bool Show { get; set; } = true;
     [Parameter] public int Tick { get; set; }
     public MutationState<Req, string>? Last;
-    // The handler holds this render's label, so a click after a re-render needs the re-read options
     MutationState<Req, string> Mut => Last = Q.Mutation(Handler(Label));
     MutationOptionsBuilder<Req, string> Handler(string label) =>
         MutationOptions.Create<Req, string>(async _ => { await Gate; return label; });

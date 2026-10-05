@@ -10,9 +10,6 @@ namespace RevalQuery.Tests;
 
 public class InvalidateDuringRestoreTests
 {
-    /// <summary>
-    /// A persistence adapter whose load blocks until the test releases it.
-    /// </summary>
     private sealed class GatedPersistence(PersistedQuery<string> entry) : IQueryPersistence
     {
         public readonly SemaphoreSlim LoadGate = new(0);
@@ -34,9 +31,6 @@ public class InvalidateDuringRestoreTests
     {
         var handlerCalls = 0;
 
-        // Fresh stored data and a long StaleTime again, so only the invalidation can force a
-        // fetch. The restore brings its own freshness, and the |= in TryRestore is what keeps
-        // the invalidation set rather than letting the stored value clear it.
         var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -50,9 +44,6 @@ public class InvalidateDuringRestoreTests
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(10)))
             .Build();
 
-        // Created without an observer, so the query cannot fetch: the invalidation below
-        // reaches a query whose CanFetch is false and has nowhere to act. It has to be
-        // remembered until something can act on it.
         client.GetOrCreateQuery(options);
 
         await persistence.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -64,7 +55,6 @@ public class InvalidateDuringRestoreTests
 
         Assert.Equal(0, handlerCalls);
 
-        // The first component to mount is the first thing able to act on the invalidation.
         using var observer = client.Subscribe(options, () => { });
 
         await TestUtils.WaitUntilAsync(() => Volatile.Read(ref handlerCalls) == 1);
@@ -76,8 +66,6 @@ public class InvalidateDuringRestoreTests
     {
         var handlerCalls = 0;
 
-        // Stored data is fresh, and StaleTime is long, so after the restore the query is
-        // NOT stale. Only the invalidation should be able to force a fetch.
         var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -95,19 +83,12 @@ public class InvalidateDuringRestoreTests
 
         await persistence.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        // Invalidate while the load is still outstanding.
         client.Invalidate("gated");
 
         persistence.LoadGate.Release();
 
         await Task.Delay(400);
 
-        // The invalidation fires a fetch straight away, because CanFetch is true while the
-        // restore is still outstanding. TryRestore then declines, since _hasSettled is set.
-        //
-        // This is load-bearing: anything that makes the query report FetchStatus.Fetching
-        // for the duration of the restore turns CanFetch false, drops the invalidation,
-        // and lets the stale restored value win. Keep this test if that changes.
         Assert.True(handlerCalls > 0,
             $"invalidation was lost across the restore; handler ran {handlerCalls} times");
         Assert.Equal("from-network", observer.Query.Data);

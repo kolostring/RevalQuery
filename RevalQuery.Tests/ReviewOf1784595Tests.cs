@@ -14,21 +14,13 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// A result type deliberately left out of <see cref="WidgetContext"/>, standing in for the
-/// query a consumer forgot to add to its serializer context.
-/// </summary>
 public sealed record Gizmo(int Id);
 
-/// <summary>
-/// Defects found reviewing 1784595, each one a case the suite did not reach before.
-/// </summary>
 public class ReviewOf1784595Tests
 {
     private static readonly JsonSerializerOptions Serializer =
         new() { TypeInfoResolver = WidgetContext.Default };
 
-    // A type the consumer's resolver does not cover must cost that one query, not the render.
     [Fact]
     public async Task Persisting_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
@@ -47,8 +39,6 @@ public class ReviewOf1784595Tests
         await client.QueryAsync(
             QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
 
-        // GetTypeInfo throws NotSupportedException here rather than returning null, so the
-        // persisting callback failed and took the whole prerender with it.
         await client.QueryAsync(
             QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build());
 
@@ -61,11 +51,9 @@ public class ReviewOf1784595Tests
         Assert.DoesNotContain("uncovered", payload);
     }
 
-    // The load half of the same mistake: silent skip, not an exception swallowed upstream.
     [Fact]
     public async Task Loading_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
-        // Written by a server whose resolver covered Gizmo; read by a client whose does not.
         var serverState = PersistentStateHarness.CreateEmpty(out var written);
 
         var serverServices = new ServiceCollection();
@@ -91,7 +79,6 @@ public class ReviewOf1784595Tests
         Assert.Null(loaded);
     }
 
-    // One instance is registered under two service types, so the scope disposes it twice.
     [Fact]
     public void Disposing_The_Prerender_Transfer_Twice_Is_Harmless()
     {
@@ -105,8 +92,6 @@ public class ReviewOf1784595Tests
         using var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
 
-        // Both resolutions, which is what puts the one instance on the scope's disposal list
-        // twice. Disposing the scope then calls Dispose on it twice.
         Assert.Same(
             scope.ServiceProvider.GetRequiredService<PrerenderTransfer>(),
             scope.ServiceProvider.GetRequiredService<IQueryPersistence>());
@@ -114,7 +99,6 @@ public class ReviewOf1784595Tests
         scope.Dispose();
     }
 
-    // Dispose stops the loop without waiting, so it cannot dispose the source itself.
     [Fact]
     public async Task Stopping_The_Collector_After_Disposing_It_Is_Harmless()
     {
@@ -125,13 +109,10 @@ public class ReviewOf1784595Tests
         collector.Dispose();
         collector.Dispose();
 
-        // StopAsync returns straight away, because Dispose already marked the collector
-        // stopped. The loop it left running is the one that disposes the source.
         await collector.StopAsync();
         await collector.DisposeAsync();
     }
 
-    // A delay calculator is the caller's code, not the handler, and its failure is not a retry.
     [Fact]
     public async Task A_Negative_Retry_Delay_Does_Not_Replace_The_Handler_Failure()
     {

@@ -23,8 +23,6 @@ public sealed class QueryObserver<TKey, TRes> : IQueryObserver, IDisposable wher
     private readonly QueryClient _client;
     private readonly Action _onStateHasChanged;
 
-    // Held by everything that moves the observer between queries, so the query it reports and
-    // the one whose notifications it forwards are never read apart.
     private readonly object _gate = new();
 
     private QueryState<TKey, TRes> _query;
@@ -49,13 +47,6 @@ public sealed class QueryObserver<TKey, TRes> : IQueryObserver, IDisposable wher
     /// </remarks>
     public IQueryState<TRes> Query => Volatile.Read(ref _query);
 
-    /// <summary>
-    /// Creates a new QueryObserver subscription.
-    /// </summary>
-    /// <param name="client">The client that owns the registry this observer moves within.</param>
-    /// <param name="query">The query state to subscribe to.</param>
-    /// <param name="onStateHasChanged">Callback to invoke StateHasChanged on the component.</param>
-    /// <param name="enabled">Initial enabled state (default: true).</param>
     internal QueryObserver(QueryClient client, QueryState<TKey, TRes> query, Action onStateHasChanged, bool enabled)
     {
         _client = client;
@@ -102,21 +93,12 @@ public sealed class QueryObserver<TKey, TRes> : IQueryObserver, IDisposable wher
         }
     }
 
-    // What follows is the client's side of a switch. They are internal because the order they
-    // are called in, and the locks held across them, are the client's to get right.
-
     internal object Gate => _gate;
 
     internal QueryState<TKey, TRes> Current => _query;
 
     internal void ThrowIfDisposedLocked() => ObjectDisposedException.ThrowIf(_isDisposed, this);
 
-    /// <summary>
-    /// Starts watching a query, and returns what it was watching before so the caller can let
-    /// go of it. The handler is made for this query alone, so a notification already on its
-    /// way from one the observer has since left is dropped rather than forwarded as though the
-    /// current query had changed.
-    /// </summary>
     internal (QueryState<TKey, TRes> Query, Action Handler)? Attach(QueryState<TKey, TRes> query)
     {
         var handler = new Action(() =>
@@ -135,10 +117,6 @@ public sealed class QueryObserver<TKey, TRes> : IQueryObserver, IDisposable wher
         return previous;
     }
 
-    /// <summary>
-    /// Stops watching a query. Unsubscribing may release the query's worker and put it on the
-    /// eviction list, which is the same path a disposal takes.
-    /// </summary>
     internal void Detach(QueryState<TKey, TRes> query, Action handler)
     {
         query.OnChanged -= handler;

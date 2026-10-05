@@ -3,20 +3,8 @@ using RevalQuery.Core.Abstractions.Persistence;
 
 namespace RevalQuery.Core.Persistence;
 
-/// <summary>
-/// Presents several persistence stores to the client as one.
-/// </summary>
-/// <remarks>
-/// Lets a prerender transfer and a durable store of the consumer's own coexist rather than one
-/// replacing the other. A load takes the first store that has the key, so registration order is
-/// preference order; a save goes to every store. One store failing does not stop the others,
-/// because a store is a third party and reporting its own failures is its own job.
-/// </remarks>
 internal sealed class CompositeQueryPersistence(IReadOnlyList<IQueryPersistence> stores) : IQueryPersistence
 {
-    /// <summary>
-    /// Returns the single store, one wrapping all of them, or null when there are none.
-    /// </summary>
     public static IQueryPersistence? From(IEnumerable<IQueryPersistence> stores)
     {
         var list = stores as IReadOnlyList<IQueryPersistence> ?? [.. stores];
@@ -39,7 +27,6 @@ internal sealed class CompositeQueryPersistence(IReadOnlyList<IQueryPersistence>
             }
             catch
             {
-                // Try the next store rather than leaving the query with nothing
             }
         }
 
@@ -56,7 +43,6 @@ internal sealed class CompositeQueryPersistence(IReadOnlyList<IQueryPersistence>
             }
             catch
             {
-                // One store refusing the write must not cost the others theirs
             }
         }
     }

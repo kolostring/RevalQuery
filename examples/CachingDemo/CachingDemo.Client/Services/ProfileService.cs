@@ -1,9 +1,5 @@
 namespace CachingDemo.Client.Services;
 
-/// <summary>
-/// A user directory and its orders, standing in for two endpoints where the second needs an
-/// id the first has to supply.
-/// </summary>
 public static class ProfileService
 {
     private static readonly string[] Users = ["ada", "grace", "linus"];
@@ -15,14 +11,12 @@ public static class ProfileService
         ["linus"] = ["Penguin plushie, 2 units"],
     };
 
-    /// <summary>Lists the users. Slow on purpose, so the dependent query is visibly blocked.</summary>
     public static async Task<List<string>> GetUsersAsync(CancellationToken ct = default)
     {
         await Task.Delay(800, ct);
         return [.. Users];
     }
 
-    /// <summary>Lists one user's orders.</summary>
     public static async Task<List<string>> GetOrdersAsync(string user, CancellationToken ct = default)
     {
         await Task.Delay(600, ct);

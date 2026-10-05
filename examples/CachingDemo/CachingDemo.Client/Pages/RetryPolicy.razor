@@ -75,9 +75,6 @@
     private int _runCount;
     private string? _runId;
 
-    // Snapshotted on the click rather than read live. Both are part of the query, and leaving
-    // them bound to the inputs would let typing in a box rebuild the key or the retry options
-    // of a run already under way.
     private int _runRetries;
     private int _runFailures;
 
@@ -88,17 +85,11 @@
     private void Run()
     {
         _runCount++;
-        // Clamped: a negative count is not validated by the library today, and it leaves the
-        // retry policy with no attempt to make at all.
         _runRetries = Math.Max(0, Retries);
         _runFailures = Math.Max(0, Failures);
-        // The run id is part of the key, so every click is a different query rather than a
-        // cache hit on the last one, and it is also the counter the handler increments.
         _runId = $"run-{_runCount}-{_runRetries}-{_runFailures}";
     }
 
-    // Disabled until the first Run, then enabled with a key that changes per run. Enabled is
-    // read on every render from 0.4.0, which is what lets a toggle like this take effect.
     IQueryState<string> Attempt => Q.Query(
         QueryOptions
             .Create<(string, string, int), string>(
@@ -106,8 +97,6 @@
                 async static ctx => await FlakyService.LoadAsync(
                     ctx.Key.Item2, ctx.Key.Item3, ctx.CancellationToken ?? default))
             .Enabled(_runId is not null)
-            // A short, flat delay keeps the demo watchable. The default is exponential
-            // backoff starting at two seconds.
             .ConfigureRetry(retry => retry.Retry(_runRetries, static _ => TimeSpan.FromMilliseconds(400)))
             .Build());
 

@@ -47,14 +47,6 @@
 
     private string SearchTerm { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Fills the cache during the prerender only, so the browser has the first result set the
-    /// moment it becomes interactive instead of waiting a second for its own request.
-    /// </summary>
-    /// <remarks>
-    /// Guarded on IsInteractive because this method runs twice, once on the server and once in
-    /// the browser. Fetching in both would do the work the transfer exists to avoid.
-    /// </remarks>
     protected override async Task OnInitializedAsync()
     {
         if (RendererInfo.IsInteractive) return;
@@ -65,8 +57,6 @@
         }
         catch
         {
-            // SearchAsync fails one time in ten on purpose. A prerender that cannot fill the
-            // cache is not a broken page: the browser fetches for itself.
         }
     }
 
@@ -78,7 +68,5 @@
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build();
 
-    // Passing the token through is what lets Cancel, and a key change, actually stop a fetch.
-    // Dropping it leaves the request running and its result arriving anyway.
     IQueryState<List<string>> Suggestions => Q.Query(SuggestionsFor(SearchTerm));
 }

@@ -4,22 +4,12 @@ using RevalQuery.Core.Query;
 
 namespace RevalQuery.Core.Registry;
 
-/// <summary>
-/// The in-memory structure holding every live query state, organised hierarchically by
-/// query key. Not synchronised: <see cref="QueryClient"/> owns the lock covering it.
-/// </summary>
 internal sealed class QueryRegistry
 {
-    /// <summary>
-    /// Stands in for a null key segment, because Dictionary rejects null keys.
-    /// </summary>
     private static readonly object NullSegment = new();
 
     public RegistryNode Root { get; private set; } = new();
 
-    /// <summary>
-    /// Returns the node for this key, creating the path to it when missing.
-    /// </summary>
     public RegistryNode GetOrCreateNode(ITuple key)
     {
         var current = Root;
@@ -40,9 +30,6 @@ internal sealed class QueryRegistry
         return current;
     }
 
-    /// <summary>
-    /// Returns the node for this key, or null when the path does not exist.
-    /// </summary>
     public RegistryNode? PeekNode(ITuple key)
     {
         var current = Root;
@@ -57,19 +44,10 @@ internal sealed class QueryRegistry
         return current;
     }
 
-    /// <summary>
-    /// Removes the node for this key and every ancestor left holding neither a state nor children.
-    /// </summary>
     public void PruneNode(ITuple key) => PruneRecursive(Root, key, 0);
 
-    /// <summary>
-    /// Drops every node. Used when the client is disposed.
-    /// </summary>
     public void Clear() => Root = new RegistryNode();
 
-    /// <summary>
-    /// Collects the states held by this node and everything beneath it.
-    /// </summary>
     public static List<IQueryState> StatesFrom(RegistryNode node)
     {
         var result = new List<IQueryState>();
@@ -77,9 +55,6 @@ internal sealed class QueryRegistry
         return result;
     }
 
-    /// <summary>
-    /// Collects the workers held by this node and everything beneath it.
-    /// </summary>
     public static List<IQueryWorker> WorkersFrom(RegistryNode node)
     {
         var result = new List<IQueryWorker>();
@@ -100,8 +75,6 @@ internal sealed class QueryRegistry
         return IsRemovable(current);
     }
 
-    // A node still holding a worker is not empty. Pruning one would leave the worker with
-    // nothing to dispose it, still polling a query the registry no longer holds.
     private static bool IsRemovable(RegistryNode node) =>
         node.State is null && node.Worker is null && node.Children.Count == 0;
 

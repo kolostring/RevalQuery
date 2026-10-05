@@ -16,11 +16,6 @@ public sealed record Widget(int Id, string Name);
 [JsonSerializable(typeof(string))]
 internal sealed partial class WidgetContext : JsonSerializerContext;
 
-/// <summary>
-/// Covers moving a prerender's resolved queries to the interactive client: the server
-/// dehydrates what it fetched, the client renders from it instead of fetching the same keys
-/// again, and data that was already stale stays stale.
-/// </summary>
 public class PrerenderTransferTests
 {
     private static readonly JsonSerializerOptions Serializer =
@@ -60,7 +55,6 @@ public class PrerenderTransferTests
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope().ServiceProvider;
 
-        // Resolving the transfer first is what registers its persisting callback.
         var transfer = scope.GetRequiredService<PrerenderTransfer>();
 
         return (scope.GetRequiredService<QueryClient>(), transfer, provider);
@@ -82,16 +76,11 @@ public class PrerenderTransferTests
         await PersistentStateHarness.PersistAsync(serverState);
         Assert.NotEmpty(written);
 
-        // The server's scope is gone. A WebAssembly client boots with an empty registry and only
-        // what the prerender sent.
         serverProvider.Dispose();
 
         var clientState = PersistentStateHarness.CreateFrom(written);
         var (client, _, clientProvider) = Host(clientState);
 
-        // A stale time is what makes transferred data worth reusing. With the default of zero
-        // every query is stale the moment it lands, so the transfer would remove the loading
-        // flash but still refetch, exactly as TanStack does with staleTime 0.
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
         await Task.Delay(300);
 
@@ -102,10 +91,6 @@ public class PrerenderTransferTests
         clientProvider.Dispose();
     }
 
-    // The transfer used to carry invalidation only by accident: NotifyInvalidated moved the
-    // timestamp to MinValue, and MinValue crossed as a timestamp. Dropping that move removed
-    // the accident, so the flag now crosses on its own. A query the prerender invalidated must
-    // arrive invalidated, however fresh its data looks and however long the client's StaleTime.
     [Fact]
     public async Task An_Invalidation_From_The_Prerender_Crosses_To_The_Client()
     {
@@ -117,7 +102,6 @@ public class PrerenderTransferTests
 
         await server.QueryAsync(ServerQuery("widget"));
 
-        // Fetched a moment ago, so nothing about the clock says this needs refetching.
         server.Invalidate("widget");
 
         await PersistentStateHarness.PersistAsync(serverState);
@@ -137,8 +121,6 @@ public class PrerenderTransferTests
         clientProvider.Dispose();
     }
 
-    // The control: the same transfer without the invalidation is reused, so the test above is
-    // about the flag crossing and not about the client refetching regardless.
     [Fact]
     public async Task A_Transfer_Without_An_Invalidation_Is_Reused()
     {
@@ -178,8 +160,6 @@ public class PrerenderTransferTests
         await PersistentStateHarness.PersistAsync(serverState);
         serverProvider.Dispose();
 
-        // Rewrite the transferred timestamp to long ago, which is what a slow prerender or a
-        // client that took its time booting produces.
         var payload = System.Text.Encoding.UTF8.GetString(written[TransferStateKey()]);
         written[TransferStateKey()] = System.Text.Encoding.UTF8.GetBytes(
             payload.Replace(FindTimestamp(payload), "2020-01-01T00:00:00+00:00"));
@@ -189,12 +169,8 @@ public class PrerenderTransferTests
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
 
-        // Polled rather than slept on. The refetch waits out a restore, and a fixed delay that
-        // covers that on an idle machine does not cover it under a full suite.
         await TestUtils.WaitUntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
 
-        // The transfer landed and was then replaced, because the data it carried was older than
-        // the stale time. Restoring LastUpdatedAt verbatim is what makes that decision possible.
         Assert.Equal(1, _clientCalls);
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
 
@@ -217,7 +193,6 @@ public class PrerenderTransferTests
         await PersistentStateHarness.PersistAsync(serverState);
         serverProvider.Dispose();
 
-        // Nothing resolved, so nothing to send. The client fetches for itself.
         Assert.Empty(written);
 
         var clientState = PersistentStateHarness.CreateFrom(written);
@@ -225,9 +200,6 @@ public class PrerenderTransferTests
 
         var observer = client.Subscribe(ClientQuery("widget"), () => { });
 
-        // Polled rather than slept for a fixed 300 ms. This test waits for something to
-        // arrive, and a machine busy with the stress loops elsewhere in this suite can take
-        // longer than any delay chosen in advance.
         await TestUtils.WaitUntilAsync(() => observer.Query.Data is not null, timeoutMs: 15_000);
 
         Assert.Equal(1, _clientCalls);
@@ -243,8 +215,6 @@ public class PrerenderTransferTests
         var serverState = PersistentStateHarness.CreateEmpty(out var written);
         var (server, _, serverProvider) = Host(serverState);
 
-        // ("k", "1") and ("k", 1) print the same; ("a/b", "c") and ("a", "b/c") join the same.
-        // The encoding has to keep all four apart or one query serves another's data.
         await server.QueryAsync(Named(("k", "1"), "text one"));
         await server.QueryAsync(Named(("k", 1), "number one"));
         await server.QueryAsync(Named(("a/b", "c"), "slash left"));
@@ -268,10 +238,6 @@ public class PrerenderTransferTests
         where TKey : System.Runtime.CompilerServices.ITuple =>
         QueryOptions.Create<TKey, Widget>(key, _ => Task.FromResult(new Widget(0, name))).Build();
 
-    /// <summary>
-    /// Subscribes with a handler that would be obvious if it ran, waits for the restore, and
-    /// returns whatever name the query ended up holding.
-    /// </summary>
     private static async Task<string?> Restored<TKey>(QueryClient client, TKey key)
         where TKey : System.Runtime.CompilerServices.ITuple
     {
@@ -317,8 +283,6 @@ public class PrerenderTransferTests
         await client.QueryAsync(ServerQuery("widget"));
         await Task.Delay(200);
 
-        // The transfer takes the IQueryPersistence slot too, so a store registered alongside it
-        // has to still see the save.
         Assert.Equal(1, store.Saves);
 
         provider.Dispose();

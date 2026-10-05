@@ -18,11 +18,6 @@ public sealed class MutationObserver<TParams, TRes> : IDisposable where TParams 
 
     private readonly Action _onStateHasChanged;
 
-    /// <summary>
-    /// Creates a MutationObserver subscription.
-    /// </summary>
-    /// <param name="state">The mutation state to subscribe to.</param>
-    /// <param name="onStateHasChanged">Callback to invoke StateHasChanged.</param>
     internal MutationObserver(MutationState<TParams, TRes> state, Action onStateHasChanged)
     {
         State = state;

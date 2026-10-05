@@ -86,10 +86,6 @@ public sealed class QueryClient : IDisposable
         lock (_gate) return GetOrCreateQueryLocked(queryOptions);
     }
 
-    /// <summary>
-    /// Returns the state for these options, creating and wiring it when the key is free.
-    /// Callers hold the lock.
-    /// </summary>
     private QueryState<TKey, TRes> GetOrCreateQueryLocked<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple
     {
@@ -117,12 +113,8 @@ public sealed class QueryClient : IDisposable
         node.State = newState;
         WireStateLifecycle(newState);
 
-        // Off the lock from the start: an adapter is free to block, and holding the registry
-        // while it does would stall every other query.
         if (_persistence is not null)
         {
-            // Flagged here rather than inside the task, so the query never reports itself
-            // empty in the window between being created and the load starting.
             newState.BeginRestore();
             _ = Task.Run(() => LoadPersistedAsync(newState));
         }
@@ -174,8 +166,6 @@ public sealed class QueryClient : IDisposable
 
         if (workers.Count == 0) return Task.CompletedTask;
 
-        // Every cancellation is requested before any unwind is awaited, so a slow handler on
-        // one query does not leave the next one fetching while this call waits.
         return Task.WhenAll(workers.Select(worker => worker.CancelCurrentFetchAsync()));
     }
 
@@ -237,49 +227,24 @@ public sealed class QueryClient : IDisposable
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        // Registered before anything is awaited, so a key already taken by another result type
-        // is reported on the first task this method returns rather than discovered later by
-        // whoever happens to subscribe. This method is async, so that report is a faulted task
-        // and not a throw from the call: a caller discarding the task sees it only through the
-        // catch they write around the discard.
         var (state, _) = PrepareRun(options);
 
-        // Checked here rather than left to the WaitAsync below, which only sees a token
-        // cancelled while a fetch is actually outstanding. A caller who has already walked
-        // away must not be handed data because the registry happened to be warm, or because
-        // the handler happened to complete synchronously. The release is the same one both
-        // exits below do: PrepareRun registered a worker and nothing has subscribed to it.
         if (cancellationToken.IsCancellationRequested)
         {
             ReleaseIfUnobserved(state);
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        // Judged against what the query holds now. An outstanding restore is deliberately not
-        // waited for: ADR 0006 has restores never hold a fetch up, and an adapter that is slow
-        // or wedged would otherwise hang every imperative caller behind it. The race is already
-        // handled at the other end, where TryRestore refuses to overwrite a fetch that landed
-        // first. The cost is that stored data misses the freshness test on the very first call
-        // for a key, and that call fetches instead.
         if (!state.IsStale(_defaultOptions.FetchOptions.Apply(options.FetchOptions)))
         {
-            // Nothing subscribed here, so the query goes back on the eviction list exactly as
-            // it would after a fetch.
             ReleaseIfUnobserved(state);
             return state.Data!;
         }
 
-        // WaitAsync rather than a token passed into the run: the fetch is shared with every
-        // other caller joined to it, and one caller walking away must not take it from them.
         var (ran, outcome) = await RunAndReleaseAsync(options).WaitAsync(cancellationToken);
 
-        // Checked before the exception, which belongs to the query rather than to this call.
-        // A fetch cancelled while an older failure still sat on the state would otherwise
-        // throw that failure, reporting an error this call never hit.
         if (outcome == FetchOutcome.Cancelled)
         {
-            // Returning Data here would hand back null, or another caller's older result, as
-            // though this call had fetched it. The caller asked for data and there is none.
             throw new OperationCanceledException(
                 $"Query {DescribeKey(ran.Key)} was cancelled before it produced data.");
         }
@@ -359,9 +324,6 @@ public sealed class QueryClient : IDisposable
         QueryObserver<TKey, TRes> observer;
         QueryWorker<TKey, TRes> worker;
 
-        // Registering the query, subscribing to it and giving it a worker happen together.
-        // Split apart, an eviction landing in the gap would drop the state a component is
-        // about to render, and the next subscriber to the same key would get a second one.
         lock (_gate)
         {
             var state = GetOrCreateQueryLocked(options);
@@ -376,10 +338,6 @@ public sealed class QueryClient : IDisposable
             worker = GetOrCreateWorker(state);
         }
 
-        // Subscribing to a query somebody else created has to adopt these options, not inherit
-        // theirs. Without this a component only reaches SetOptions on its second render, so
-        // until then it runs on whatever a route loader or an earlier component asked for --
-        // and a NeverStale() loader would leave it permanently unrefreshable.
         worker.ApplyOptions(options, observer);
 
         worker.RunIfStale();
@@ -511,27 +469,6 @@ public sealed class QueryClient : IDisposable
         return slot.State;
     }
 
-    /// <summary>
-    /// Points an observer at the query its new options name: the one it is on when the key is
-    /// unchanged, another when it is not.
-    /// </summary>
-    /// <remarks>
-    /// <para>Called on every render, so the same-key path is the common one and must stay
-    /// cheap: it adopts the options and does nothing else unless that made the query newly
-    /// enabled or changed its polling interval, both of which the worker decides.</para>
-    /// <para>A move resolves the new query before anything is released, so a result type clash
-    /// throws with the observer exactly where it was. It attaches to the new query in the same
-    /// lock hold that finds it, for the reason <see cref="Subscribe"/> does everything in one:
-    /// an eviction landing in a gap would drop the state the observer is about to report. Only
-    /// then is the old query released, the same release a disposal makes. The observer is
-    /// briefly subscribed to both, which costs nothing: it forwards notifications from the new
-    /// one alone.</para>
-    /// <para>Does not cancel a fetch the old query has in flight. Releasing its last observer
-    /// stops its polling and puts it on the eviction list, and its worker, which cannot be
-    /// disposed under a running fetch, is let go once the fetch settles.</para>
-    /// <para>An observer lock is taken first and the registry's second, and never the other
-    /// way round, so a switch and a disposal of the same observer cannot interleave.</para>
-    /// </remarks>
     internal void SetObserverOptions<TKey, TRes>(
         QueryObserver<TKey, TRes> observer,
         QueryOptions<TKey, TRes> queryOptions)
@@ -550,24 +487,15 @@ public sealed class QueryClient : IDisposable
 
             lock (_gate)
             {
-                // Throws for a disposed client and for a clash of result types, in both cases
-                // before anything has been attached or detached.
                 var state = GetOrCreateQueryLocked(options);
 
                 if (!ReferenceEquals(state, observer.Current))
                 {
-                    // Set before attaching so the query reads as enabled the moment it has
-                    // an observer. The worker starts polling from its own state, not from
-                    // noticing this as a toggle.
                     observer.Enabled = options.Enabled;
                     left = observer.Attach(state);
                     moved = true;
                 }
 
-                // Also the still-in-registry check for an unchanged key: the state came from
-                // the registry a line ago, so a worker made for it has an owner. An observer
-                // whose state was evicted, which cannot happen while it is subscribed to it,
-                // would have found a fresh state here and moved to it.
                 worker = GetOrCreateWorker(state);
             }
 
@@ -576,8 +504,6 @@ public sealed class QueryClient : IDisposable
 
         worker.ApplyOptions(options, observer);
 
-        // A new subscription fetches if its data is stale. An unchanged key does not: the
-        // worker has already decided whether turning the query on warrants one.
         if (moved) worker.RunIfStale();
     }
 
@@ -604,42 +530,20 @@ public sealed class QueryClient : IDisposable
 
         _evictionPolicy.OnEvictionRequired -= HandleEviction;
 
-        // Cancelled before being disposed, which disposal alone no longer does. The scope that
-        // owns this client is ending, so a handler still running is about to reach for services
-        // that are going away, and no caller is left to receive what it produces.
         foreach (var worker in workers)
         {
             worker.CancelCurrentFetch();
             worker.Dispose();
         }
 
-        // Only stop a policy this client created. An injected one is the container's to dispose.
         if (_ownsEvictionPolicy) _ = _evictionPolicy.StopAsync();
     }
 
-    /// <summary>
-    /// Refuses work that would put anything back into a registry this client has already
-    /// emptied. Callers hold the lock, so the answer cannot change under them.
-    /// </summary>
-    /// <remarks>
-    /// Guards the entry points a live render reaches: Subscribe, QueryAsync,
-    /// GetOrCreateQuery, SetOptions and CreateMutation. A component rendering against a
-    /// disposed client is a bug, and one that silently created a query would also create a
-    /// worker with nothing left to dispose it.
-    ///
-    /// Teardown is deliberately not guarded. Unsubscribe, CancelAsync and observer disposal
-    /// stay silent no-ops, because Blazor does not specify whether component disposal runs
-    /// before or after the DI scope that owns this client.
-    /// </remarks>
     private void ThrowIfDisposedLocked()
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
     }
 
-    /// <summary>
-    /// Registers a query and its worker for a run that no observer asked for.
-    /// </summary>
-    /// <param name="options">Options that have already been through the plugin pipeline.</param>
     private (QueryState<TKey, TRes> State, QueryWorker<TKey, TRes> Worker) PrepareRun<TKey, TRes>(
         QueryOptions<TKey, TRes> options) where TKey : ITuple
     {
@@ -650,22 +554,11 @@ public sealed class QueryClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Runs a query for a caller with no observer of its own, releasing it again afterwards.
-    /// </summary>
-    /// <returns>The state that was run, and what the run did.</returns>
     private async Task<(QueryState<TKey, TRes> State, FetchOutcome Outcome)> RunAndReleaseAsync<TKey, TRes>(
         QueryOptions<TKey, TRes> options) where TKey : ITuple
     {
-        // A worker released by whoever else was using this query refuses to run. Take a fresh
-        // one rather than returning data the caller never actually fetched.
         for (var attempt = 0; attempt < MaxRunAttempts; attempt++)
         {
-            // State and worker are taken together, every attempt, because an eviction can land
-            // between two of them. It prunes the node, and a worker created afterwards for the
-            // evicted state would sit on a node the registry has since refilled with a second
-            // state for the same key. The next subscriber would then get that second state and
-            // a worker driving the first, and would wait for a fetch that never reaches it.
             var (state, worker) = PrepareRun(options);
 
             var outcome = FetchOutcome.NotRun;
@@ -687,14 +580,9 @@ public sealed class QueryClient : IDisposable
             $"{MaxRunAttempts} times while the fetch was starting.");
     }
 
-    /// <summary>
-    /// Returns the worker for a state, creating it when missing. Callers hold the lock.
-    /// </summary>
     private QueryWorker<TKey, TRes> GetOrCreateWorker<TKey, TRes>(QueryState<TKey, TRes> state)
         where TKey : ITuple
     {
-        // Also covers the retry loop in RunAndReleaseAsync, which is the one caller that can
-        // arrive here after the client was disposed under an in-flight fetch.
         ThrowIfDisposedLocked();
 
         var node = _registry.GetOrCreateNode(state.Key);
@@ -704,19 +592,12 @@ public sealed class QueryClient : IDisposable
         var worker = new QueryWorker<TKey, TRes>(
             _defaultOptions, _serviceProvider, state, _persistence);
 
-        // A release the worker refused because it was fetching is retried here, once that
-        // fetch has settled.
         worker.OnReleaseDue += () => DisposeWorker(state.Key);
         node.Worker = worker;
 
         return worker;
     }
 
-    /// <summary>
-    /// Wires a state's subscriber lifecycle once, when it enters the registry. A query with
-    /// no observers stops its worker and goes on the eviction policy's list; a query that
-    /// gains one comes back off it.
-    /// </summary>
     private void WireStateLifecycle<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
         state.OnFirstSubscriberAdded += key => _evictionPolicy.CancelEviction(key);
@@ -727,10 +608,6 @@ public sealed class QueryClient : IDisposable
         };
     }
 
-    /// <summary>
-    /// Stops the worker for a query nobody is watching and puts the query on the eviction list.
-    /// Used after a QueryAsync call, which creates no observer of its own.
-    /// </summary>
     private void ReleaseIfUnobserved<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
         if (state.HasObservers) return;
@@ -751,10 +628,6 @@ public sealed class QueryClient : IDisposable
             worker = node.Worker;
             if (worker is null) return;
 
-            // A worker with a fetch in flight keeps its node. Clearing it would leave that
-            // fetch running with nothing pointing at it: CancelAsync could no longer reach it,
-            // and the next caller would be handed a second worker that fetched alongside it.
-            // The worker asks again once its fetch settles.
             if (!worker.TryRelease()) return;
 
             node.Worker = null;
@@ -778,9 +651,6 @@ public sealed class QueryClient : IDisposable
             _registry.PruneNode(key);
         }
 
-        // Cancelled, unlike the release above. The state is leaving the registry, so a fetch
-        // still running has nowhere left to land, and letting it finish would write data to
-        // persistence for a query the cache has already forgotten.
         worker?.CancelCurrentFetch();
         worker?.Dispose();
     }
@@ -794,9 +664,6 @@ public sealed class QueryClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Loads a query's data from persistence, unless a fetch has already produced some.
-    /// </summary>
     private async Task LoadPersistedAsync<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
         try
@@ -809,32 +676,20 @@ public sealed class QueryClient : IDisposable
             }
             catch
             {
-                // A persistence adapter failing leaves the query to fetch normally.
-                // Reporting the failure is the adapter's own job.
                 return;
             }
 
             if (persisted is null) return;
 
-            // TryRestore refuses once a fetch has landed, so the older stored data cannot
-            // overwrite a fresher result that arrived while this load was in flight.
             state.TryRestore(persisted.Data, persisted.Freshness);
         }
         finally
         {
-            // One notification for the whole restore, after it ends. Ending it runs whatever
-            // decision was deferred to it, so a query that found nothing stored is already
-            // fetching by the time observers hear anything, and a query that found fresh data
-            // is already resolved. Neither reports a moment with nothing in progress.
             state.CompleteRestore();
             NotifyChangedSafely(state);
         }
     }
 
-    /// <summary>
-    /// Notifies observers without letting one of them break the restore. This runs on a
-    /// detached task, so an exception escaping here would go unobserved.
-    /// </summary>
     private static void NotifyChangedSafely<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
     {
         try
@@ -843,7 +698,6 @@ public sealed class QueryClient : IDisposable
         }
         catch
         {
-            // An observer that cannot render is the observer's problem, not the query's
         }
     }
 

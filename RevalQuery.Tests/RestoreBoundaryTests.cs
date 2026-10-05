@@ -9,10 +9,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// A restore ends when the query knows what follows the stored data, not when the store
-/// answers. See docs/adr/0006.
-/// </summary>
 public class RestoreBoundaryTests
 {
     private sealed class Store(PersistedQuery<string>? entry, TimeSpan delay) : IQueryPersistence
@@ -27,16 +23,12 @@ public class RestoreBoundaryTests
             => ValueTask.CompletedTask;
     }
 
-    /// <summary>
-    /// Every state an observer was shown, sampled at the moment it was notified.
-    /// </summary>
     private sealed record Frame(bool IsLoading, bool IsRestoring, bool IsFetching, bool IsPending);
 
     private static (List<Frame> Frames, QueryObserver<ValueTuple<string>, string> Observer) Watch(
         QueryClient client, QueryOptions<ValueTuple<string>, string> options)
     {
         var frames = new List<Frame>();
-        // Not System.Threading.Lock, which the net8.0 target of this project cannot see.
         var gate = new object();
         QueryObserver<ValueTuple<string>, string>? observer = null;
 
@@ -67,9 +59,6 @@ public class RestoreBoundaryTests
 
         await Task.Delay(800);
 
-        // The bug this guards: the restore used to end before the worker decided to fetch, so
-        // one notification landed with the query pending and nothing running. A component
-        // branching on IsLoading rendered its empty state for that frame.
         Assert.DoesNotContain(frames, f => f.IsPending && !f.IsLoading);
         Assert.Contains(frames, f => f.IsFetching);
         Assert.Equal("from-network", client.FindQuery<string>("empty")!.Data);
@@ -88,16 +77,11 @@ public class RestoreBoundaryTests
             return "from-network";
         }).Build();
 
-        // Taken before subscribing so the test can await the restore itself. RestoreCompleted
-        // is on the concrete state, not on IQueryState: a consumer gets IsRestoring, and
-        // handing one a task to await invites exactly the hang the persistence contract bans.
         var state = client.GetOrCreateQuery(options);
         var (frames, observer) = Watch(client, options);
 
         await state.RestoreCompleted.WaitAsync(TimeSpan.FromSeconds(2));
 
-        // The moment the restore reports itself over, the fetch it decided on is already
-        // running. That is what leaves no gap for an empty frame to appear in.
         Assert.True(observer.Query.IsFetching);
         Assert.False(observer.Query.IsRestoring);
 
@@ -145,8 +129,6 @@ public class RestoreBoundaryTests
 
         var options = QueryOptions.Create<string>("late", _ => Task.FromResult("from-network")).Build();
 
-        // Creating the query starts its restore. Nothing is subscribed, so no decision is
-        // deferred and the restore ends on its own when the store answers.
         var state = client.GetOrCreateQuery(options);
         await state.RestoreCompleted.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -169,9 +151,6 @@ public class RestoreBoundaryTests
         var deferredTooLate = false;
         var lateDecisionRan = false;
 
-        // Deferred from inside the restore's own last act, which is the window the defect
-        // lives in: the restore has taken its decision and is about to report itself over, but
-        // its completion has not been set yet, so it still looks outstanding.
         Assert.True(state.TryDeferUntilRestored(() =>
         {
             deferredTooLate = state.TryDeferUntilRestored(() => lateDecisionRan = true);
@@ -179,9 +158,6 @@ public class RestoreBoundaryTests
 
         state.CompleteRestore();
 
-        // A restore that is ending must say so rather than accept a decision it will never
-        // make. The caller then decides for itself, immediately. Accepting it instead drops
-        // the decision on the floor, and a query whose only decision was to fetch never does.
         Assert.False(deferredTooLate);
         Assert.False(lateDecisionRan);
         Assert.False(state.IsRestoring);

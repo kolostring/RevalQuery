@@ -309,8 +309,6 @@ public sealed class QueryState<TKey, TResponse>(
             _lastUpdatedAt = DateTimeOffset.UtcNow;
             _hasSettled = true;
 
-            // Cleared only by a fetch that produced data. A failure leaves the query still
-            // holding whatever the invalidation said was out of date.
             _isInvalidated = false;
         }
     }
@@ -358,10 +356,6 @@ public sealed class QueryState<TKey, TResponse>(
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = freshness.LastUpdatedAt;
 
-            // Or-ed, never assigned. An invalidation that arrived while this load was in flight
-            // is about the query, not about the copy on disk, and a stored false would erase
-            // it: that is the defect ADR 0005 exists for. A stored true adds an invalidation
-            // the other side never got to act on.
             _isInvalidated |= freshness.IsInvalidated;
 
             return true;
@@ -434,9 +428,6 @@ public sealed class QueryState<TKey, TResponse>(
             decide = _restoreDecider;
             _restoreDecider = null;
 
-            // Not derivable from the completion, which stays incomplete until the decision
-            // below has run. Without it a decision handed over in that window is stored and
-            // never made, and a query whose only decision was to fetch never fetches.
             _restoreEnding = true;
         }
 
@@ -446,8 +437,6 @@ public sealed class QueryState<TKey, TResponse>(
         }
         catch
         {
-            // A decision that throws leaves the query unfetched, which its own caller will
-            // see. It must not leave the restore open, because nothing else will ever end it.
         }
         finally
         {

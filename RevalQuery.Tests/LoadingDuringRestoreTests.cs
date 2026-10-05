@@ -9,15 +9,8 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// IsLoading spans restores: no data yet and work in flight, whether that work is a fetch or a
-/// load from persistence. See docs/adr/0005.
-/// </summary>
 public class LoadingDuringRestoreTests
 {
-    /// <summary>
-    /// A persistence adapter whose load blocks until the test releases it.
-    /// </summary>
     private sealed class GatedPersistence(PersistedQuery<string>? entry) : IQueryPersistence
     {
         public readonly SemaphoreSlim LoadGate = new(0);
@@ -56,15 +49,11 @@ public class LoadingDuringRestoreTests
 
         await persistence.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        // The window this change exists for: nothing fetched, nothing stored yet, and without
-        // IsRestoring the component renders its empty state and then flips to data.
         Assert.True(state.IsRestoring);
         Assert.True(state.IsLoading);
         Assert.False(state.IsFetching);
         Assert.True(state.IsPending);
 
-        // Load-bearing, and pinned again by InvalidateDuringRestoreTests: reporting the restore
-        // through FetchStatus would turn CanFetch false and drop a mid-restore invalidation.
         Assert.True(state.CanFetch);
 
         persistence.LoadGate.Release();
@@ -80,7 +69,6 @@ public class LoadingDuringRestoreTests
         var persistence = new GatedPersistence(null);
         using var client = NewClient(persistence);
 
-        // Disabled, so no fetch can start and the restore is the only work in flight.
         var options = QueryOptions.Create<string>("empty", _ => Task.FromResult("from-network"))
             .Enabled(false)
             .Build();
@@ -94,14 +82,10 @@ public class LoadingDuringRestoreTests
 
         persistence.LoadGate.Release();
 
-        // Observers hear about a restore that found nothing: the query has stopped loading and
-        // has an empty state to render.
         await TestUtils.WaitForStateAsync(state, s => !s.IsLoading);
         Assert.False(state.IsRestoring);
         Assert.True(state.IsPending);
 
-        // Polled, not read straight away. The restore ends a moment before observers are told,
-        // so a wait that returned on the state alone can arrive ahead of the notification.
         await TestUtils.WaitUntilAsync(() => Volatile.Read(ref changes) > 0);
         Assert.True(changes > 0);
     }

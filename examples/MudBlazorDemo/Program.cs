@@ -10,8 +10,6 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 
 builder.Services.AddMudServices();
 
-// One registration covers the whole app. The client is scoped, which in a standalone
-// WebAssembly host means one per browser tab, so every component shares one cache.
 builder.Services.AddRevalQuery();
 
 await builder.Build().RunAsync();

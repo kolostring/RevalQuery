@@ -12,16 +12,10 @@ using RevalQuery.Core.Registry;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// The specification for the 0.4.0 correctness release. Each test names the defect it
-/// covers and asserts the fixed behaviour; every one of them failed before the fix.
-/// </summary>
 public class IssueReproductionTests
 {
     private static Task<string> Handler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
         => Task.FromResult("result");
-
-    // ---------- Issue 1: DI lifetimes ----------
 
     [Fact]
     public void Issue1_EvictionPolicy_Is_Scoped_Alongside_QueryClient()
@@ -98,8 +92,6 @@ public class IssueReproductionTests
         }
     }
 
-    // ---------- Issue 2: the eviction policy runs without anything starting it ----------
-
     [Fact]
     public async Task Issue2_BackgroundEviction_Runs_Without_A_Manual_Start()
     {
@@ -126,12 +118,9 @@ public class IssueReproductionTests
     {
         var services = new ServiceCollection().AddRevalQuery();
 
-        // Nothing to start means nothing to register: WebAssembly has no host to run one.
         Assert.DoesNotContain(services, d => d.ServiceType.Name.Contains("IHostedService"));
         Assert.Null(typeof(ICacheEvictionPolicy).GetMethod("StartAsync"));
     }
-
-    // ---------- Issue 3: worker lifecycle ----------
 
     [Fact]
     public async Task Issue3_A_Discarded_QueryAsync_Releases_Its_Worker_When_The_Fetch_Settles()
@@ -180,8 +169,6 @@ public class IssueReproductionTests
         Assert.Equal(0, WorkerCount(client));
     }
 
-    // ---------- Issue 4: QueryClient is callable from any thread ----------
-
     [Fact]
     public async Task Issue4_Concurrent_QueryAsync_Keeps_The_Registry_Intact()
     {
@@ -196,9 +183,6 @@ public class IssueReproductionTests
             var opts = QueryOptions.Create(key, SpinHandler).Build();
 
             using var barrier = new Barrier(16);
-            // Awaited rather than discarded. QueryAsync reports everything through its task,
-            // so a discard here would hand the failures bag nothing to collect and the
-            // assertion below would pass on an empty set whatever the registry did.
             var tasks = Enumerable.Range(0, 16).Select(_ => Task.Run(async () =>
             {
                 barrier.SignalAndWait();
@@ -250,8 +234,6 @@ public class IssueReproductionTests
         return Task.FromResult("x");
     }
 
-    // ---------- Issue 5: a mutation's OnSettled sees its own result ----------
-
     [Fact]
     public async Task Issue5_OnSettled_Receives_Its_Own_Params_And_Data()
     {
@@ -284,8 +266,6 @@ public class IssueReproductionTests
 
     private sealed record Box(string Name, int DelayMs);
 
-    // ---------- Issue 6: FindQuery returns null rather than throwing ----------
-
     [Fact]
     public async Task Issue6_FindQuery_Returns_Null_For_A_Mismatched_Result_Type()
     {
@@ -298,8 +278,6 @@ public class IssueReproductionTests
         Assert.Null(client.FindQuery<int>("typed"));
         Assert.NotNull(client.FindQuery<string>("typed"));
     }
-
-    // ---------- Issue 7: keys are compared by value, so a hash collision aliases nothing ----------
 
     [Fact]
     public void Issue7_Colliding_Hashes_Stay_Two_Distinct_Queries()
@@ -336,9 +314,6 @@ public class IssueReproductionTests
         Assert.NotNull(client.FindQuery(("users", "1")));
     }
 
-    /// <summary>
-    /// Finds two distinct string keys whose 32-bit hashes collide in this process.
-    /// </summary>
     private static (string A, string B) FindCollidingKeys()
     {
         var seen = new Dictionary<int, string>();
@@ -353,8 +328,6 @@ public class IssueReproductionTests
 
         throw new InvalidOperationException("no collision found in 4,000,000 keys");
     }
-
-    // ---------- helpers ----------
 
     private static int WorkerCount(QueryClient client)
     {

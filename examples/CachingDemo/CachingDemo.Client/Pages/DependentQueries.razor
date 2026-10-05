@@ -81,8 +81,6 @@ else
             .Create<(string, string), List<string>>(
                 ("orders", Selected ?? ""),
                 async static ctx => await ProfileService.GetOrdersAsync(ctx.Key.Item2, ctx.CancellationToken ?? default))
-            // Re-read on every render. Picking a user flips this to true and the query fetches,
-            // exactly as it would on gaining its first subscriber.
             .Enabled(Selected is not null)
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());

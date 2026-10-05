@@ -38,22 +38,10 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
     private readonly object _mutationLock = new();
     private readonly IServiceProvider _serviceProvider;
 
-    // What the next run starts from. Replaced by SetOptions; guarded by _mutationLock.
     private MutationOptions<TParams, TResponse> _options;
 
-    // The run that started most recently and has not finished, or null. Guarded by
-    // _mutationLock. This is the one run SetOptions reaches besides future ones.
     private RunOptions? _latestRun;
 
-    /// <summary>
-    /// What one run reads its callbacks and handler from. Each run has its own, so replacing the
-    /// options reaches the latest run alone, however many are in flight.
-    /// </summary>
-    /// <remarks>
-    /// TanStack Query builds a Mutation per mutate() call and updates only the current one, so
-    /// the options it holds are per run by construction. This state is shared by every
-    /// concurrent run, and one plain field read lazily would push new options into all of them.
-    /// </remarks>
     private sealed class RunOptions(MutationOptions<TParams, TResponse> options)
     {
         private MutationOptions<TParams, TResponse> _current = options;
@@ -147,14 +135,10 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
             }
         }
 
-        // This call's own outcome. Reading the shared Data and Exception fields here would
-        // hand a slow mutation whatever a faster concurrent one happened to write.
         var isMutationCancelled = false;
         TResponse? settledData = default;
         Exception? settledException = null;
 
-        // Fixed here, for the life of the run. TanStack creates its retryer once, when the run
-        // starts, so a count or delay set later reaches the next run and not this one.
         var retryOpts = CoreRetryOptions.MutationDefault.Apply(startOptions.Retry);
 
         try
@@ -168,7 +152,6 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
                 CancellationToken = linkedCts.Token
             };
 
-            // The handler is read on every attempt, so a retry after SetOptions runs the new one.
             var resolved = await _retryPolicy.ExecuteWithRetryAsync(
                 () => run.Current.Handler(ctx),
                 retryOpts,
@@ -244,8 +227,6 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
             }
             finally
             {
-                // Pending until its last callback has returned, as TanStack's is: a SetOptions
-                // landing during OnSettled still reaches this run's remaining callbacks.
                 lock (_mutationLock)
                 {
                     if (ReferenceEquals(_latestRun, run)) _latestRun = null;
@@ -256,19 +237,6 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
         }
     }
 
-    /// <summary>
-    /// Replaces the options future runs start from, and the options of the latest run if it is
-    /// still pending.
-    /// </summary>
-    /// <remarks>
-    /// <para>What a run reads is settled by when it reads it, mirroring TanStack's
-    /// <c>Mutation.execute</c>. The handler is read on every attempt, and OnMutate, OnResolved,
-    /// OnException and OnSettled at the moment each fires. Retry count and delay were fixed when
-    /// the run started and do not change under it.</para>
-    /// <para>Runs older than the latest keep the options they were given: the latest is the one
-    /// the component is looking at. Per-call <see cref="MutateOptions{TParams, TResponse}"/> are
-    /// separate and never touched.</para>
-    /// </remarks>
     internal void SetOptions(MutationOptions<TParams, TResponse> options)
     {
         lock (_mutationLock)
@@ -291,8 +259,6 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
         {
             _currentVersion++;
 
-            // TanStack's reset() drops its current mutation, so a later setOptions has none to
-            // update. The runs cancelled just below are over as far as options go.
             _latestRun = null;
             _runningMutationsCancellationTokens.ForEach(ct => ct.Cancel());
             _runningMutationsCancellationTokens.Clear();

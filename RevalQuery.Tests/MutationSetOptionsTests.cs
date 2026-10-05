@@ -10,12 +10,6 @@ using RevalQuery.Core.Scope;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// A mutation re-optioned between renders behaves as TanStack's does: the latest run reads the
-/// new callbacks and handler at the moment it reaches them, a run's retry count was fixed when
-/// it started, and a run that is no longer the latest keeps what it began with. Everything is
-/// ordered with completion sources, so no test waits on a clock.
-/// </summary>
 public class MutationSetOptionsTests
 {
     private sealed record Req(string Name);
@@ -25,10 +19,6 @@ public class MutationSetOptionsTests
     private static QueryClient NewClient(IServiceProvider? sp = null) =>
         new(sp ?? new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
-    /// <summary>
-    /// Options whose callbacks write to a shared log under the label given, so a test can say
-    /// which generation of options fired.
-    /// </summary>
     private static MutationOptions<Req, string> Logging(
         string label,
         ConcurrentQueue<string> log,
@@ -64,8 +54,6 @@ public class MutationSetOptionsTests
         release.SetResult();
         await run;
 
-        // OnMutate had already fired before the options changed. Everything after it is read
-        // when it fires, so it comes from the new options.
         Assert.Equal(
             ["old:mutate:a", "new:resolved:a", "new:settled:a"],
             log.ToArray());
@@ -106,7 +94,6 @@ public class MutationSetOptionsTests
         var newCalls = 0;
         using var client = NewClient();
 
-        // Two retries at run start, three calls in all.
         var original = MutationOptions.Create<Req, string>(async _ =>
             {
                 started.SetResult();
@@ -120,8 +107,6 @@ public class MutationSetOptionsTests
         var run = observer.State.ExecuteAsync(new Req("a"));
         await started.Task;
 
-        // No retries asked for, and a handler that always fails. If the retry count were read
-        // again it would be called once; it is called for both retries the run began with.
         observer.SetOptions(MutationOptions.Create<Req, string>(_ =>
             {
                 Interlocked.Increment(ref newCalls);
@@ -200,8 +185,6 @@ public class MutationSetOptionsTests
 
         var fired = log.ToArray();
 
-        // The older run is a different mutation as far as options go. TanStack builds one per
-        // call, and only the latest is updated.
         Assert.Contains("old:resolved:a", fired);
         Assert.Contains("old:settled:a", fired);
         Assert.Contains("new:resolved:b", fired);
@@ -340,7 +323,6 @@ public class MutationSetOptionsTests
 
         Assert.Equal("two", second.Data);
 
-        // The callback given on the first call is the one that is wired.
         Assert.True(Volatile.Read(ref changes) > 0);
     }
 
@@ -359,7 +341,6 @@ public class MutationSetOptionsTests
 
         await second.ExecuteAsync(new Req("a"));
 
-        // Before, the slot kept the options of the render that created it.
         Assert.Equal("render-2", second.Data);
     }
 }

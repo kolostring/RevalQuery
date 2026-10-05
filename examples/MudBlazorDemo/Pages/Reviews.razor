@@ -112,7 +112,6 @@ else
         }
     }
 
-    /// <summary>What the mutation is given. A class, which is what MutationOptions requires.</summary>
     public sealed record AddReviewParams(int ProductId, Review Review);
 
     IQueryState<List<Product>> ProductList => Q.Query(
@@ -138,8 +137,6 @@ else
                     ctx.Params.ProductId, ctx.Params.Review, ctx.CancellationToken))
             .OnResolved((_, parameters) =>
             {
-                // The list is fresh for five minutes, so without this the new review would not
-                // appear until the stale time passed.
                 Client.Invalidate(("reviews", parameters.ProductId));
                 return Task.CompletedTask;
             }));

@@ -2,9 +2,6 @@
 @using CachingDemo.Client.Persistence
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
-@* No prerender. The persistence adapter is registered in the WebAssembly host only, so a
-   prerender would fetch on the server and transfer the result, which is precisely the restore
-   this page exists to show. *@
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
 @inject QueryClient Client
 

@@ -31,11 +31,6 @@ public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
         {
             if (attempt > 0)
             {
-                // Outside the try below on purpose. A delay calculator the caller supplied is
-                // not the handler, and counting its own failure as an attempt would burn every
-                // remaining retry and then hand back its exception in place of the error the
-                // query actually hit. A negative span, which Task.Delay rejects, is clamped
-                // rather than thrown on, because waiting no time is what it plainly means.
                 var delay = retryDelayCalculator(attempt);
                 if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
 
@@ -52,9 +47,6 @@ public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
             }
         }
 
-        // Unreachable: the final attempt either returns or throws past the filter above. The
-        // rethrow is here so that if it ever is reached, the caller gets the real failure
-        // rather than an invented one that discards it.
         throw lastException ?? new InvalidOperationException("Retry policy failed to return result.");
     }
 }

@@ -6,10 +6,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// The imperative surface after the collapse of docs/adr/0008. One method, which consults
-/// StaleTime the way the subscription path always did.
-/// </summary>
 public class QueryAsyncTests
 {
     private const string Key = "fetch";
@@ -54,8 +50,6 @@ public class QueryAsyncTests
         Assert.True(ReferenceEquals(results[1], results[2]));
     }
 
-    // The gap 0008 exists to close: a caller with no observer can now ask whether the data it
-    // already has is fresh, and is given it rather than a second trip to the handler.
     [Fact]
     public async Task QueryAsync_ServesFreshDataFromCacheWithoutCallingTheHandler()
     {
@@ -72,8 +66,6 @@ public class QueryAsyncTests
         Assert.Equal(1, calls);
     }
 
-    // The control: the default StaleTime of zero means every call fetches, which is what both
-    // collapsed methods used to do unconditionally.
     [Fact]
     public async Task QueryAsync_RefetchesWhenTheDataIsStale()
     {
@@ -88,8 +80,6 @@ public class QueryAsyncTests
         Assert.Equal(2, calls);
     }
 
-    // StaleTime is read from the options handed to this call, so one caller can accept older
-    // data than another without reconfiguring the query underneath any subscriber.
     [Fact]
     public async Task QueryAsync_JudgesStalenessByTheOptionsThisCallPassed()
     {
@@ -104,8 +94,6 @@ public class QueryAsyncTests
         await _client.QueryAsync(QueryOptions.Create(Key, Handler).Build());
         Assert.Equal(1, calls);
 
-        // Same key, same query, but this caller is content with anything fetched in the last
-        // five minutes.
         await _client.QueryAsync(QueryOptions.Create(Key, Handler)
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
@@ -113,7 +101,6 @@ public class QueryAsyncTests
         Assert.Equal(1, calls);
     }
 
-    // NeverStale is what replaces a cache-first second method, and it survives an invalidation.
     [Fact]
     public async Task QueryAsync_WithNeverStale_ServesCacheEvenAfterInvalidation()
     {
@@ -131,8 +118,6 @@ public class QueryAsyncTests
         Assert.Equal(1, calls);
     }
 
-    // An invalidated query is stale at any duration. This is the case a sentinel TimeSpan
-    // could not have expressed, and the reason NeverStale is an option of its own.
     [Fact]
     public async Task QueryAsync_WithALongStaleTime_StillRefetchesAfterInvalidation()
     {
@@ -150,8 +135,6 @@ public class QueryAsyncTests
         Assert.Equal(2, calls);
     }
 
-    // A cache hit must not report an error the query recorded long before this call, and a
-    // query that failed keeps the timestamp of the data it still holds.
     [Fact]
     public async Task QueryAsync_ServesFreshDataHeldBesideAnOlderFailure()
     {
@@ -170,8 +153,6 @@ public class QueryAsyncTests
         Assert.Equal("data", await _client.QueryAsync(always));
         await Assert.ThrowsAsync<InvalidOperationException>(() => _client.QueryAsync(always));
 
-        // The failure left Data and LastUpdatedAt alone, so this caller's freshness window
-        // still covers the data that did arrive.
         var cached = QueryOptions.Create(Key, Handler)
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
             .ConfigureCache(c => c.GcTime(TimeSpan.FromMinutes(10)))

@@ -40,14 +40,10 @@ public sealed class QueryHost : ComponentBase, IDisposable
                 $"The scope given to {nameof(QueryHost)} has no owner. Create it with Client.CreateScope(this), " +
                 "so the host knows which component to re-render.");
 
-        // A scope the page replaced is the page's to forget, and it is no use to anyone else:
-        // its observers, and any polling, would otherwise outlive the page.
         _link?.Dispose();
         _attached?.Dispose();
         _attached = Scope;
 
-        // The owner's own handler re-renders it: ComponentBase's calls StateHasChanged after
-        // the (empty) callback, and one written by hand does whatever it does for an event.
         _link = Scope.Attach(() => _ = InvokeAsync(() =>
             _isDisposed ? Task.CompletedTask : owner.HandleEventAsync(EventCallbackWorkItem.Empty, null)));
     }

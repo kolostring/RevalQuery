@@ -9,13 +9,6 @@ using RevalQuery.Core.Scope;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// A scope owns what a component reads: it subscribes on the first read of a key, re-applies
-/// options on every one, and releases what a render stopped reading when the render completes.
-/// Call sites are the lines of this file, so every read below sits on a line of its own where a
-/// test needs a site of its own. Nothing waits on a clock: handlers are completion sources and
-/// the sweep is called by the test.
-/// </summary>
 public class QueryScopeTests
 {
     private sealed record Req(string Name);
@@ -32,7 +25,6 @@ public class QueryScopeTests
             return Task.FromResult(key);
         }).Build();
 
-    // A handler that completes only when the test says so
     private static QueryOptions<ValueTuple<string>, string> Gated(string key, TaskCompletionSource gate) =>
         QueryOptions.Create<string>(key, async _ =>
         {
@@ -43,13 +35,10 @@ public class QueryScopeTests
     private static bool Observed(QueryClient client, string key) =>
         client.FindQuery(key)?.HasObservers == true;
 
-    // The shape of a render: one call site, whatever keys that render has.
     private static void ReadAtOneSite(QueryScope scope, params string[] keys)
     {
         foreach (var key in keys) scope.Query(Opts(key));
     }
-
-    // ---- release ----
 
     [Fact]
     public void A_Key_That_Stops_Being_Read_Is_Released_At_The_Next_Sweep()
@@ -62,7 +51,6 @@ public class QueryScopeTests
 
         ReadAtOneSite(scope, "b");
 
-        // Not released until the render that read b has completed
         Assert.True(Observed(client, "a"));
 
         scope.RenderCompleted();
@@ -131,7 +119,6 @@ public class QueryScopeTests
         ReadAtOneSite(scope, "hidden");
         scope.RenderCompleted();
 
-        // Renders that never reach the site: the known limitation, kept as it is documented
         scope.RenderCompleted();
         scope.RenderCompleted();
 
@@ -147,7 +134,6 @@ public class QueryScopeTests
         ReadAtOneSite(scope, "a");
         scope.RenderCompleted();
 
-        // An event handler, or a later render batch, reading after the sweep
         ReadAtOneSite(scope, "a", "b");
         scope.RenderCompleted();
 
@@ -170,7 +156,6 @@ public class QueryScopeTests
 
         scope.Dispose();
 
-        // One observer, so one disposal leaves nothing behind
         Assert.False(Observed(client, "shared"));
     }
 
@@ -188,13 +173,11 @@ public class QueryScopeTests
         Assert.Same(one, two);
         Assert.Equal(1, calls);
 
-        // The first site moves on. The second still holds the key.
         scope.Query(("site", 1), Opts("other"));
         scope.Query(("site", 2), Opts("both"));
         scope.RenderCompleted();
         Assert.True(Observed(client, "both"));
 
-        // Now neither does, and the one observer is released once.
         scope.Query(("site", 1), Opts("other"));
         scope.Query(("site", 2), Opts("another"));
         scope.RenderCompleted();
@@ -207,12 +190,10 @@ public class QueryScopeTests
         using var client = NewClient();
         using var scope = client.CreateScope();
 
-        // One line, so one call site, but two slots
         foreach (var key in new[] { "a", "b" })
             scope.Query(("rows", key), Opts(key));
         scope.RenderCompleted();
 
-        // The slot for "a" reads another key: only that slot is judged
         scope.Query(("rows", "a"), Opts("c"));
         scope.Query(("rows", "b"), Opts("b"));
         scope.RenderCompleted();
@@ -243,8 +224,6 @@ public class QueryScopeTests
         using var client = NewClient();
         using var scope = client.CreateScope();
 
-        // Two reads through one string slot: the slot is judged as one site, so the second
-        // sweep releases the key the slot stopped reading. Under a call-site overload it would not.
         scope.Query("text", Opts("a"));
         scope.Query("text", QueryOptions.Create<string>("b", _ => Task.FromResult("b")));
         scope.RenderCompleted();
@@ -271,8 +250,6 @@ public class QueryScopeTests
             scope.Query(QueryOptions.Create<int>("typed", _ => Task.FromResult(1)).Build()));
     }
 
-    // ---- options ----
-
     [Fact]
     public async Task A_Repeat_Read_Applies_The_Options_Of_That_Render()
     {
@@ -280,7 +257,6 @@ public class QueryScopeTests
         using var scope = client.CreateScope();
         var calls = 0;
 
-        // Disabled on the first render, enabled on the second: the second must fetch
         scope.Query("slot", QueryOptions.Create<string>("toggle", _ =>
         {
             calls++;
@@ -297,8 +273,6 @@ public class QueryScopeTests
         await TestUtils.WaitForStateAsync(state, s => s.IsResolved);
         Assert.Equal(1, calls);
     }
-
-    // ---- mutations ----
 
     [Fact]
     public void A_Mutation_Is_Not_Released_By_A_Sweep()
@@ -378,8 +352,6 @@ public class QueryScopeTests
         Assert.Equal("done", scope.Mutation("run", MutationOptions.Create<Req, string>(_ => Task.FromResult("x")).Build()).Data);
     }
 
-    // ---- host ----
-
     [Fact]
     public async Task A_Change_The_Render_Did_Not_Read_Reaches_The_Host()
     {
@@ -391,7 +363,6 @@ public class QueryScopeTests
 
         var state = scope.Query(Gated("slow", gate));
 
-        // Starting the fetch was reported, from inside the read. Wait for the next change.
         Assert.True(changed.Task.IsCompleted);
         changed = Signal();
 
@@ -409,14 +380,11 @@ public class QueryScopeTests
         var changed = 0;
         using var host = scope.Attach(() => Interlocked.Increment(ref changed));
 
-        // The handler completes on this thread, inside the read. The reader may be a child that
-        // renders in a later batch, so the owner cannot assume it is the one reading.
         var state = scope.Query(Opts("sync"));
 
         Assert.True(state.IsResolved);
         Assert.True(changed > 0);
 
-        // Reading the settled key again changes nothing
         var settled = changed;
         scope.Query(Opts("sync"));
         Assert.Equal(settled, changed);
@@ -429,7 +397,6 @@ public class QueryScopeTests
         using var scope = client.CreateScope();
         var state = scope.Mutation("early", MutationOptions.Create<Req, string>(_ => Task.FromResult("x")).Build());
 
-        // No host yet: the mutation reports from this thread, outside any read.
         await state.ExecuteAsync(new Req("a"));
 
         var changed = 0;
@@ -482,8 +449,6 @@ public class QueryScopeTests
 
         Assert.Equal(0, changed);
     }
-
-    // ---- disposal ----
 
     [Fact]
     public void Disposing_The_Scope_Disposes_Every_Observer()

@@ -10,8 +10,6 @@ namespace RevalQuery.Blazor;
 /// </summary>
 public static class QueryScopeExtensions
 {
-    // Core knows nothing of Blazor, so the owner lives here, beside the scope rather than in
-    // it. Weak, so a scope that is dropped without a host does not keep its component alive.
     private static readonly ConditionalWeakTable<QueryScope, IHandleEvent> Owners = new();
 
     /// <summary>

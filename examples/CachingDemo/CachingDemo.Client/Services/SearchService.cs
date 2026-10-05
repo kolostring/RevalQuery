@@ -20,10 +20,8 @@ public static class SearchService
             "Pineapple", "Pistachio", "Plum", "Pomegranate", "Potato", 
             "Pumpkin", "Quince", "Radish", "Raspberry", "Rhubarb", 
             "Spinach", "Strawberry", "Tomato", "Turnip", "Watermelon"];
-        // Simulate Network Latency
         await Task.Delay(1000, ct ?? new());
 
-        // Simulate a random API Failure (10% chance)
         if (Random.Shared.Next(1, 11) == 1)
             throw new Exception("API is currently unavailable.");
 

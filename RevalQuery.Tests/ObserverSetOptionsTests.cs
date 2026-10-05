@@ -10,11 +10,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// An observer owns which query it watches. Handing it new options is the one act that covers
-/// both a re-render that changed nothing about the key and one that changed the key, and the
-/// observer is the thing that moves, so a caller holding it never holds a stale reference.
-/// </summary>
 public class ObserverSetOptionsTests
 {
     private static readonly (string, int) Key1 = ("item", 1);
@@ -51,8 +46,6 @@ public class ObserverSetOptionsTests
         var calls = 0;
         using var client = NewClient();
 
-        // Zero stale time, so the data is stale the moment it lands. A same-key re-render that
-        // ran the staleness check would refetch here, and one that did not is what is asserted.
         var options = Item(1, (n, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -70,7 +63,6 @@ public class ObserverSetOptionsTests
         Assert.Same(before, observer.Query);
         Assert.Equal(TimeSpan.FromHours(1), StateOf(observer).FetchOptions!.StaleTime);
 
-        // A refetch starts synchronously, so there is nothing to wait out before asserting.
         Assert.True(observer.Query.IsIdle);
         Assert.Equal(1, calls);
     }
@@ -93,7 +85,6 @@ public class ObserverSetOptionsTests
 
         switching.SetOptions(Item(2, Fetch, refetchInterval: interval));
 
-        // One fetch for the switch itself, then the loop the switch has to start.
         await TestUtils.WaitUntilAsync(() => Volatile.Read(ref calls) >= 3, 2000);
 
         Assert.True(Volatile.Read(ref calls) >= 3);
@@ -144,7 +135,6 @@ public class ObserverSetOptionsTests
         Assert.Contains(Key1, eviction.Registered);
         Assert.Contains(Key2, eviction.Cancelled);
 
-        // The old query is still in the registry, cached, and no longer reaches the observer.
         Assert.Same(first, client.FindQuery(Key1));
         var seen = Volatile.Read(ref changes);
         first.NotifyChanged();
@@ -169,7 +159,6 @@ public class ObserverSetOptionsTests
         using var observer = client.Subscribe(Item(1, Fetch), () => { });
         await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
 
-        // The dependent-query pattern: the key moves on before the value it needs has arrived.
         observer.SetOptions(Item(2, Fetch, enabled: false));
 
         Assert.True(observer.Query.IsPending);
@@ -195,7 +184,6 @@ public class ObserverSetOptionsTests
             return Task.FromResult($"data-{n}");
         }
 
-        // An hour's stale time, so coming back is a cache hit and not a refetch.
         var hour = TimeSpan.FromHours(1);
 
         using var observer = client.Subscribe(Item(1, Fetch, staleTime: hour), () => { });
@@ -245,18 +233,15 @@ public class ObserverSetOptionsTests
         var second = StateOf(observer);
         await TestUtils.WaitForStateAsync(second, s => second.IsResolved);
 
-        // Still running, and nobody asked it to stop.
         Assert.True(first.IsFetching);
         Assert.False(oldToken.IsCancellationRequested);
         Assert.Equal("data-2", observer.Query.Data);
 
-        // Counted after the new query settled, so everything it said has been heard.
         var heard = Volatile.Read(ref changes);
 
         releaseOld.SetResult();
         await TestUtils.WaitForStateAsync(first, s => first.IsResolved && first.IsIdle);
 
-        // The old query finished into its own state and the observer was not told.
         Assert.Equal("data-1", first.Data);
         Assert.Equal(heard, Volatile.Read(ref changes));
         Assert.Same(second, observer.Query);
@@ -273,7 +258,6 @@ public class ObserverSetOptionsTests
         await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
         var first = StateOf(observer);
 
-        // The second key already belongs to another result type.
         await client.QueryAsync(QueryOptions.Create<(string, int), int>(Key2, static _ => Task.FromResult(7)).Build());
         eviction.Registered.Clear();
 
@@ -285,7 +269,6 @@ public class ObserverSetOptionsTests
         Assert.DoesNotContain(Key1, eviction.Registered);
         Assert.False(client.FindQuery(Key2)!.HasObservers);
 
-        // Still wired: the observer was never detached.
         var seen = Volatile.Read(ref changes);
         first.NotifyChanged();
         Assert.Equal(seen + 1, Volatile.Read(ref changes));
@@ -337,7 +320,6 @@ public class ObserverSetOptionsTests
         Assert.Throws<ObjectDisposedException>(() => observer.SetOptions(Item(1)));
         Assert.Throws<ObjectDisposedException>(() => observer.SetOptions(Item(2)));
 
-        // Teardown stays silent, whichever of the two went first.
         observer.Dispose();
     }
 
@@ -361,7 +343,6 @@ public class ObserverSetOptionsTests
         observer.SetOptions(Item(2, Fetch));
         await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
 
-        // The eviction policy decides the old query's time is up while the observer is away.
         eviction.Evict(Key1);
         Assert.Null(client.FindQuery(Key1));
 
@@ -386,12 +367,10 @@ public class ObserverSetOptionsTests
         var created = slot;
         Assert.Same(slot.Query, first);
 
-        // Same key: the slot is kept and so is the query.
         var again = client.Observe(ref slot, Item(1), () => { });
         Assert.Same(created, slot);
         Assert.Same(first, again);
 
-        // New key: the slot is kept and what it returns has moved.
         var moved = client.Observe(ref slot, Item(2), () => { });
         Assert.Same(created, slot);
         Assert.NotSame(first, moved);
@@ -405,10 +384,6 @@ public class ObserverSetOptionsTests
         Assert.False(moved.HasObservers);
     }
 
-    /// <summary>
-    /// Records what the client asks of its eviction policy, and lets a test play the part of
-    /// the timer that would eventually call back.
-    /// </summary>
     private sealed class RecordingEviction : ICacheEvictionPolicy
     {
         public List<ITuple> Registered { get; } = [];
@@ -427,10 +402,6 @@ public class ObserverSetOptionsTests
     }
 }
 
-/// <summary>
-/// Runs alone for the reason <see cref="StressCollection"/> gives: the window is reached by
-/// repetition across threads, and that starves any clock-bound test beside it.
-/// </summary>
 [Collection("stress")]
 public class ObserverSetOptionsRaceTests
 {
@@ -439,8 +410,6 @@ public class ObserverSetOptionsRaceTests
     [Fact]
     public async Task Switching_Against_Eager_Eviction_Always_Lands_On_A_Registered_Query()
     {
-        // Evicts the instant a query is left unobserved, so every switch away from a key races
-        // an eviction of it, and every switch back races the re-creation of what was evicted.
         var eviction = new EvictOnRelease();
         using var client = new QueryClient(
             new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
@@ -451,8 +420,6 @@ public class ObserverSetOptionsRaceTests
         QueryObserver<(string, int), string>? slot = null;
         client.Observe(ref slot, Item(0), () => { });
 
-        // A second party churning the same keys: one-off fetches own no observer, so each
-        // release hands the key to the eviction policy as well.
         using var stop = new CancellationTokenSource();
         var churn = Task.Run(async () =>
         {
@@ -473,9 +440,6 @@ public class ObserverSetOptionsRaceTests
                 var id = round % 2;
                 var state = client.Observe(ref slot, Item(id), () => { });
 
-                // The state the observer reports is the state the registry holds for that key,
-                // and it is observed. An observer left on an evicted state would fail the
-                // first, and a query dropped from under the observer the second.
                 Assert.Same(state, client.FindQuery(("item", id)));
                 Assert.True(state.HasObservers);
             }

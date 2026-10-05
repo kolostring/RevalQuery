@@ -3,10 +3,6 @@ using RevalQuery.Core.Query.Execution;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// Retry counts retries, not attempts: a count of n means n further attempts after the first,
-/// so n + 1 calls in all and zero still calls the handler once.
-/// </summary>
 public class RetryCountTests
 {
     private static CoreRetryOptions Retries(int count) =>
@@ -37,8 +33,6 @@ public class RetryCountTests
         var policy = new ExponentialBackoffRetryPolicy();
         var thrown = new InvalidOperationException("the real error");
 
-        // The old shape fell out of the loop with nothing to return and threw
-        // "Retry policy failed to return result", discarding what actually went wrong.
         var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             policy.ExecuteWithRetryAsync<string>(() => Task.FromException<string>(thrown), Retries(0)));
 

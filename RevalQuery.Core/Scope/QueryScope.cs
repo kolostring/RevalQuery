@@ -46,7 +46,6 @@ public sealed class QueryScope : IDisposable
 {
     private abstract class Entry
     {
-        // The call sites holding this entry. It is released when the last one lets go.
         public HashSet<Site> Holders { get; } = [];
         public abstract void Dispose();
     }
@@ -74,8 +73,6 @@ public sealed class QueryScope : IDisposable
 
     private readonly QueryClient _client;
 
-    // Guards the entries, the sites and the host link. Never held across a call into an
-    // observer, the client or the host, because any of them may call back into the scope.
     private readonly object _gate = new();
     private readonly Dictionary<ITuple, Entry> _queries = new(QueryKeyComparer.Instance);
     private readonly Dictionary<object, Site> _sites = [];
@@ -94,8 +91,6 @@ public sealed class QueryScope : IDisposable
 
         public void Dispose() => Scope?.Detach(this);
     }
-
-    // ---- reads ----
 
     /// <summary>
     /// Reads a query, keyed by the call site. Subscribes on the first read of a key, re-applies
@@ -174,7 +169,6 @@ public sealed class QueryScope : IDisposable
             }
             else if (Find<TKey, TRes>(options.Key) is { } raced)
             {
-                // Another thread read the same key while this one was subscribing.
                 loser = new QueryEntry<TKey, TRes>(observer);
                 MarkRead(slot, options.Key, raced);
                 existing = raced;
@@ -286,8 +280,6 @@ public sealed class QueryScope : IDisposable
         where TParams : class =>
         Mutation(key, builder.Build());
 
-    // ---- sweep ----
-
     /// <summary>
     /// Reports that a render has finished. Releases, at every call site read since the previous
     /// call, the queries that were not read, and then starts counting reads afresh.
@@ -330,8 +322,6 @@ public sealed class QueryScope : IDisposable
         if (released is null) return;
         foreach (var entry in released) entry.Dispose();
     }
-
-    // ---- host ----
 
     /// <summary>
     /// Attaches the component's host, which is told whenever an observer reports a change,
@@ -393,8 +383,6 @@ public sealed class QueryScope : IDisposable
         host?.OnChanged();
     }
 
-    // ---- teardown ----
-
     /// <summary>
     /// Disposes every observer, queries and mutations alike, and detaches the host. Safe to call
     /// more than once. Reads afterwards throw; sweeps and notifications are ignored.
@@ -416,8 +404,6 @@ public sealed class QueryScope : IDisposable
 
         foreach (var entry in all) entry.Dispose();
     }
-
-    // ---- helpers; callers hold the lock ----
 
     private void ThrowIfDisposedLocked() => ObjectDisposedException.ThrowIf(_isDisposed, this);
 

@@ -102,7 +102,6 @@ else if (Detail.Data is { } detail)
             .Create<(string, int), ProductDetail>(
                 ("product", Selected ?? 0),
                 async static ctx => await CatalogService.GetProductAsync(ctx.Key.Item2, ctx.CancellationToken ?? default))
-            // Read on every render, so selecting a row turns this on and the query fetches.
             .Enabled(Selected is not null)
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());

@@ -70,7 +70,6 @@ else
         if (AddItem.IsResolved) Draft = string.Empty;
     }
 
-    /// <summary>The mutation's parameters. A class, which is what MutationOptions requires.</summary>
     public sealed record AddItemParams(string Text);
 
     IQueryState<List<string>> Todos => Q.Query(
@@ -87,8 +86,6 @@ else
                 async static ctx => await TodoService.AddAsync(ctx.Params.Text, ctx.CancellationToken))
             .OnResolved((_, _) =>
             {
-                // Stale time keeps the list off the network otherwise, so the invalidation is
-                // what makes the new item show up.
                 Client.Invalidate("todos");
                 return Task.CompletedTask;
             }));

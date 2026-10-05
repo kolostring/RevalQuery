@@ -6,10 +6,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// Covers the staleness ordering of docs/adr/0008: a static query is fresh however old its
-/// data is, and stays fresh through an invalidation, but still fetches the first time.
-/// </summary>
 public class StaticQueryTests
 {
     private static int _calls;
@@ -27,15 +23,11 @@ public class StaticQueryTests
         QueryOptions.Create(key, CountingHandler)
             .ConfigureFetch(f =>
             {
-                // Zero is the default and means always stale, so any refetch this suite sees is
-                // the staleness decision letting one through rather than a clock that had not
-                // run out yet.
                 f.StaleTime(TimeSpan.Zero);
                 if (neverStale) f.NeverStale();
             })
             .Build();
 
-    // First in the ordering: no data beats static, or a static query could never start.
     [Fact]
     public async Task A_Static_Query_With_No_Data_Still_Fetches()
     {
@@ -49,7 +41,6 @@ public class StaticQueryTests
         Assert.Equal(1, _calls);
     }
 
-    // What separates static from a StaleTime of zero: a second subscriber does not refetch.
     [Fact]
     public async Task A_Static_Query_Is_Not_Refetched_By_A_Later_Subscriber()
     {
@@ -67,8 +58,6 @@ public class StaticQueryTests
         Assert.Equal("call-1", second.Query.Data);
     }
 
-    // The control for the test above: without NeverStale the same sequence does refetch, so
-    // the assertion there is about staticness and not about the subscriber being ignored.
     [Fact]
     public async Task A_Non_Static_Query_Is_Refetched_By_A_Later_Subscriber()
     {
@@ -85,7 +74,6 @@ public class StaticQueryTests
         Assert.Equal(2, _calls);
     }
 
-    // Static is asked before invalidation, deliberately. This is the decision 0008 exists for.
     [Fact]
     public async Task Invalidating_A_Static_Query_Does_Not_Refetch_It()
     {
@@ -102,7 +90,6 @@ public class StaticQueryTests
         Assert.Equal("call-1", observer.Query.Data);
     }
 
-    // The mark stays dumb: the query records the invalidation it is declining to act on.
     [Fact]
     public async Task An_Invalidated_Static_Query_Still_Reports_Itself_Invalidated()
     {
@@ -120,7 +107,6 @@ public class StaticQueryTests
         Assert.Equal(1, _calls);
     }
 
-    // The regression guard for the ordering change: invalidation still works for everyone else.
     [Fact]
     public async Task Invalidating_A_Non_Static_Query_Refetches_It()
     {
@@ -136,9 +122,6 @@ public class StaticQueryTests
         Assert.Equal(2, _calls);
     }
 
-    // NotifyInvalidated no longer moves the clock. LastUpdatedAt is public and persisted, and
-    // an invalidated query used to report data from year one while holding data from a moment
-    // ago.
     [Fact]
     public async Task Invalidation_Leaves_LastUpdatedAt_Alone()
     {

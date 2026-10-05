@@ -7,10 +7,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// Findings from reviewing a700df3, the concurrency commit that went in after the review pass
-/// and was never itself reviewed.
-/// </summary>
 public class ReviewOfA700df3Tests
 {
     [Fact]
@@ -31,8 +27,6 @@ public class ReviewOfA700df3Tests
         await started.Task;
         await client.CancelAsync("cancelled");
 
-        // The handler never produced anything. Returning null as though it had is worse than
-        // saying so: the caller cannot tell the difference between "no data" and "not fetched".
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
     }
 
@@ -42,9 +36,6 @@ public class ReviewOfA700df3Tests
         var persistence = new SlowPersistence("from-disk", loadDelayMs: 150);
         using var client = NewClient(persistence);
 
-        // No retries, so the failure is recorded well before the load lands. The default of
-        // 3 retries backs off for longer than the load takes, which would hide the ordering
-        // this test is about.
         var options = QueryOptions.Create<string>(
             "failed", _ => Task.FromException<string>(new InvalidOperationException("boom")))
             .ConfigureRetry(r => r.Retry(0))
@@ -55,9 +46,6 @@ public class ReviewOfA700df3Tests
         var state = client.FindQuery<string>("failed")!;
         Assert.True(state.IsException);
 
-        // The load lands after the failure. Adopting it would leave Status resolved with
-        // Exception still set, so a component branching on Exception renders an error next to
-        // data, and a later QueryAsync returns stale data instead of throwing.
         await Task.Delay(250);
 
         Assert.True(state.IsException);
@@ -83,9 +71,6 @@ public class ReviewOfA700df3Tests
         shouldFail = false;
         Assert.Equal("value", await client.QueryAsync(options));
 
-        // Resolved with a stale exception still hanging off it is the same broken shape a
-        // restore over a failure produces: a component checking Exception renders an error
-        // beside perfectly good data.
         var state = client.FindQuery<string>("recovering")!;
         Assert.True(state.IsResolved);
         Assert.Null(state.Exception);
@@ -97,8 +82,6 @@ public class ReviewOfA700df3Tests
         var persistence = new SlowPersistence("from-disk", loadDelayMs: 30);
         using var client = NewClient(persistence);
 
-        // No retries: the restore landing mid-fetch is what this test is about, and backing
-        // off through three of them only makes it slower.
         var options = QueryOptions.Create<string>("racing", async _ =>
         {
             await Task.Delay(80);

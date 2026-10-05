@@ -7,7 +7,6 @@ namespace RevalQuery.Tests;
 
 public class OrphanedFetchTests
 {
-    // A fetch left running by a released worker must stay reachable from the registry.
     [Fact]
     public async Task CancelAsync_Reaches_A_Fetch_Left_Running_By_A_Released_Worker()
     {
@@ -35,7 +34,6 @@ public class OrphanedFetchTests
         Assert.Null(client.FindQuery<string>("orphan")!.Data);
     }
 
-    // A released worker must not be replaced by a second one that fetches alongside the first.
     [Fact]
     public async Task A_Released_Worker_Does_Not_Let_A_Second_Fetch_Run_Alongside_Its_Own()
     {

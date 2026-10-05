@@ -6,7 +6,6 @@
 <span class="item">@Q.Query(Fx.Detail(3)).Data@Q.Query(Fx.Detail(4)).Data</span>
 @code {
     [Parameter] public int Tick { get; set; }
-    // One call site, two keys
     string? Detail(int id) => Q.Query(Fx.Detail(id)).Data;
     QueryScope? _q;
     QueryScope Q => _q ??= Client.CreateScope(this);

@@ -48,7 +48,6 @@ public class PersistenceTests
         await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
 
         Assert.Equal("from-disk", observer.Query.Data);
-        // Restored verbatim, so the data is correctly three hours stale rather than looking fresh.
         Assert.Equal(fetchedAt, observer.Query.LastUpdatedAt);
 
         handlerGate.Release();
@@ -108,8 +107,6 @@ public class PersistenceTests
 
         Assert.NotNull(persistence.Read<string>(ValueTuple.Create("wired")));
     }
-
-    // ---------- helpers ----------
 
     private static QueryClient NewClient(IQueryPersistence persistence) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);

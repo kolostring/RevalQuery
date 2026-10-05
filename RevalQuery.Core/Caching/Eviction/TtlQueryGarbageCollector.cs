@@ -80,12 +80,8 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
         }
         catch (OperationCanceledException)
         {
-            // Expected on shutdown
         }
 
-        // Disposed by the loop on its way out as well. Both are needed: a loop that never
-        // started leaves nobody else to do it, and CancellationTokenSource.Dispose is
-        // idempotent.
         cts.Dispose();
     }
 
@@ -112,8 +108,6 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
             cts = _cancellationTokenSource;
         }
 
-        // Cancelled, not disposed: the loop is still sitting on this token and disposes the
-        // source itself on its way out.
         cts?.Cancel();
     }
 
@@ -160,22 +154,13 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
         }
         catch (OperationCanceledException)
         {
-            // Expected on shutdown
         }
         finally
         {
-            // The loop is the last user of this source. Dispose stops the loop without waiting
-            // for it, so it cannot dispose the source itself, and one leaked per user session
-            // is a leak for the life of the server.
             cts.Dispose();
         }
     }
 
-    /// <summary>
-    /// Relieves a death row that has grown past its bound by evicting its most overdue
-    /// entries early. Dropping the records instead would leave those queries in the registry
-    /// with nothing left to evict them, which is the leak this guards against.
-    /// </summary>
     private void EvictOldestEntries()
     {
         var toEvict = _deathRow

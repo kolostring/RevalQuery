@@ -7,12 +7,6 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-/// <summary>
-/// What became of <c>PrefetchQuery</c> once ADR 0008 collapsed it: a <c>QueryAsync</c> call
-/// whose task the caller discards, with the catch written at the call site. These cover the
-/// behaviour the removed method guaranteed, so that dropping it removed a name and not a
-/// capability.
-/// </summary>
 public class QueryAsyncDiscardedTests
 {
     private const string Key = "discarded";
@@ -38,8 +32,6 @@ public class QueryAsyncDiscardedTests
         Assert.True(state.IsResolved);
     }
 
-    // The old method always refetched here. It now serves the cache, which is the point of the
-    // collapse: the discarding caller gets the same staleness answer an awaiting one does.
     [Fact]
     public async Task A_Second_Discarded_Call_Reuses_Fresh_Data_Rather_Than_Refetching()
     {
@@ -63,10 +55,6 @@ public class QueryAsyncDiscardedTests
         Assert.Equal(1, calls);
     }
 
-    // The test this replaces asserted that PrefetchQuery does not throw on a failing handler.
-    // That guarantee was the library's swallow, and 0008 moved it to the caller. What is left
-    // worth asserting is that the swallow is all it takes: the call site stays quiet and the
-    // failure is recorded on the query, where anything that subscribes later will find it.
     [Fact]
     public async Task A_Discarded_Call_Leaves_A_Handler_Failure_On_The_Query()
     {
@@ -83,8 +71,6 @@ public class QueryAsyncDiscardedTests
         Assert.True(state.IsException);
     }
 
-    // Awaiting the same call does throw. The two differ only in the error policy the caller
-    // picks, which is exactly what the two methods used to pick for them.
     [Fact]
     public async Task The_Same_Call_Awaited_Throws_Instead()
     {

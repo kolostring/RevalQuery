@@ -9,15 +9,10 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Blazor.Tests;
 
-/// <summary>
-/// Records eviction registration instead of evicting, so that releasing a query is something a
-/// test can see: a query nothing observes is registered, and one observed again is cancelled.
-/// </summary>
 public sealed class RecordingEviction : ICacheEvictionPolicy
 {
     public ConcurrentQueue<ITuple> Registered { get; } = new();
     public ConcurrentQueue<ITuple> Cancelled { get; } = new();
-    // Nothing ever expires here: eviction is only recorded
 #pragma warning disable CS0067
     public event Action<ITuple>? OnEvictionRequired;
 #pragma warning restore CS0067
@@ -27,10 +22,6 @@ public sealed class RecordingEviction : ICacheEvictionPolicy
     public int RegisteredCount(int id) => Registered.Count(k => (int)k[1]! == id);
 }
 
-/// <summary>
-/// One client, one eviction recorder and a handler whose every call is counted. A handler
-/// completes at once unless the test has put a gate in its way, and nothing in it waits on a clock.
-/// </summary>
 public sealed class Fx : IDisposable
 {
     public RecordingEviction Eviction { get; } = new();

@@ -91,8 +91,6 @@ public sealed record RetryOptions
     public int? Retry
     {
         get => _retry;
-        // Validated here as well as in the constructor, because an object initialiser and a
-        // with-expression both reach this and neither runs the constructor body.
         init => _retry = value < 0
             ? throw new ArgumentOutOfRangeException(
                 nameof(Retry), value,
@@ -146,8 +144,6 @@ public sealed class RetryOptionsBuilder
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is negative.</exception>
     public RetryOptionsBuilder Retry(int count, Func<int, TimeSpan>? delay = null)
     {
-        // Checked here as well as in RetryOptions, so a bad literal is reported at the call
-        // site that wrote it rather than at whatever line happens to call Build.
         ArgumentOutOfRangeException.ThrowIfNegative(count);
 
         _retry = count;

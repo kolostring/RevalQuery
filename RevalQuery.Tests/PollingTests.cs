@@ -101,7 +101,6 @@ public class PollingTests
         using var disabled = _client.Subscribe(queryOptions with { Enabled = false }, () => { });
         using var enabled = _client.Subscribe(queryOptions, () => { });
 
-        // One fetch for the subscription, then the loop it has to start.
         await TestUtils.WaitUntilAsync(() => Volatile.Read(ref calls) >= 3, 2000);
 
         Assert.True(Volatile.Read(ref calls) >= 3);
