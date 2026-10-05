@@ -7,7 +7,7 @@ Type-safe async data fetching and caching library for .NET. Inspired by TanStack
 | Package | Description |
 |---------|-------------|
 | [RevalQuery.Core](./RevalQuery.Core) | Core library with QueryClient, QueryOptions, MutationOptions |
-| [RevalQuery.Blazor](./RevalQuery.Blazor) | Blazor integration with UseQuery, UseMutation |
+| [RevalQuery.Blazor](./RevalQuery.Blazor) | Blazor integration: `QueryHost` and `Client.CreateScope(this)` |
 
 ## Installation
 
@@ -29,13 +29,20 @@ browser afterwards. To stop the browser refetching what the server already fetch
 
 ```razor
 @using RevalQuery.Blazor
-@inherits QueryComponentBase
+@using RevalQuery.Core.Scope
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 @code {
-    IQueryState<User[]> Users => UseQuery(
-        key: ("users",),
-        handler: async static ctx =>
-            await ctx.ServiceProvider.GetRequiredService<IUserService>().GetAll()
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
+    IQueryState<User[]> Users => Q.Query(
+        QueryOptions.Create<User[]>(
+            "users",
+            async static ctx =>
+                await ctx.ServiceProvider.GetRequiredService<IUserService>().GetAll())
     );
 }
 
@@ -53,6 +60,13 @@ browser afterwards. To stop the browser refetching what the server already fetch
     <p>Loading...</p>
 }
 ```
+
+A component reads through a `QueryScope` and inherits from nothing. A hidden branch keeps its
+queries until it renders again, and a call site read by a page and by an asynchronously loading
+child with different keys can thrash: see the
+[known limitations](./RevalQuery.Blazor/README.md#known-limitations) and their workarounds.
+Upgrading from `QueryComponentBase`? See the
+[migration table](./RevalQuery.Blazor/README.md#migrating-from-querycomponentbase).
 
 ## Features
 

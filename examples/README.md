@@ -45,8 +45,8 @@ dotnet run --project examples/MudBlazorDemo
 | --- | --- |
 | `/products` | A query's `IsLoading` drives `MudTable.Loading`, and selecting a row enables a detail query that was disabled until then. |
 | `/autocomplete` | `MudAutocomplete` wants a search function rather than a render loop, so this one calls `QueryAsync` and nothing else. It consults the query's stale time, so a term typed again is answered from the registry without reaching the service, and the token it takes abandons the wait rather than the fetch. |
-| `/reviews` | A `MudForm` posts through `UseMutation`, which invalidates the reviews key on success. |
+| `/reviews` | A `MudForm` posts through `Q.Mutation`, which invalidates the reviews key on success. |
 
 Integrating with a component library needs nothing special: `AddRevalQuery()` in `Program.cs`,
-`@inherits QueryComponentBase` on the pages that query, and the query state's flags bound to
+a `<QueryHost Scope="Q" />` on the pages that query, and the query state's flags bound to
 whichever properties the components expose.

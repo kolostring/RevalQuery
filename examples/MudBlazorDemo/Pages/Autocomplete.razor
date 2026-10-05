@@ -1,5 +1,5 @@
 @page "/autocomplete"
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
 
 <PageTitle>Autocomplete</PageTitle>
 
@@ -8,7 +8,7 @@
 <MudText Class="mb-4">
     <MudChip T="string" Size="Size.Small">MudAutocomplete</MudChip> asks for a search function,
     not for a component that re-renders when data arrives, so
-    <MudChip T="string" Size="Size.Small">UseQuery</MudChip> is the wrong tool here.
+    <MudChip T="string" Size="Size.Small">Q.Query</MudChip> is the wrong tool here.
     <MudChip T="string" Size="Size.Small">QueryAsync</MudChip> is the whole answer: it hands
     back data the registry already holds when that data is still fresh, and only reaches the
     handler when it is not. Staleness belongs to the query, so this page does not own a copy

@@ -1,5 +1,7 @@
 @page "/products"
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Table and detail</PageTitle>
 
@@ -82,9 +84,12 @@ else if (Detail.Data is { } detail)
 }
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private int? Selected { get; set; }
 
-    IQueryState<List<Product>> ProductList => UseQuery(
+    IQueryState<List<Product>> ProductList => Q.Query(
         QueryOptions
             .Create<List<Product>>(
                 "products",
@@ -92,7 +97,7 @@ else if (Detail.Data is { } detail)
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    IQueryState<ProductDetail> Detail => UseQuery(
+    IQueryState<ProductDetail> Detail => Q.Query(
         QueryOptions
             .Create<(string, int), ProductDetail>(
                 ("product", Selected ?? 0),

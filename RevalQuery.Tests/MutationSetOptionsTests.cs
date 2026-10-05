@@ -1,15 +1,12 @@
-#pragma warning disable BL0006 // a test renderer is the one place the framework-only types are wanted
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.AspNetCore.Components;
-using Microsoft.AspNetCore.Components.RenderTree;
-using RevalQuery.Blazor;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Mutation;
 using RevalQuery.Core.Mutation.Callbacks;
 using RevalQuery.Core.Mutation.Execution;
 using RevalQuery.Core.Mutation.Options;
+using RevalQuery.Core.Scope;
 
 namespace RevalQuery.Tests;
 
@@ -347,27 +344,16 @@ public class MutationSetOptionsTests
         Assert.True(Volatile.Read(ref changes) > 0);
     }
 
-    private sealed class Probe : QueryComponentBase
-    {
-        public MutationState<Req, string> Run(MutationOptions<Req, string> options) =>
-            UseMutation(options, line: 1, member: "Run");
-    }
-
     [Fact]
-    public async Task UseMutation_Applies_The_Options_Of_Every_Render()
+    public async Task A_Scope_Applies_The_Options_Of_Every_Render()
     {
-        var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = NewClient(sp);
+        using var client = NewClient();
+        using var scope = client.CreateScope();
 
-        using var renderer = new TestRenderer(sp);
-        var probe = new Probe();
-        renderer.Attach(probe);
-        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-        typeof(QueryComponentBase).GetProperty("Client", flags)!.SetValue(probe, client);
-        typeof(QueryComponentBase).GetProperty("ServiceProvider", flags)!.SetValue(probe, sp);
+        MutationState<Req, string> Run(MutationOptions<Req, string> options) => scope.Mutation(options);
 
-        var first = probe.Run(MutationOptions.Create<Req, string>(_ => Task.FromResult("render-1")).Build());
-        var second = probe.Run(MutationOptions.Create<Req, string>(_ => Task.FromResult("render-2")).Build());
+        var first = Run(MutationOptions.Create<Req, string>(_ => Task.FromResult("render-1")).Build());
+        var second = Run(MutationOptions.Create<Req, string>(_ => Task.FromResult("render-2")).Build());
 
         Assert.Same(first, second);
 
@@ -375,23 +361,5 @@ public class MutationSetOptionsTests
 
         // Before, the slot kept the options of the render that created it.
         Assert.Equal("render-2", second.Data);
-
-        probe.Dispose();
-    }
-
-    /// <summary>
-    /// The least a component needs to be attached to: a handle to re-render through, which is
-    /// what a mutation's change notification asks for.
-    /// </summary>
-    private sealed class TestRenderer(IServiceProvider services)
-        : Renderer(services, Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
-    {
-        public override Dispatcher Dispatcher { get; } = Dispatcher.CreateDefault();
-
-        public void Attach(IComponent component) => AssignRootComponentId(component);
-
-        protected override void HandleException(Exception exception) => throw exception;
-
-        protected override Task UpdateDisplayAsync(in RenderBatch renderBatch) => Task.CompletedTask;
     }
 }

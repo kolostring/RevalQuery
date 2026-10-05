@@ -1,13 +1,15 @@
 @page "/reviews"
 @inject ISnackbar Snackbar
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Form and mutation</PageTitle>
 
 <MudText Typo="Typo.h4" GutterBottom="true">Form and mutation</MudText>
 
 <MudText Class="mb-4">
-    The form posts through <MudChip T="string" Size="Size.Small">UseMutation</MudChip>. Its
+    The form posts through <MudChip T="string" Size="Size.Small">Q.Mutation</MudChip>. Its
     OnResolved invalidates the reviews key, and the query reading that key refetches on its own.
     Nothing here writes the mutation's response into the cache by hand.
 </MudText>
@@ -91,6 +93,9 @@ else
 }
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private int ProductId { get; set; } = 1;
     private string Author { get; set; } = string.Empty;
     private int Rating { get; set; } = 4;
@@ -110,7 +115,7 @@ else
     /// <summary>What the mutation is given. A class, which is what MutationOptions requires.</summary>
     public sealed record AddReviewParams(int ProductId, Review Review);
 
-    IQueryState<List<Product>> ProductList => UseQuery(
+    IQueryState<List<Product>> ProductList => Q.Query(
         QueryOptions
             .Create<List<Product>>(
                 "products",
@@ -118,7 +123,7 @@ else
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    IQueryState<List<Review>> ReviewList => UseQuery(
+    IQueryState<List<Review>> ReviewList => Q.Query(
         QueryOptions
             .Create<(string, int), List<Review>>(
                 ("reviews", ProductId),
@@ -126,7 +131,7 @@ else
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    RevalQuery.Core.Mutation.MutationState<AddReviewParams, Review> AddReview => UseMutation(
+    RevalQuery.Core.Mutation.MutationState<AddReviewParams, Review> AddReview => Q.Mutation(
         MutationOptions
             .Create<AddReviewParams, Review>(
                 async static ctx => await CatalogService.AddReviewAsync(

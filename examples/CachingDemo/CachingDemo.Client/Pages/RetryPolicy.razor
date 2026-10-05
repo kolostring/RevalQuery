@@ -3,7 +3,10 @@
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
-@inherits RevalQuery.Blazor.QueryComponentBase
+@implements IDisposable
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Retry counts retries</PageTitle>
 
@@ -63,6 +66,9 @@
 }
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private int Retries { get; set; } = 2;
     private int Failures { get; set; } = 2;
 
@@ -93,7 +99,7 @@
 
     // Disabled until the first Run, then enabled with a key that changes per run. Enabled is
     // read on every render from 0.4.0, which is what lets a toggle like this take effect.
-    IQueryState<string> Attempt => UseQuery(
+    IQueryState<string> Attempt => Q.Query(
         QueryOptions
             .Create<(string, string, int), string>(
                 ("retry", _runId ?? "none", _runFailures),
@@ -105,9 +111,5 @@
             .ConfigureRetry(retry => retry.Retry(_runRetries, static _ => TimeSpan.FromMilliseconds(400)))
             .Build());
 
-    public override void Dispose()
-    {
-        FlakyService.OnAttempt -= OnAttempt;
-        base.Dispose();
-    }
+    public void Dispose() => FlakyService.OnAttempt -= OnAttempt;
 }

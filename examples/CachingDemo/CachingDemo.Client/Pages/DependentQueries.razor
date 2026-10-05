@@ -3,7 +3,9 @@
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Dependent queries</PageTitle>
 
@@ -61,9 +63,12 @@ else
 }
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private string? Selected { get; set; }
 
-    IQueryState<List<string>> Users => UseQuery(
+    IQueryState<List<string>> Users => Q.Query(
         QueryOptions
             .Create<List<string>>(
                 "users",
@@ -71,7 +76,7 @@ else
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    IQueryState<List<string>> Orders => UseQuery(
+    IQueryState<List<string>> Orders => Q.Query(
         QueryOptions
             .Create<(string, string), List<string>>(
                 ("orders", Selected ?? ""),

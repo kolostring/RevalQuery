@@ -418,7 +418,7 @@ public sealed class QueryClient : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>The whole of what a component does on a render, for a caller that has nothing like
-    /// <c>QueryComponentBase</c> to do it for them. The slot is the caller's: a field of the
+    /// a <see cref="QueryScope"/> to do it for them. The slot is the caller's: a field of the
     /// component, dispose it with the component. The observer inside it follows the key, so the
     /// caller never compares one.</para>
     /// <para>Returns the state to read from, which is a different object after a key change.

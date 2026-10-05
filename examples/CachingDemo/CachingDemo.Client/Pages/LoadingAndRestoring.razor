@@ -6,7 +6,9 @@
    prerender would fetch on the server and transfer the result, which is precisely the restore
    this page exists to show. *@
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Loading covers restores</PageTitle>
 
@@ -49,7 +51,10 @@
 <p>Data: <strong>@(Orders.Data ?? "none yet")</strong></p>
 
 @code {
-    IQueryState<string> Profile => UseQuery(
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
+    IQueryState<string> Profile => Q.Query(
         QueryOptions
             .Create<(string, string), string>(
                 ("persisted", "profile"),
@@ -57,7 +62,7 @@
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    IQueryState<string> Orders => UseQuery(
+    IQueryState<string> Orders => Q.Query(
         QueryOptions
             .Create<(string, string), string>(
                 ("persisted", "orders"),

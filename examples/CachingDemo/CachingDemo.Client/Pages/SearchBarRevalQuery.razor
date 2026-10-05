@@ -4,7 +4,9 @@
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Search Bar Example</PageTitle>
 
@@ -40,6 +42,9 @@
 </div>
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private string SearchTerm { get; set; } = string.Empty;
 
     /// <summary>
@@ -75,5 +80,5 @@
 
     // Passing the token through is what lets Cancel, and a key change, actually stop a fetch.
     // Dropping it leaves the request running and its result arriving anyway.
-    IQueryState<List<string>> Suggestions => UseQuery(SuggestionsFor(SearchTerm));
+    IQueryState<List<string>> Suggestions => Q.Query(SuggestionsFor(SearchTerm));
 }

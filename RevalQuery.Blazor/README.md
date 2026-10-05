@@ -8,9 +8,14 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 
 ```razor
 @using CachingDemo.Client.Services
+@using RevalQuery.Blazor
 @using RevalQuery.Core
+@using RevalQuery.Core.Query.Options
+@using RevalQuery.Core.Scope
 @rendermode InteractiveWebAssembly
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Search Bar Example</PageTitle>
 
@@ -46,12 +51,16 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 </div>
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private string SearchTerm { get; set; } = string.Empty;
 
-    IQueryState<List<string>> Suggestions => UseQuery(
-        key: ("search", SearchTerm),
-        handler: async static ctx => await SearchService.SearchAsync(ctx.Key.Item2),
-        options => options
+    IQueryState<List<string>> Suggestions => Q.Query(
+        QueryOptions
+            .Create(
+                ("search", SearchTerm),
+                async static ctx => await SearchService.SearchAsync(ctx.Key.Item2))
             .ConfigureFetch(fetch => fetch
                 .StaleTime(TimeSpan.FromMinutes(5))
             )
@@ -63,8 +72,10 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 
 - [Installation](#installation)
 - [Component Integration](#component-integration)
-- [UseQuery](#usequery)
-- [UseMutation](#usemutation)
+- [Q.Query](#qquery)
+- [Q.Mutation](#qmutation)
+- [Known limitations](#known-limitations)
+- [Migrating from QueryComponentBase](#migrating-from-querycomponentbase)
 - [Optimistic updates](#optimistic-updates)
 - [QueryFactory Pattern](#queryfactory-pattern)
 - [QueryState Properties](#querystate-properties)
@@ -93,25 +104,68 @@ browser refetching what the server already fetched.
 
 ## Component Integration
 
-Inherit from `QueryComponentBase`:
+A component reads through a `QueryScope`: one per component, created from the client and handed to
+a `QueryHost` in the markup. The component inherits from nothing, so it can keep whatever base
+class it already has.
 
 ```razor
-@inherits QueryComponentBase
+@using RevalQuery.Blazor
+@using RevalQuery.Core.Scope
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
+
+@code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+}
 ```
+
+`Client.CreateScope(this)` binds the scope to the component, which is any `IHandleEvent`. The
+`QueryHost` renders nothing. It re-renders the component when a query or mutation it reads
+changes, reports each finished render to the scope, and disposes the scope when the component is
+disposed. A scope with no host never re-renders its component and never releases anything, and
+a host given a scope made without `(this)` throws and says so.
+
+Read through the scope in a property or in the markup, on every render, and read the state it
+returns afterwards. The scope subscribes on the first read of a key, hands the options of every
+later read to the same observer, and releases the query when a render stops reading it.
+
+A read is identified by its call site, so a loop, or a helper method called with different keys,
+holds one query per key. Two reads of one key share one observer. See
+[Q.Query](#qquery) for the rules, and [Known limitations](#known-limitations) for what the
+release rule cannot see.
 
 ---
 
-## UseQuery
+## Q.Query
 
-Subscribe to a query - observes data and manages lifecycle automatically.
+Read a query - subscribes on the first read, re-applies the options on every later one, and
+releases it when a render stops reading it.
 
 ```csharp
-IQueryState<User[]> Users => UseQuery(
-    key: ("users",),
-    handler: async static ctx =>
-        await ctx.ServiceProvider.GetRequiredService<IUserService>().GetAll()
+IQueryState<User[]> Users => Q.Query(
+    QueryOptions.Create<User[]>(
+        "users",
+        async static ctx =>
+            await ctx.ServiceProvider.GetRequiredService<IUserService>().GetAll()
+    )
 );
 ```
+
+It takes `QueryOptions` or a `QueryOptionsBuilder`, so everything from the
+[QueryFactory pattern](#queryfactory-pattern) works unchanged.
+
+**Release.** When a render completes, the scope looks at each call site that was read since the
+previous render and releases the keys at that site that were not read. A key switch is the
+common case: the old key is released after the render that read the new one, and its cached
+data stays for `GcTime`. A call site that was not read at all releases nothing. Reads from event
+handlers, or from content that renders in a later batch such as a popover, count towards the next
+render's sweep, so such a read can delay a release by one render.
+
+**Explicit slot.** `Q.Query(options, slot)` identifies the read by a value of your choosing in
+place of the call site, for the case in [Known limitations](#known-limitations). Pass a tuple, for
+example `("rows", 0)`. A plain string binds to the call-site overload as its file name.
 
 **Static handlers:** Handlers must be `static`. Using `static` ensures compilation error if the handler accidentally captures component state. This guarantees pure, stateless functions that won't cause memory leaks or stale closures.
 
@@ -125,12 +179,12 @@ handler: async static ctx => someComponentField  // Compile error
 
 ---
 
-## UseMutation
+## Q.Mutation
 
 Execute write operations (Create/Update/Delete). Supports callbacks.
 
 ```csharp
-MutationState<CreateUserRequest, User> CreateUserMutation => UseMutation(
+MutationState<CreateUserRequest, User> CreateUserMutation => Q.Mutation(
     MutationOptions.Create<CreateUserRequest, User>(
         async static ctx =>
             await ctx.ServiceProvider.GetRequiredService<IUserService>().CreateAsync(ctx.Params)
@@ -143,11 +197,57 @@ MutationState<CreateUserRequest, User> CreateUserMutation => UseMutation(
 await CreateUserMutation.ExecuteAsync(new CreateUserRequest { Name = "John" });
 ```
 
-The mutation is created with `Client.CreateMutation` on the first render, and every later render
-hands its options to the same observer through `MutationObserver.SetOptions`. A callback that
+The mutation is created on the first read, and every later render hands its options to the same
+observer through `MutationObserver.SetOptions`. A mutation is never released by a render: it lives
+until the scope is disposed, so a run that outlasts the render that started it keeps its state.
+Two mutations on one line, or one in a loop, share a call site and so share one mutation; use
+`Q.Mutation(key, options)` where each needs its own. A callback that
 closes over something the render changed therefore sees the new value: the latest run reads the
 new handler on its next retry attempt and the new callbacks when each fires. See
 [Reactive options](#reactive-options).
+
+---
+
+## Known limitations
+
+The release rule is a function of which call sites were read and when renders completed, and
+nothing else: it reads no clock. That is why it cannot tell some things apart, and these two stand
+until an alternative is found.
+
+1. **A hidden branch keeps its queries.** A call site that is not read releases nothing, because
+   the scope cannot tell a branch that is hidden from one that has not rendered yet. Queries in
+   an `@if` that turns false stay subscribed, and keep polling, until the page is disposed or
+   the branch renders again. Put `Enabled(isVisible)` in the options so a hidden query stops
+   fetching meanwhile:
+
+   ```csharp
+   Q.Query(UserQueries.GetUserOptions(id).Enabled(isVisible))
+   ```
+
+2. **A call site read both in the page and inside an asynchronously loading child, with
+   different keys, can thrash.** Each side's render releases what the other read, so the query
+   is released and recreated. Give the child's read its own getter, or an explicit slot:
+
+   ```csharp
+   Q.Query(options, ("rows", 0))
+   ```
+
+---
+
+## Migrating from QueryComponentBase
+
+`QueryComponentBase`, `UseQuery` and `UseMutation` are gone.
+
+| Before | After |
+|--------|-------|
+| `@inherits QueryComponentBase` | `@inject QueryClient Client`, `<QueryHost Scope="Q" />`, and `private QueryScope? _q; private QueryScope Q => _q ??= Client.CreateScope(this);` in `@code` |
+| `UseQuery(key: k, handler: h, o => o.Enabled(x))` | `Q.Query(QueryOptions.Create(k, h).Enabled(x))` |
+| `UseQuery(options)` | `Q.Query(options)` |
+| `UseMutation(options)` | `Q.Mutation(options)` |
+| `override void Dispose()` calling `base.Dispose()` | implement `IDisposable` and drop the `base` call; the host disposes the scope |
+
+`Client` was an injected property of the base class, and the `@inject` above replaces it under the
+same name. `ServiceProvider` is gone with it: handlers receive one in their context.
 
 ---
 
@@ -164,24 +264,24 @@ produces can still reach the query. A handler that ignored its `CancellationToke
 a value anyway has that value discarded.
 
 ```csharp
-MutationState<Todo, Todo> AddTodoMutation => UseMutation(
+MutationState<Todo, Todo> AddTodoMutation => Q.Mutation(
     MutationOptions.Create<Todo, Todo>(
         async static ctx => await ctx.ServiceProvider
             .GetRequiredService<ITodoService>().AddAsync(ctx.Params, ctx.CancellationToken))
     .OnMutate(async todo =>
     {
         // Nothing in flight can overwrite the write below once this returns.
-        await QueryClient.CancelAsync(TodoQueries.Key);
+        await Client.CancelAsync(TodoQueries.Key);
 
-        var todos = QueryClient.FindQuery<List<Todo>>(TodoQueries.Key)!;
+        var todos = Client.FindQuery<List<Todo>>(TodoQueries.Key)!;
         _rollback = todos.Data;
         todos.Data = [.. todos.Data ?? [], todo];
     })
     .OnException(async (_, _) =>
     {
-        QueryClient.FindQuery<List<Todo>>(TodoQueries.Key)!.Data = _rollback;
+        Client.FindQuery<List<Todo>>(TodoQueries.Key)!.Data = _rollback;
     })
-    .OnSettled(async (_, _, _) => QueryClient.Invalidate(TodoQueries.Key))
+    .OnSettled(async (_, _, _) => Client.Invalidate(TodoQueries.Key))
 );
 ```
 
@@ -217,7 +317,7 @@ public static class UserQueries
 **Usage in component:**
 
 ```csharp
-IQueryState<User> User => UseQuery(
+IQueryState<User> User => Q.Query(
     UserQueries.GetUserOptions(userId)
         .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
         .ConfigureRetry(r => r.Retry(3))
@@ -269,7 +369,7 @@ calls the handler once, and `Retry(3)`, the default for queries, calls it up to 
 Mutations default to no retries.
 
 ```csharp
-IQueryState<User> User => UseQuery(
+IQueryState<User> User => Q.Query(
     UserQueries.GetUserOptions(userId)
         .ConfigureRetry(r => r.Retry(2))    // up to three calls
 );
@@ -279,7 +379,7 @@ IQueryState<User> User => UseQuery(
 
 ## Reactive options
 
-Options are rebuilt on every render and handed to the slot's observer on every render, through
+Options are rebuilt on every render and handed to the key's observer on every read, through
 `QueryObserver.SetOptions`. `Enabled`, `StaleTime`, `RefetchInterval`, retry and cache options
 all take effect the moment a re-render changes them. The key decides which query the call
 watches, and the observer follows it: when the key changes, `SetOptions` moves the observer to
@@ -290,11 +390,13 @@ That is what makes the dependent-query pattern work. Render once disabled, and a
 once the value the key depends on arrives:
 
 ```csharp
-IQueryState<Order[]> Orders => UseQuery(
-    key: ("orders", UserId),
-    handler: async static ctx =>
-        await ctx.ServiceProvider.GetRequiredService<IOrderService>().ForUser(ctx.Key.Item2),
-    options => options.Enabled(UserId is not null)
+IQueryState<Order[]> Orders => Q.Query(
+    QueryOptions
+        .Create(
+            ("orders", UserId),
+            async static ctx =>
+                await ctx.ServiceProvider.GetRequiredService<IOrderService>().ForUser(ctx.Key.Item2))
+        .Enabled(UserId is not null)
 );
 ```
 
@@ -304,8 +406,8 @@ subscriber does. Disabling one stops its polling and leaves its cached data alon
 Fetch, retry and cache options belong to the query rather than to the component, so where two
 components watch one key, the most recent render wins.
 
-Mutations are re-optioned the same way. `UseMutation` creates the mutation on the first render
-and calls `SetOptions` on every render after. Runs that are already in flight are affected only
+Mutations are re-optioned the same way. `Q.Mutation` creates the mutation on the first read
+and calls `SetOptions` on every read after. Runs that are already in flight are affected only
 if they are the latest: it picks up the new handler for any further retry attempt and the new
 callbacks as each fires, while its retry count stays what it was at the start. An older run still
 running keeps the options it began with.

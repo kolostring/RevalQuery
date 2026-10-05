@@ -4,7 +4,9 @@
 @using RevalQuery.Core.Mutation.Options
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
-@inherits RevalQuery.Blazor.QueryComponentBase
+@inject QueryClient Client
+
+<QueryHost Scope="Q" />
 
 <PageTitle>Mutations and invalidation</PageTitle>
 
@@ -56,6 +58,9 @@ else
 }
 
 @code {
+    private QueryScope? _q;
+    private QueryScope Q => _q ??= Client.CreateScope(this);
+
     private string Draft { get; set; } = string.Empty;
 
     private async Task Add()
@@ -68,7 +73,7 @@ else
     /// <summary>The mutation's parameters. A class, which is what MutationOptions requires.</summary>
     public sealed record AddItemParams(string Text);
 
-    IQueryState<List<string>> Todos => UseQuery(
+    IQueryState<List<string>> Todos => Q.Query(
         QueryOptions
             .Create<List<string>>(
                 "todos",
@@ -76,7 +81,7 @@ else
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    RevalQuery.Core.Mutation.MutationState<AddItemParams, string> AddItem => UseMutation(
+    RevalQuery.Core.Mutation.MutationState<AddItemParams, string> AddItem => Q.Mutation(
         MutationOptions
             .Create<AddItemParams, string>(
                 async static ctx => await TodoService.AddAsync(ctx.Params.Text, ctx.CancellationToken))

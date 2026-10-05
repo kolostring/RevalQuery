@@ -144,3 +144,9 @@ Both were that way before and are untouched.
 
 `MutationState` and `MutationObserver` no longer have a public constructor. Breaking for 0.4.0,
 with the changes above.
+
+## Later
+
+ADR 0010 removed `QueryComponentBase`. What it did here, holding one slot per query and calling
+`Subscribe` on a new one and `SetOptions` on an existing one, is now `QueryScope`, which holds an
+observer per query key and does the same two things. The observer is unchanged.

@@ -1,16 +1,17 @@
 using Microsoft.Extensions.DependencyInjection;
-using RevalQuery.Blazor;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
+using RevalQuery.Core.Query.Options;
+using RevalQuery.Core.Scope;
 
 namespace RevalQuery.Tests;
 
 /// <summary>
 /// Covers the dependent-query pattern: a component renders once with Enabled(false), then
 /// again with Enabled(true) once the value its key depends on arrives. The second render must
-/// enable the query and fetch, which means UseQuery has to apply options rebuilt by a render
+/// enable the query and fetch, which means a scope has to apply options rebuilt by a render
 /// rather than discarding them when the key is unchanged.
 /// </summary>
 public class EnabledToggleTests
@@ -23,31 +24,20 @@ public class EnabledToggleTests
         return Task.FromResult("data");
     }
 
-    private sealed class Probe : QueryComponentBase
+    // One scope per probe, the way each component has its own. Run is a single call site, so
+    // every call to it is the same slot, exactly as repeated renders of one component would be.
+    private sealed class Probe(QueryClient client) : IDisposable
     {
-        public IQueryState<string> Run(bool enabled, TimeSpan? staleTime = null) =>
-            UseQuery(
-                key: ValueTuple.Create("toggle"),
-                handler: CountingHandler,
-                configure: o =>
-                {
-                    o.Enabled(enabled);
-                    if (staleTime is not null) o.ConfigureFetch(f => f.StaleTime(staleTime.Value));
-                },
-                line: 1,          // pin the slot id so every call hits the same slot,
-                member: "Run");   // exactly as repeated renders of one component would
-    }
+        private readonly QueryScope _scope = client.CreateScope();
 
-    private static Probe NewProbe(QueryClient client, IServiceProvider sp)
-    {
-        var probe = new Probe();
-        typeof(QueryComponentBase).GetProperty("Client",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-            .SetValue(probe, client);
-        typeof(QueryComponentBase).GetProperty("ServiceProvider",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-            .SetValue(probe, sp);
-        return probe;
+        public IQueryState<string> Run(bool enabled, TimeSpan? staleTime = null)
+        {
+            var options = QueryOptions.Create(ValueTuple.Create("toggle"), CountingHandler).Enabled(enabled);
+            if (staleTime is not null) options.ConfigureFetch(f => f.StaleTime(staleTime.Value));
+            return _scope.Query(options);
+        }
+
+        public void Dispose() => _scope.Dispose();
     }
 
     [Fact]
@@ -57,7 +47,7 @@ public class EnabledToggleTests
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions());
 
-        var probe = NewProbe(client, sp);
+        using var probe = new Probe(client);
 
         // First render: disabled. Nothing fetches.
         var first = probe.Run(enabled: false);
@@ -83,7 +73,7 @@ public class EnabledToggleTests
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions());
 
-        var probe = NewProbe(client, sp);
+        using var probe = new Probe(client);
 
         probe.Run(enabled: true);
         await Task.Delay(200);
@@ -106,7 +96,7 @@ public class EnabledToggleTests
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new QueryClient(sp, new RevalQueryOptions());
 
-        var probe = NewProbe(client, sp);
+        using var probe = new Probe(client);
 
         // Created disabled with a long stale time, so the first enable does not fetch.
         probe.Run(enabled: false, staleTime: TimeSpan.FromHours(1));
@@ -120,7 +110,7 @@ public class EnabledToggleTests
         Assert.Equal(1, _calls);
 
         // Fresh under an hour: a new observer on the same key must not refetch.
-        var other = NewProbe(client, sp);
+        using var other = new Probe(client);
         other.Run(enabled: true, staleTime: TimeSpan.FromHours(1));
         await Task.Delay(200);
         Assert.Equal(1, _calls);
@@ -128,12 +118,9 @@ public class EnabledToggleTests
         // Same key, rebuilt with a zero stale time. The next subscriber sees the new value and
         // refetches, which only works if the rebuilt FetchOptions reached the state.
         probe.Run(enabled: true, staleTime: TimeSpan.Zero);
-        var third = NewProbe(client, sp);
+        using var third = new Probe(client);
         third.Run(enabled: true, staleTime: TimeSpan.Zero);
         await Task.Delay(200);
         Assert.Equal(2, _calls);
-
-        other.Dispose();
-        third.Dispose();
     }
 }

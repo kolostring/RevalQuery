@@ -73,6 +73,51 @@ public sealed class QueryClient
 }
 ```
 
+### Scopes
+
+A `QueryScope` owns everything one component reads, so the component holds no observers. Create
+one with `client.CreateScope()`, read through it on every render, and dispose it with the
+component. In Blazor, `QueryHost` does the wiring below; see the
+[Blazor README](../RevalQuery.Blazor/README.md#component-integration).
+
+```csharp
+using var scope = client.CreateScope();
+
+// Subscribes on the first read of a key and re-applies the options on every read after
+IQueryState<User[]> users = scope.Query(UserQueries.All());
+MutationState<NewUser, User> add = scope.Mutation(AddUser());
+
+// A host for your UI framework
+using var host = scope.Attach(() => /* ask the component to render again */);
+
+// ... after each render completes
+scope.RenderCompleted();
+```
+
+A read is identified by its call site (`[CallerFilePath]`, `[CallerLineNumber]`), or by an explicit
+slot: `scope.Query(options, ("rows", 0))` and `scope.Mutation(key, options)`. A call site holds a
+set of query keys, so a loop or a helper method called with different keys holds one query per
+key, and two reads of one key share one observer, which is released when no call site holds it.
+Pass a tuple as a slot: a plain string binds to the call-site overload as its file name.
+
+`RenderCompleted` is the sweep. For every call site read since the previous sweep, the keys at that
+site that were not read are released, as a disposed observer releases them. A call site that was not
+read releases nothing, reads between sweeps count towards the next one, and nothing in the rule reads
+a clock. Mutations are never swept and live until the scope is disposed.
+
+The host is told when an observer reports a change from anywhere but inside the `Query` or
+`Mutation` call being made, since that one only describes what the render is about to read. A change
+that arrives before a host attaches is delivered once on `Attach`. A scope has one host at a time:
+attaching a second throws until the first handle is disposed. `Dispose` is idempotent and disposes
+every observer, and reads on a disposed scope throw `ObjectDisposedException`.
+
+Known limitations, until an alternative is found:
+
+1. A hidden branch keeps its queries, and any polling, until the scope is disposed or the branch
+   renders again. Put `Enabled(isVisible)` in the options.
+2. A call site read both in the page and inside an asynchronously loading child, with different
+   keys, can release and recreate its query. Use a separate getter or an explicit slot.
+
 ### Observing from your own component
 
 An observer is one component's subscription to whichever query its current options name.
@@ -83,8 +128,9 @@ it stays cached for its `GcTime`, and a fetch it had in flight is left to finish
 changes, `observer.Query` is a different object afterwards, and the caller holds one slot for
 the life of the component.
 
-`Observe` is the whole render step. Outside `QueryComponentBase`, keep a field per query as the
-slot, read it through a property, and dispose the slots with the component:
+`Observe` is the render step beneath a scope, for a caller that wants to hold the observer itself:
+keep a field per query as the slot, read it through a property, and dispose the slots with the
+component:
 
 ```csharp
 public sealed class ProductPage : ComponentBase, IDisposable
@@ -192,7 +238,7 @@ var mutationOptions = MutationOptions.Create<CreateUserRequest, User>(
 .ConfigureRetry(r => r.Retry(3));
 ```
 
-Outside `QueryComponentBase`, create a mutation with `CreateMutation`, or let `Observe` create it
+Without a scope, create a mutation with `CreateMutation`, or let `Observe` create it
 on the first render and re-option it on every later one:
 
 ```csharp
@@ -397,7 +443,7 @@ one user's data out of another's. Registering either as a singleton in a server
 process leaks data between users.
 
 `QueryClient` is safe to call from any thread. Observer callbacks are not
-synchronised, because `QueryComponentBase` already routes them through
+synchronised, because `QueryHost` already routes them through
 `InvokeAsync`.
 
 Disposal is enforced asymmetrically. Once the client is disposed, anything a live render
