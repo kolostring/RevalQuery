@@ -539,9 +539,9 @@ public sealed class QueryClient : IDisposable
 
                 if (!ReferenceEquals(state, observer.Current))
                 {
-                    // The observer's own enabled flag is set before it subscribes, as it is
-                    // for a new subscription, so the query reads as enabled the moment it has
-                    // an observer and the worker below does not mistake that for a toggle.
+                    // Set before attaching so the query reads as enabled the moment it has
+                    // an observer. The worker starts polling from its own state, not from
+                    // noticing this as a toggle.
                     observer.Enabled = options.Enabled;
                     left = observer.Attach(state);
                     moved = true;

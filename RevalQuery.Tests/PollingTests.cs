@@ -86,6 +86,27 @@ public class PollingTests
         Assert.Equal(firstData, state.Data);
     }
 
+    [Fact]
+    public async Task SubscribingEnabledToAQueryOnlyDisabledObserversHold_StartsPolling()
+    {
+        var calls = 0;
+        var queryOptions = QueryOptions.Create(Key, ctx =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult("data");
+            })
+            .ConfigureFetch(b => b.RefetchInterval(TimeSpan.FromMilliseconds(40)))
+            .Build();
+
+        using var disabled = _client.Subscribe(queryOptions with { Enabled = false }, () => { });
+        using var enabled = _client.Subscribe(queryOptions, () => { });
+
+        // One fetch for the subscription, then the loop it has to start.
+        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref calls) >= 3, 2000);
+
+        Assert.True(Volatile.Read(ref calls) >= 3);
+    }
+
     private static Task<string> UniqueHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
         => Task.FromResult($"data-{DateTime.UtcNow.Ticks}");
 

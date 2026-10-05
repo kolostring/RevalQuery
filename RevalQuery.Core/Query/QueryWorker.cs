@@ -141,11 +141,12 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         }
 
         // The loop captured the old interval when it started, so a changed one needs a new loop.
-        if (!wasEnabled || EnsuredFetchOptions.RefetchInterval != previousInterval)
-        {
-            StopPolling();
-            StartPolling(Query.Key);
-        }
+        if (EnsuredFetchOptions.RefetchInterval != previousInterval) StopPolling();
+
+        // Decided from whether a loop is running, not from wasEnabled: an observer that was
+        // attached before this call already made the query read as enabled, and a loop an
+        // earlier disabled observer stopped is still due. A running loop makes this a no-op.
+        StartPolling(Query.Key);
 
         if (!wasEnabled) RunIfStale();
     }

@@ -76,6 +76,30 @@ public class ObserverSetOptionsTests
     }
 
     [Fact]
+    public async Task Switching_To_A_Key_Held_Only_By_Disabled_Observers_Starts_Polling()
+    {
+        var calls = 0;
+        var interval = TimeSpan.FromMilliseconds(40);
+        using var client = NewClient();
+
+        Task<string> Fetch(int n, CancellationToken _)
+        {
+            if (n == 2) Interlocked.Increment(ref calls);
+            return Task.FromResult($"data-{n}");
+        }
+
+        using var disabled = client.Subscribe(Item(2, Fetch, enabled: false, refetchInterval: interval), () => { });
+        using var switching = client.Subscribe(Item(1, Fetch, refetchInterval: interval), () => { });
+
+        switching.SetOptions(Item(2, Fetch, refetchInterval: interval));
+
+        // One fetch for the switch itself, then the loop the switch has to start.
+        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref calls) >= 3, 2000);
+
+        Assert.True(Volatile.Read(ref calls) >= 3);
+    }
+
+    [Fact]
     public async Task The_Same_Key_Enabling_A_Disabled_Observer_Fetches()
     {
         var calls = 0;
