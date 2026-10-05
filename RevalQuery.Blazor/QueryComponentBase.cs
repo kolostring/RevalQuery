@@ -165,7 +165,7 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
     /// <summary>
     /// Creates a mutation using pre-built MutationOptions.
     /// Call ExecuteAsync on the returned state to run the mutation.
-    /// Auto-managed lifecycle.
+    /// Auto-managed lifecycle. Options are re-applied on every render.
     /// </summary>
     /// <typeparam name="TParams">Mutation parameters type.</typeparam>
     /// <typeparam name="TRes">Response type.</typeparam>
@@ -181,20 +181,15 @@ public abstract class QueryComponentBase : ComponentBase, IDisposable
     {
         var slotId = $"mutation_{member}_{line}";
 
-        if (_observerSlots.TryGetValue(slotId, out var existing))
-        {
-            var obs = (MutationObserver<TParams, TRes>)existing;
-            return obs.State;
-        }
+        _observerSlots.TryGetValue(slotId, out var existing);
+        var slot = (MutationObserver<TParams, TRes>?)existing;
 
-        var state = new MutationState<TParams, TRes>(options, ServiceProvider);
+        // Created on the first render, handed the render's options on every one after. The
+        // slot used to be created once and its options never looked at again, so a handler or
+        // callback that closed over something a render had changed kept the first render's.
+        var state = Client.Observe(ref slot, options, () => { InvokeAsync(StateHasChanged); });
 
-        var observer = new MutationObserver<TParams, TRes>(
-            state,
-            () => { InvokeAsync(StateHasChanged); }
-        );
-
-        _observerSlots[slotId] = observer;
+        _observerSlots[slotId] = slot!;
         return state;
     }
 

@@ -270,7 +270,8 @@ public class IssueReproductionTests
                 return Task.CompletedTask;
             });
 
-        var state = new RevalQuery.Core.Mutation.MutationState<Box, string>(options.Build(), sp);
+        using var client = new QueryClient(sp, new RevalQueryOptions());
+        var state = client.CreateMutation(options.Build(), () => { }).State;
 
         var slow = state.ExecuteAsync(new Box("SLOW", 300));
         await Task.Delay(50);

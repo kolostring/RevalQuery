@@ -44,6 +44,18 @@ public sealed class QueryClient
         Action onStateHasChanged
     );
 
+    // The same pair for mutations. The handler gets the client's own service provider.
+    public MutationObserver<TParams, TRes> CreateMutation<TParams, TRes>(
+        MutationOptions<TParams, TRes> options,
+        Action onStateHasChanged
+    );
+
+    public MutationState<TParams, TRes> Observe<TParams, TRes>(
+        ref MutationObserver<TParams, TRes>? slot,
+        MutationOptions<TParams, TRes> options,
+        Action onStateHasChanged
+    );
+
     // The whole imperative surface. Serves fresh cached data without calling the handler,
     // fetches otherwise, throws on error. The token abandons the wait, not the fetch.
     public async Task<TRes> QueryAsync<TKey, TRes>(
@@ -179,6 +191,26 @@ var mutationOptions = MutationOptions.Create<CreateUserRequest, User>(
 .OnSettled(async (data, ex, req) => Console.WriteLine("Mutation complete"))
 .ConfigureRetry(r => r.Retry(3));
 ```
+
+Outside `QueryComponentBase`, create a mutation with `CreateMutation`, or let `Observe` create it
+on the first render and re-option it on every later one:
+
+```csharp
+private MutationObserver<CreateUserRequest, User>? _createUser;
+
+MutationState<CreateUserRequest, User> CreateUser =>
+    Client.Observe(ref _createUser, mutationOptions, Rerender);
+
+// Dispose the slot with the component
+public void Dispose() => _createUser?.Dispose();
+```
+
+`MutationObserver.SetOptions` follows `MutationObserver.setOptions` in TanStack Query. The new
+options are what every later run starts from, and the latest run, if it is still pending, picks
+them up too: its handler on the next retry attempt, and `OnMutate`, `OnResolved`, `OnException`
+and `OnSettled` at the moment each fires. A run's retry count and delay were fixed when it
+started. Older runs still in flight keep the options they began with, and the per-call
+`MutateOptions` passed to `ExecuteAsync` are never touched.
 
 ---
 

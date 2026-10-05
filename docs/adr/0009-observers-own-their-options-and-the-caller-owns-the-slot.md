@@ -104,3 +104,43 @@ it once, in a single move.
 
 `CONTEXT.md` redefines **Observer** as one component's subscription to whichever query its
 current options name.
+
+## Mutations are created and re-optioned the same way
+
+`UseMutation` built a `MutationState` and a `MutationObserver` by hand on the first render and
+returned the slot's state on every one after, without looking at the options again. A callback
+that closed over a value the render had changed kept the value from the first render. That is
+the defect `ApplyOptions` fixed for queries, left standing for mutations, and it had the same
+cause: the caller owned the construction, so nothing in Core was responsible for what came next.
+
+`QueryClient.CreateMutation(options, onChanged)` returns the observer, with the client's own
+service provider handed to handlers, so a component needs no `IServiceProvider` of its own to
+build one. The `MutationObserver` and `MutationState` constructors went internal for the reason
+the query observer's did. `QueryClient.Observe(ref slot, options, onChanged)` has a mutation
+overload that creates on the first call and calls `MutationObserver.SetOptions` on the rest.
+There is no key, so a mutation never moves: `SetOptions` is the re-apply half alone.
+
+`MutationObserver.SetOptions` follows TanStack, whose `setOptions` replaces `this.options` and,
+if the current mutation is pending, calls `currentMutation.setOptions`. What a run reads is then
+decided by when it reads it. `Mutation.execute` reads `mutationFn` on every retry attempt and
+`onMutate`, `onSuccess`, `onError` and `onSettled` at the moment each fires, and it captures
+`retry` and `retryDelay` once, when the retryer is created at the start of the run. Per-call
+`mutate()` callbacks are a separate set and unaffected.
+
+TanStack builds a `Mutation` for every `mutate()` call, so each run already has options of its
+own, and only the latest is updated. RevalQuery has one `MutationState` for every concurrent
+run, because the state is what a component reads and `Data` and `Status` describe the latest.
+Reading a plain `_options` field lazily would therefore push the new options into every run in
+flight, where TanStack's older mutations keep theirs. Each `ExecuteAsync` now takes a holder of
+its own, seeded from the state's current options, and `SetOptions` replaces the state's options
+and the holder of the latest run that is still pending. A run is pending until its last callback
+has returned, as TanStack's is, so options set during `OnSettled` still reach it. `Reset` drops
+the latest run, as `reset()` drops the current mutation. Retry options are read from what the
+run started with, once.
+
+Nothing else on the per-run holder is shared: the state's version counter still decides which
+run writes `Data` and `Status`, and per-call `MutateOptions` still fire for the latest run only.
+Both were that way before and are untouched.
+
+`MutationState` and `MutationObserver` no longer have a public constructor. Breaking for 0.4.0,
+with the changes above.

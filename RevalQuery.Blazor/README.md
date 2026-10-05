@@ -143,6 +143,12 @@ MutationState<CreateUserRequest, User> CreateUserMutation => UseMutation(
 await CreateUserMutation.ExecuteAsync(new CreateUserRequest { Name = "John" });
 ```
 
+The mutation is created with `Client.CreateMutation` on the first render, and every later render
+hands its options to the same observer through `MutationObserver.SetOptions`. A callback that
+closes over something the render changed therefore sees the new value: the latest run reads the
+new handler on its next retry attempt and the new callbacks when each fires. See
+[Reactive options](#reactive-options).
+
 ---
 
 ## Optimistic updates
@@ -297,6 +303,12 @@ subscriber does. Disabling one stops its polling and leaves its cached data alon
 
 Fetch, retry and cache options belong to the query rather than to the component, so where two
 components watch one key, the most recent render wins.
+
+Mutations are re-optioned the same way. `UseMutation` creates the mutation on the first render
+and calls `SetOptions` on every render after. Runs that are already in flight are affected only
+if they are the latest: it picks up the new handler for any further retry attempt and the new
+callbacks as each fires, while its retry count stays what it was at the start. An older run still
+running keeps the options it began with.
 
 ---
 

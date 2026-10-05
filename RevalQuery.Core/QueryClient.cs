@@ -5,6 +5,8 @@ using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Caching.Eviction;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
+using RevalQuery.Core.Mutation;
+using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
@@ -329,7 +331,7 @@ public sealed class QueryClient : IDisposable
     /// <returns>
     /// A QueryObserver that should be disposed when component is disposed. Hand it new options
     /// with <see cref="QueryObserver{TKey, TRes}.SetOptions"/> on every render and it follows
-    /// the key; <see cref="Observe"/> does both steps.
+    /// the key; <see cref="Observe{TKey, TRes}(ref QueryObserver{TKey, TRes}?, QueryOptions{TKey, TRes}, Action)"/> does both steps.
     /// </returns>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public QueryObserver<TKey, TRes> Subscribe<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions, Action onStateHasChanged)
@@ -429,6 +431,67 @@ public sealed class QueryClient : IDisposable
         }
 
         return slot.Query;
+    }
+
+    /// <summary>
+    /// Creates a mutation for a component, handing handlers this client's service provider.
+    /// </summary>
+    /// <remarks>
+    /// A mutation has no key and is not cached, so nothing is registered: the state belongs to
+    /// the observer and goes when the caller lets go of it. Hand the observer new options with
+    /// <see cref="MutationObserver{TParams, TRes}.SetOptions"/> on every render, or use
+    /// <see cref="Observe{TParams, TRes}(ref MutationObserver{TParams, TRes}?, MutationOptions{TParams, TRes}, Action)"/>
+    /// to do both.
+    /// </remarks>
+    /// <typeparam name="TParams">The mutation parameters type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="options">The mutation configuration.</param>
+    /// <param name="onStateHasChanged">Callback to invoke StateHasChanged on the component.</param>
+    /// <returns>A MutationObserver that should be disposed when the component is.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public MutationObserver<TParams, TRes> CreateMutation<TParams, TRes>(
+        MutationOptions<TParams, TRes> options,
+        Action onStateHasChanged)
+        where TParams : class
+    {
+        lock (_gate) ThrowIfDisposedLocked();
+
+        return new MutationObserver<TParams, TRes>(
+            new MutationState<TParams, TRes>(options, _serviceProvider),
+            onStateHasChanged);
+    }
+
+    /// <summary>
+    /// Creates the mutation the first time it is called with a slot, and hands the slot its new
+    /// options every time after.
+    /// </summary>
+    /// <remarks>
+    /// The mutation counterpart of <see cref="Observe{TKey, TRes}(ref QueryObserver{TKey, TRes}?, QueryOptions{TKey, TRes}, Action)"/>. The slot is the caller's:
+    /// a field of the component, disposed with it.
+    /// </remarks>
+    /// <typeparam name="TParams">The mutation parameters type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="slot">The caller's observer, null until the first call.</param>
+    /// <param name="options">The mutation configuration for this render.</param>
+    /// <param name="onStateHasChanged">Callback to re-render. Used only when the slot is created.</param>
+    /// <returns>The mutation state to read from and call ExecuteAsync on.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public MutationState<TParams, TRes> Observe<TParams, TRes>(
+        ref MutationObserver<TParams, TRes>? slot,
+        MutationOptions<TParams, TRes> options,
+        Action onStateHasChanged)
+        where TParams : class
+    {
+        if (slot is null)
+        {
+            slot = CreateMutation(options, onStateHasChanged);
+        }
+        else
+        {
+            slot.SetOptions(options);
+        }
+
+        return slot.State;
     }
 
     /// <summary>
@@ -543,7 +606,7 @@ public sealed class QueryClient : IDisposable
     /// </summary>
     /// <remarks>
     /// Guards the entry points a live render reaches: Subscribe, QueryAsync,
-    /// GetOrCreateQuery and SetOptions. A component rendering against a
+    /// GetOrCreateQuery, SetOptions and CreateMutation. A component rendering against a
     /// disposed client is a bug, and one that silently created a query would also create a
     /// worker with nothing left to dispose it.
     ///
