@@ -16,7 +16,7 @@ public class StaticQueryTests
         return Task.FromResult($"call-{call}");
     }
 
-    private static QueryClient NewClient() =>
+    private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
     private static QueryOptions<ValueTuple<string>, string> Options(string key, bool neverStale) =>

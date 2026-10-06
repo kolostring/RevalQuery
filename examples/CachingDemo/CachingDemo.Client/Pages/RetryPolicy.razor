@@ -4,9 +4,9 @@
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
 @implements IDisposable
-@inject QueryTracker Q
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 <PageTitle>Retry counts retries</PageTitle>
 
@@ -87,7 +87,7 @@
         _runId = $"run-{_runCount}-{_runRetries}-{_runFailures}";
     }
 
-    IQueryState<string> Attempt => Q.Query(
+    IQueryState<string> Attempt => Reval.Query(
         QueryOptions
             .Create<(string, string, int), string>(
                 ("retry", _runId ?? "none", _runFailures),

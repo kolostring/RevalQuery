@@ -1,9 +1,9 @@
 @inject Fx Fx
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
 @if (Show)
 {
-    <span class="item">@Q.Query(Fx.Detail(1)).Data</span>
+    <span class="item">@Reval.Query(Fx.Detail(1)).Data</span>
 }
 @code {
     [Parameter] public bool Show { get; set; } = true;

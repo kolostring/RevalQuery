@@ -13,7 +13,7 @@ public class ReviewOf45161b7Tests
         var calls = 0;
 
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         static QueryOptions<ValueTuple<string>, string> Build(Action onCall, bool neverStale)
         {
@@ -47,7 +47,7 @@ public class ReviewOf45161b7Tests
         var calls = 0;
 
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         var options = QueryOptions.Create<string>("retryable", _ =>
             {
@@ -74,7 +74,7 @@ public class ReviewOf45161b7Tests
     public async Task A_Cache_Hit_Still_Honours_A_Cancelled_Token()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         var options = QueryOptions.Create<string>("warm", static _ => Task.FromResult("data"))
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(10)))

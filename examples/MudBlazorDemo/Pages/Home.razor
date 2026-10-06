@@ -7,7 +7,7 @@
 <MudText Class="mb-4">
     A standalone WebAssembly app. Everything RevalQuery needs here is one call to
     <MudChip T="string" Size="Size.Small">AddRevalQuery()</MudChip> in Program.cs and
-    <MudChip T="string" Size="Size.Small">@("<QueryRenderer Component=\"this\" Tracker=\"Q\" />")</MudChip> on any
+    <MudChip T="string" Size="Size.Small">@("<RevalRenderer Component=\"this\" Hooks=\"Reval\" />")</MudChip> on any
     page that queries.
 </MudText>
 
@@ -23,7 +23,7 @@
         loop, so this one goes through QueryAsync and gets the cache for free.</MudText>
     </MudListItem>
     <MudListItem Icon="@Icons.Material.Filled.RateReview" Href="reviews">
-        <MudText><b>Form and mutation.</b> A MudForm posts through Q.Mutation, then
+        <MudText><b>Form and mutation.</b> A MudForm posts through Reval.Mutation, then
         invalidates the query that reads the list back.</MudText>
     </MudListItem>
 </MudList>

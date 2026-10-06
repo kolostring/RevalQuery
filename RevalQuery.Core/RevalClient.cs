@@ -10,7 +10,7 @@ using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
-using RevalQuery.Core.Tracking;
+using RevalQuery.Core.Hooks;
 
 namespace RevalQuery.Core;
 
@@ -23,7 +23,7 @@ namespace RevalQuery.Core;
 /// eviction policy and the client itself share a lifetime, and sharing a client between
 /// users leaks their data to each other.
 /// </remarks>
-public sealed class QueryClient : IDisposable
+public sealed class RevalClient : IDisposable
 {
     private const int MaxRunAttempts = 3;
 
@@ -37,13 +37,13 @@ public sealed class QueryClient : IDisposable
     private bool _isDisposed;
 
     /// <summary>
-    /// Creates a new QueryClient instance.
+    /// Creates a new RevalClient instance.
     /// </summary>
     /// <param name="serviceProvider">Service provider for resolving dependencies in handlers.</param>
     /// <param name="defaultOptions">Default options for all queries (plugins, cache, retry, fetch).</param>
     /// <param name="evictionPolicy">Optional custom eviction policy. One is created when omitted.</param>
     /// <param name="persistence">Optional durable store queries are loaded from and saved to.</param>
-    public QueryClient(
+    public RevalClient(
         IServiceProvider serviceProvider,
         RevalQueryOptions defaultOptions,
         ICacheEvictionPolicy? evictionPolicy = null,
@@ -59,20 +59,20 @@ public sealed class QueryClient : IDisposable
     }
 
     /// <summary>
-    /// Creates a tracker: the place one component reads its queries and mutations through, so it
+    /// Creates hooks: the place one component reads its queries and mutations through, so it
     /// holds no observers of its own.
     /// </summary>
     /// <remarks>
-    /// The tracker lives until the handle from its <c>Attach</c> is disposed. A framework adapter
-    /// attaches to it; see <see cref="QueryTracker"/>. When <c>AddRevalQuery</c> registered the
-    /// client, a tracker can be injected instead.
+    /// The hooks live until the handle from its <c>Attach</c> is disposed. A framework adapter
+    /// attaches to it; see <see cref="RevalHooks"/>. When <c>AddRevalQuery</c> registered the
+    /// client, hooks can be injected instead.
     /// </remarks>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public QueryTracker CreateTracker()
+    public RevalHooks CreateHooks()
     {
         lock (_gate) ThrowIfDisposedLocked();
 
-        return new QueryTracker(this);
+        return new RevalHooks(this);
     }
 
     /// <summary>
@@ -377,7 +377,7 @@ public sealed class QueryClient : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>The whole of what a component does on a render, for a caller that has nothing like
-    /// a <see cref="QueryTracker"/> to do it for them. The slot is the caller's: a field of the
+    /// a <see cref="RevalHooks"/> to do it for them. The slot is the caller's: a field of the
     /// component, dispose it with the component. The observer inside it follows the key, so the
     /// caller never compares one.</para>
     /// <para>Returns the state to read from, which is a different object after a key change.

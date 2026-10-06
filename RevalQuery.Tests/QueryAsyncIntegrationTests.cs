@@ -10,11 +10,11 @@ public class QueryAsyncIntegrationTests
 {
     private const string Key = "prefetch";
 
-    private readonly QueryClient _client;
+    private readonly RevalClient _client;
 
     public QueryAsyncIntegrationTests()
     {
-        _client = new QueryClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
 
     [Fact]

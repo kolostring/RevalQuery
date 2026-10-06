@@ -3,9 +3,9 @@
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
-@inject QueryTracker Q
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 <PageTitle>Loading covers restores</PageTitle>
 
@@ -48,7 +48,7 @@
 <p>Data: <strong>@(Orders.Data ?? "none yet")</strong></p>
 
 @code {
-    IQueryState<string> Profile => Q.Query(
+    IQueryState<string> Profile => Reval.Query(
         QueryOptions
             .Create<(string, string), string>(
                 ("persisted", "profile"),
@@ -56,7 +56,7 @@
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    IQueryState<string> Orders => Q.Query(
+    IQueryState<string> Orders => Reval.Query(
         QueryOptions
             .Create<(string, string), string>(
                 ("persisted", "orders"),

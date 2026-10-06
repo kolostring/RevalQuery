@@ -169,7 +169,7 @@ public class ReviewFindingsTests
         policy.Dispose();
     }
 
-    private static QueryClient NewClient(IQueryPersistence? persistence = null) =>
+    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
 
     private static async Task WaitUntil(Func<bool> predicate, int timeoutMs = 3000)

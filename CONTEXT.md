@@ -4,6 +4,12 @@ A data fetching and caching library for .NET UI components, inspired by TanStack
 Components declare what data they need; the library fetches it, caches it, keeps it
 current, and tells them when it changed.
 
+## Naming
+
+Types that span queries and mutations take the `Reval` prefix: `RevalClient`, `RevalHooks`,
+`RevalRenderer`. Types about only one kind take `Query` or `Mutation`: `QueryObserver`,
+`QueryOptions`, `MutationState`. See ADR 0011.
+
 ## Language
 
 ### Reads
@@ -45,7 +51,7 @@ _Avoid_: Command, action, write query
 ### State
 
 **Query state**:
-The observable record of one query: its data, its status, and its subscribers. This is
+The observable record of one query: its data, its status, and its observers. This is
 what a component reads from.
 _Avoid_: Cache entry, result, model
 
@@ -54,7 +60,7 @@ One component's subscription to whichever query its current options name. It fol
 the key: new options either re-apply to the query it is on or move it to another, and the
 caller keeps the one observer throughout. A query with no observers is a candidate for
 eviction.
-_Avoid_: Subscriber, listener, watcher
+_Avoid_: Listener, watcher. Hooks hold many observers; an observer is not a hook
 
 **Query status**:
 Whether a query has data. Either pending, resolved, or failed. Independent of whether
@@ -81,22 +87,24 @@ _Avoid_: Active, paused, on
 
 How a component reads from the library, and who looks after its subscriptions.
 
-**Tracker**:
-Everything one component reads, owned in one place. The component reads through it on every
-render and never holds an observer itself; the tracker subscribes what was read, re-applies options
-on every read, and releases what a render stopped reading. A read is identified by its call site,
-or by an explicit slot, and each site holds a set of query keys.
-_Avoid_: Context, session, subscription group
+**Hooks**:
+Everything one component reads, owned in one place. The name is literal: hooks without React.
+State is per component and identified by call site, it is read on every render, and it is released
+when no longer read. The component reads through the hooks on every render and never holds an observer
+itself; the hooks subscribe what was read, re-apply options on every read, and release what a render
+stopped reading. A read is identified by its call site, or by an explicit slot, and each site holds a
+set of query keys. `RevalRenderer` supplies the lifecycle a framework would.
+_Avoid_: Context, session, subscription group, subscriber
 
 **Renderer**:
-The framework adapter attached to a tracker. It tells the component to render when an observer
-reports a change, reports each finished render to the tracker, and releases the tracker with the
-component. A tracker has one renderer at a time, and its lifetime is the handle `Attach` returns:
-disposing the handle releases every observer, and a released tracker refuses reads.
+The framework adapter attached to hooks. It tells the component to render when an observer
+reports a change, reports each finished render to the hooks, and releases the hooks with the
+component. Hooks have one renderer at a time, and their lifetime is the handle `Attach` returns:
+disposing the handle releases every observer, and released hooks refuse reads.
 _Avoid_: Host, owner, provider, wrapper
 
 **Sweep**:
-What a tracker does when a render completes: for every call site read since the previous sweep,
+What hooks do when a render completes: for every call site read since the previous sweep,
 release the keys at that site that were not read, then start counting reads afresh. A site that was
 not read releases nothing, so a hidden branch keeps its queries until it renders again.
 _Avoid_: Garbage collection, cleanup, expiry

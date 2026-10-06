@@ -29,7 +29,7 @@ public enum FetchOutcome
 
 /// <summary>
 /// Orchestrates query execution: fetching, retry logic, polling, invalidation handling.
-/// Internal component - created and managed by QueryClient.
+/// Internal component - created and managed by RevalClient.
 /// </summary>
 /// <typeparam name="TKey">The query key type.</typeparam>
 /// <typeparam name="TRes">The response type.</typeparam>

@@ -1,10 +1,10 @@
 @inject Fx Fx
-@inject QueryTracker Q
+@inject RevalHooks Reval
 <Wrapper>
-    <QueryRenderer Component="this" Tracker="Q" />
+    <RevalRenderer Component="this" Hooks="Reval" />
 </Wrapper>
 <p id="out">@(Item.IsLoading ? "loading" : Item.Data)</p>
 @code {
     [Parameter] public int Id { get; set; }
-    IQueryState<string> Item => Q.Query(Fx.Detail(Id));
+    IQueryState<string> Item => Reval.Query(Fx.Detail(Id));
 }

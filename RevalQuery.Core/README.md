@@ -14,7 +14,7 @@ builder.Services.AddRevalQuery();
 
 ## Table of Contents
 
-- [QueryClient](#queryclient)
+- [RevalClient](#queryclient)
 - [QueryOptions](#queryoptions)
 - [MutationOptions](#mutationoptions)
 - [QueryFactory Pattern](#queryfactory-pattern)
@@ -23,12 +23,12 @@ builder.Services.AddRevalQuery();
 
 ---
 
-## QueryClient
+## RevalClient
 
 Main entry point for query management.
 
 ```csharp
-public sealed class QueryClient
+public sealed class RevalClient
 {
     // Subscribe component to query - returns observer. Call observer.SetOptions(options) on
     // every render and the observer follows the key.
@@ -73,29 +73,29 @@ public sealed class QueryClient
 }
 ```
 
-### Trackers
+### Hooks
 
-A `QueryTracker` owns everything one component reads, so the component holds no observers. Create
-one with `client.CreateTracker()`, read through it on every render, and release it with the
-component by disposing the handle `Attach` returns. In Blazor, `QueryRenderer` does the wiring below; see the
+A `RevalHooks` owns everything one component reads, so the component holds no observers. Create
+one with `client.CreateHooks()`, read through it on every render, and release it with the
+component by disposing the handle `Attach` returns. In Blazor, `RevalRenderer` does the wiring below; see the
 [Blazor README](../RevalQuery.Blazor/README.md#component-integration).
 
 ```csharp
-var tracker = client.CreateTracker();
+var hooks = client.CreateHooks();
 
 // Subscribes on the first read of a key and re-applies the options on every read after
-IQueryState<User[]> users = tracker.Query(UserQueries.All());
-MutationState<NewUser, User> add = tracker.Mutation(AddUser());
+IQueryState<User[]> users = hooks.Query(UserQueries.All());
+MutationState<NewUser, User> add = hooks.Mutation(AddUser());
 
 // The link to your UI framework; disposing it releases every observer
-using var link = tracker.Attach(() => /* ask the component to render again */);
+using var link = hooks.Attach(() => /* ask the component to render again */);
 
 // ... after each render completes
-tracker.RenderCompleted();
+hooks.RenderCompleted();
 ```
 
 A read is identified by its call site (`[CallerFilePath]`, `[CallerLineNumber]`), or by an explicit
-slot: `tracker.Query(("rows", 0), options)` and `tracker.Mutation(key, options)`. A call site holds a
+slot: `hooks.Query(("rows", 0), options)` and `hooks.Mutation(key, options)`. A call site holds a
 set of query keys, so a loop or a helper method called with different keys holds one query per
 key, and two reads of one key share one observer, which is released when no call site holds it.
 A slot is any value compared by value, such as `"rows"` or `("rows", 0)`.
@@ -103,18 +103,18 @@ A slot is any value compared by value, such as `"rows"` or `("rows", 0)`.
 `RenderCompleted` is the sweep. For every call site read since the previous sweep, the keys at that
 site that were not read are released, as a disposed observer releases them. A call site that was not
 read releases nothing, reads between sweeps count towards the next one, and nothing in the rule reads
-a clock. Mutations are never swept and live until the tracker is released.
+a clock. Mutations are never swept and live until the hooks are released.
 
 The attached callback runs whenever an observer reports a change, including one raised inside a `Query` or
 `Mutation` call, since the reader may be a child or a later batch rather than the owner's render. A
-read that starts a fetch therefore costs the owner one extra render, which settles. A change that arrives before `Attach` is delivered once on `Attach`. A tracker has one attachment at a
-time: attaching a second throws until the first handle is disposed. A tracker is not `IDisposable`: its
+read that starts a fetch therefore costs the owner one extra render, which settles. A change that arrives before `Attach` is delivered once on `Attach`. Hooks have one attachment at a
+time: attaching a second throws until the first handle is disposed. Hooks are not `IDisposable`: their
 lifetime is the handle, and disposing the handle, which is idempotent, releases every observer. Reads
-on a released tracker throw `InvalidOperationException`.
+on released hooks throw `InvalidOperationException`.
 
 Known limitations, until an alternative is found:
 
-1. A hidden branch keeps its queries, and any polling, until the tracker is released or the branch
+1. A hidden branch keeps its queries, and any polling, until the hooks are released or the branch
    renders again. Put `Enabled(isVisible)` in the options.
 2. A call site read both in the page and inside an asynchronously loading child, with different
    keys, can release and recreate its query. Use a separate getter or an explicit slot.
@@ -129,14 +129,14 @@ it stays cached for its `GcTime`, and a fetch it had in flight is left to finish
 changes, `observer.Query` is a different object afterwards, and the caller holds one slot for
 the life of the component.
 
-`Observe` is the render step beneath a tracker, for a caller that wants to hold the observer itself:
+`Observe` is the render step beneath the hooks, for a caller that wants to hold the observer itself:
 keep a field per query as the slot, read it through a property, and dispose the slots with the
 component:
 
 ```csharp
 public sealed class ProductPage : ComponentBase, IDisposable
 {
-    [Inject] QueryClient Client { get; set; } = null!;
+    [Inject] RevalClient Client { get; set; } = null!;
     [Parameter] public int CategoryId { get; set; }
 
     private QueryObserver<(string, int), List<Product>>? _products;
@@ -239,7 +239,7 @@ var mutationOptions = MutationOptions.Create<CreateUserRequest, User>(
 .ConfigureRetry(r => r.Retry(3));
 ```
 
-Without a tracker, create a mutation with `CreateMutation`, or let `Observe` create it
+Without hooks, create a mutation with `CreateMutation`, or let `Observe` create it
 on the first render and re-option it on every later one:
 
 ```csharp
@@ -287,7 +287,7 @@ public static class UserQueries
 
 **Usage:**
 ```csharp
-// In component or QueryClient
+// In component or RevalClient
 var observer = client.Subscribe(UserQueries.GetUserOptions(userId).Build(), OnStateChanged);
 
 // For invalidation
@@ -360,7 +360,7 @@ What it costs you is the ability to refresh that key on demand. `Invalidate` wil
 deliberately, and it will go on reporting `IsInvalidated` as true after one. To refresh a
 static query, subscribe to it with options that do not declare it static, or change its key.
 
-Which options are in force is worth being precise about. A subscriber's are adopted by the
+Which options are in force is worth being precise about. The options hooks read are adopted by the
 query when it subscribes and again on every re-render, so the most recent render wins. A
 `QueryAsync` call's are adopted only if that call creates the query; against one that already
 exists they decide that call alone. A loader can therefore read a key `NeverStale()` without
@@ -438,13 +438,13 @@ instead of replacing it.
 
 ## Lifetimes and threads
 
-`AddRevalQuery` registers `QueryClient` and the eviction policy as scoped, and they
-share one registry. `QueryTracker` is transient: each component that injects one gets its own. That is deliberate: one registry per user session is what keeps
+`AddRevalQuery` registers `RevalClient` and the eviction policy as scoped, and they
+share one registry. `RevalHooks` is transient: each component that injects one gets its own. That is deliberate: one registry per user session is what keeps
 one user's data out of another's. Registering either as a singleton in a server
 process leaks data between users.
 
-`QueryClient` is safe to call from any thread. Observer callbacks are not
-synchronised, because `QueryRenderer` already routes them through
+`RevalClient` is safe to call from any thread. Observer callbacks are not
+synchronised, because `RevalRenderer` already routes them through
 `InvokeAsync`.
 
 Disposal is enforced asymmetrically. Once the client is disposed, anything a live render

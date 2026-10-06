@@ -26,7 +26,7 @@ public class RestoreBoundaryTests
     private sealed record Frame(bool IsLoading, bool IsRestoring, bool IsFetching, bool IsPending);
 
     private static (List<Frame> Frames, QueryObserver<ValueTuple<string>, string> Observer) Watch(
-        QueryClient client, QueryOptions<ValueTuple<string>, string> options)
+        RevalClient client, QueryOptions<ValueTuple<string>, string> options)
     {
         var frames = new List<Frame>();
         var gate = new object();
@@ -46,7 +46,7 @@ public class RestoreBoundaryTests
     public async Task A_Query_With_Nothing_Stored_Never_Reports_A_Moment_With_No_Work_In_Progress()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(
+        using var client = new RevalClient(
             sp, new RevalQueryOptions(), persistence: new Store(null, TimeSpan.FromMilliseconds(150)));
 
         var options = QueryOptions.Create<string>("empty", async _ =>
@@ -68,7 +68,7 @@ public class RestoreBoundaryTests
     public async Task A_Restore_Is_Not_Over_Until_The_Fetch_That_Follows_It_Has_Started()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(
+        using var client = new RevalClient(
             sp, new RevalQueryOptions(), persistence: new Store(null, TimeSpan.FromMilliseconds(150)));
 
         var options = QueryOptions.Create<string>("ordering", async _ =>
@@ -95,7 +95,7 @@ public class RestoreBoundaryTests
     {
         var handlerCalls = 0;
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(
+        using var client = new RevalClient(
             sp,
             new RevalQueryOptions(),
             persistence: new Store(
@@ -124,7 +124,7 @@ public class RestoreBoundaryTests
     public async Task A_Subscriber_Arriving_After_The_Restore_Ended_Still_Fetches()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(
+        using var client = new RevalClient(
             sp, new RevalQueryOptions(), persistence: new Store(null, TimeSpan.FromMilliseconds(100)));
 
         var options = QueryOptions.Create<string>("late", _ => Task.FromResult("from-network")).Build();
@@ -167,7 +167,7 @@ public class RestoreBoundaryTests
     public async Task A_Query_With_No_Persistence_Is_Never_Restoring()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         var options = QueryOptions.Create<string>("none", _ => Task.FromResult("from-network")).Build();
 

@@ -9,21 +9,21 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Tests;
 
-public class QueryClientTests
+public class RevalClientTests
 {
     private const string Key = "test";
     private const string UsersKey = "users";
 
     private readonly IServiceProvider _serviceProvider;
     private readonly RevalQueryOptions _options;
-    private readonly QueryClient _client;
+    private readonly RevalClient _client;
 
-    public QueryClientTests()
+    public RevalClientTests()
     {
         var services = new ServiceCollection();
         _serviceProvider = services.BuildServiceProvider();
         _options = new RevalQueryOptions();
-        _client = new QueryClient(_serviceProvider, _options);
+        _client = new RevalClient(_serviceProvider, _options);
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public class QueryClientTests
         var options = new RevalQueryOptions();
         options.CacheOptions = options.CacheOptions with { GcTime = TimeSpan.Zero };
         var gcCollector = new TtlQueryGarbageCollector(options);
-        var client = new QueryClient(_serviceProvider, options, evictionPolicy: gcCollector);
+        var client = new RevalClient(_serviceProvider, options, evictionPolicy: gcCollector);
 
         var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
 
@@ -86,7 +86,7 @@ public class QueryClientTests
         var options = new RevalQueryOptions();
         options.CacheOptions = options.CacheOptions with { GcTime = TimeSpan.FromSeconds(10) };
         var gcCollector = new TtlQueryGarbageCollector(options);
-        var client = new QueryClient(_serviceProvider, options, evictionPolicy: gcCollector);
+        var client = new RevalClient(_serviceProvider, options, evictionPolicy: gcCollector);
 
         var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
 
@@ -100,7 +100,7 @@ public class QueryClientTests
     }
 
     [Fact]
-    public async Task QueryClient_Cancel_AbortsFetch()
+    public async Task RevalClient_Cancel_AbortsFetch()
     {
         var queryOptions = QueryOptions.Create(Key, CancelableHandler).Build();
 

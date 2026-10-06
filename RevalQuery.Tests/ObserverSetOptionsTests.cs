@@ -34,7 +34,7 @@ public class ObserverSetOptionsTests
         return builder.Build();
     }
 
-    private static QueryClient NewClient(ICacheEvictionPolicy? eviction = null) =>
+    private static RevalClient NewClient(ICacheEvictionPolicy? eviction = null) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
 
     private static QueryState<(string, int), string> StateOf(QueryObserver<(string, int), string> observer) =>
@@ -411,7 +411,7 @@ public class ObserverSetOptionsRaceTests
     public async Task Switching_Against_Eager_Eviction_Always_Lands_On_A_Registered_Query()
     {
         var eviction = new EvictOnRelease();
-        using var client = new QueryClient(
+        using var client = new RevalClient(
             new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
 
         static QueryOptions<(string, int), string> Item(int id) =>

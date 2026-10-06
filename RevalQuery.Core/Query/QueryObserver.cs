@@ -6,7 +6,7 @@ namespace RevalQuery.Core.Query;
 
 /// <summary>
 /// One component's subscription to whichever query its current options name.
-/// Created by QueryClient.Subscribe() - manages lifecycle and state notifications.
+/// Created by RevalClient.Subscribe() - manages lifecycle and state notifications.
 /// </summary>
 /// <remarks>
 /// <para>The observer, not the caller, owns which query it watches. Handing it new options
@@ -20,7 +20,7 @@ namespace RevalQuery.Core.Query;
 /// <typeparam name="TRes">The data type returned by the query.</typeparam>
 public sealed class QueryObserver<TKey, TRes> : IQueryObserver, IDisposable where TKey : ITuple
 {
-    private readonly QueryClient _client;
+    private readonly RevalClient _client;
     private readonly Action _onStateHasChanged;
 
     private readonly object _gate = new();
@@ -47,7 +47,7 @@ public sealed class QueryObserver<TKey, TRes> : IQueryObserver, IDisposable wher
     /// </remarks>
     public IQueryState<TRes> Query => Volatile.Read(ref _query);
 
-    internal QueryObserver(QueryClient client, QueryState<TKey, TRes> query, Action onStateHasChanged, bool enabled)
+    internal QueryObserver(RevalClient client, QueryState<TKey, TRes> query, Action onStateHasChanged, bool enabled)
     {
         _client = client;
         _onStateHasChanged = onStateHasChanged;

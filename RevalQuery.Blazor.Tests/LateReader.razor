@@ -1,9 +1,9 @@
 @inject Fx Fx
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
 <p id="own">@(_seen?.Data ?? "none")</p>
 <Popover>
-    @{ _seen = Q.Query(Fx.Detail(1)); }
+    @{ _seen = Reval.Query(Fx.Detail(1)); }
     <span class="item">@_seen.Data</span>
 </Popover>
 @code {

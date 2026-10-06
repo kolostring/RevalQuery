@@ -22,7 +22,7 @@ public class EvictionRaceTests
     public async Task An_Eviction_Between_Run_Attempts_Never_Strands_A_Worker_On_A_Stateless_Node()
     {
         var eviction = new EvictOnRelease();
-        using var client = new QueryClient(
+        using var client = new RevalClient(
             new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
 
         var options = QueryOptions.Create<string>("raced", async _ =>
@@ -96,9 +96,9 @@ public class EvictionRaceTests
         public Task StopAsync() => Task.CompletedTask;
     }
 
-    private static void AssertEveryWorkerHasItsState(QueryClient client)
+    private static void AssertEveryWorkerHasItsState(RevalClient client)
     {
-        var registry = (QueryRegistry)typeof(QueryClient)
+        var registry = (QueryRegistry)typeof(RevalClient)
             .GetField("_registry", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(client)!;
 

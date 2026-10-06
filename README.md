@@ -6,8 +6,8 @@ Type-safe async data fetching and caching library for .NET. Inspired by TanStack
 
 | Package | Description |
 |---------|-------------|
-| [RevalQuery.Core](./RevalQuery.Core) | Core library with QueryClient, QueryOptions, MutationOptions |
-| [RevalQuery.Blazor](./RevalQuery.Blazor) | Blazor integration: `QueryRenderer` and an injected `QueryTracker` |
+| [RevalQuery.Core](./RevalQuery.Core) | Core library with RevalClient, QueryOptions, MutationOptions |
+| [RevalQuery.Blazor](./RevalQuery.Blazor) | Blazor integration: `RevalRenderer` and an injected `RevalHooks` |
 
 ## Installation
 
@@ -29,13 +29,13 @@ browser afterwards. To stop the browser refetching what the server already fetch
 
 ```razor
 @using RevalQuery.Blazor
-@using RevalQuery.Core.Tracking
-@inject QueryTracker Q
+@using RevalQuery.Core.Hooks
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 @code {
-    IQueryState<User[]> Users => Q.Query(
+    IQueryState<User[]> Users => Reval.Query(
         QueryOptions.Create<User[]>(
             "users",
             async static ctx =>
@@ -58,8 +58,8 @@ browser afterwards. To stop the browser refetching what the server already fetch
 }
 ```
 
-A component reads through an injected `QueryTracker` and inherits from nothing. A hidden branch keeps its
-queries until it renders again or the tracker is released, and a call site read by a page and by an asynchronously loading
+A component reads through an injected `RevalHooks` and inherits from nothing. A hidden branch keeps its
+queries until it renders again or the hooks are released, and a call site read by a page and by an asynchronously loading
 child with different keys can thrash: see the
 [known limitations](./RevalQuery.Blazor/README.md#known-limitations) and their workarounds.
 Upgrading from `QueryComponentBase`? See the

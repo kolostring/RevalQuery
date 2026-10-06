@@ -18,14 +18,14 @@ public class IssueReproductionTests
         => Task.FromResult("result");
 
     [Fact]
-    public void Issue1_EvictionPolicy_Is_Scoped_Alongside_QueryClient()
+    public void Issue1_EvictionPolicy_Is_Scoped_Alongside_RevalClient()
     {
         var sp = new ServiceCollection().AddRevalQuery().BuildServiceProvider();
 
         using var scope1 = sp.CreateScope();
         using var scope2 = sp.CreateScope();
-        var c1 = scope1.ServiceProvider.GetRequiredService<QueryClient>();
-        var c2 = scope2.ServiceProvider.GetRequiredService<QueryClient>();
+        var c1 = scope1.ServiceProvider.GetRequiredService<RevalClient>();
+        var c2 = scope2.ServiceProvider.GetRequiredService<RevalClient>();
 
         Assert.NotSame(c1, c2);
         Assert.NotSame(
@@ -34,7 +34,7 @@ public class IssueReproductionTests
 
         var services = new ServiceCollection().AddRevalQuery();
         Assert.All(
-            services.Where(d => d.ServiceType == typeof(ICacheEvictionPolicy) || d.ServiceType == typeof(QueryClient)),
+            services.Where(d => d.ServiceType == typeof(ICacheEvictionPolicy) || d.ServiceType == typeof(RevalClient)),
             d => Assert.Equal(ServiceLifetime.Scoped, d.Lifetime));
     }
 
@@ -47,8 +47,8 @@ public class IssueReproductionTests
 
         using var scope1 = sp.CreateScope();
         using var scope2 = sp.CreateScope();
-        var c1 = scope1.ServiceProvider.GetRequiredService<QueryClient>();
-        var c2 = scope2.ServiceProvider.GetRequiredService<QueryClient>();
+        var c1 = scope1.ServiceProvider.GetRequiredService<RevalClient>();
+        var c2 = scope2.ServiceProvider.GetRequiredService<RevalClient>();
         var gc1 = (TtlQueryGarbageCollector)scope1.ServiceProvider.GetRequiredService<ICacheEvictionPolicy>();
 
         var opts = QueryOptions.Create("shared-key", Handler).Build();
@@ -77,7 +77,7 @@ public class IssueReproductionTests
         for (var i = 0; i < 5; i++)
         {
             var scope = sp.CreateScope();
-            var client = scope.ServiceProvider.GetRequiredService<QueryClient>();
+            var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
             var gc = (TtlQueryGarbageCollector)scope.ServiceProvider.GetRequiredService<ICacheEvictionPolicy>();
 
             var observer = client.Subscribe(QueryOptions.Create($"k{i}", Handler).Build(), () => { });
@@ -102,7 +102,7 @@ public class IssueReproductionTests
             .BuildServiceProvider();
 
         using var scope = sp.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<QueryClient>();
+        var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
         var observer = client.Subscribe(QueryOptions.Create("gc-key", Handler).Build(), () => { });
         await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
@@ -126,7 +126,7 @@ public class IssueReproductionTests
     public async Task Issue3_A_Discarded_QueryAsync_Releases_Its_Worker_When_The_Fetch_Settles()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         TestUtils.Discard(client.QueryAsync(QueryOptions.Create("prefetched", Handler).Build()));
         await WaitUntil(() => client.FindQuery("prefetched")?.IsResolved == true);
@@ -146,7 +146,7 @@ public class IssueReproductionTests
     public async Task Issue3_An_Awaited_QueryAsync_Releases_Its_Worker_Too()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         await client.QueryAsync(QueryOptions.Create("fetched", Handler).Build());
 
@@ -158,7 +158,7 @@ public class IssueReproductionTests
     public async Task Issue3_Subscribe_Path_Still_Cleans_Up()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         var observer = client.Subscribe(QueryOptions.Create("subscribed", Handler).Build(), () => { });
         await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
@@ -178,7 +178,7 @@ public class IssueReproductionTests
 
         for (var attempt = 0; attempt < 300; attempt++)
         {
-            using var client = new QueryClient(sp, new RevalQueryOptions());
+            using var client = new RevalClient(sp, new RevalQueryOptions());
             var key = $"pf{attempt}";
             var opts = QueryOptions.Create(key, SpinHandler).Build();
 
@@ -203,7 +203,7 @@ public class IssueReproductionTests
     public async Task Issue4_Concurrent_Callers_Share_One_Fetch_Instead_Of_Stampeding()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         SlowHandlerCalls = 0;
         var opts = QueryOptions.Create("stampede", SlowHandler).Build();
@@ -252,7 +252,7 @@ public class IssueReproductionTests
                 return Task.CompletedTask;
             });
 
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
         var state = client.CreateMutation(options.Build(), () => { }).State;
 
         var slow = state.ExecuteAsync(new Box("SLOW", 300));
@@ -270,7 +270,7 @@ public class IssueReproductionTests
     public async Task Issue6_FindQuery_Returns_Null_For_A_Mismatched_Result_Type()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         var observer = client.Subscribe(QueryOptions.Create("typed", Handler).Build(), () => { });
         await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
@@ -290,7 +290,7 @@ public class IssueReproductionTests
         Assert.False(QueryKeyComparer.Instance.Equals(ValueTuple.Create(a), ValueTuple.Create(b)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         var first = client.Subscribe(QueryOptions.Create(a, static _ => Task.FromResult("A-DATA")).Build(), () => { });
         var second = client.Subscribe(QueryOptions.Create(b, static _ => Task.FromResult("B-DATA")).Build(), () => { });
@@ -304,7 +304,7 @@ public class IssueReproductionTests
     public void Issue7_Segments_Of_Different_Types_Are_Different_Queries()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         client.Subscribe(QueryOptions.Create(("users", 1), static _ => Task.FromResult("int")).Build(), () => { });
         client.Subscribe(QueryOptions.Create(("users", "1"), static _ => Task.FromResult("string")).Build(), () => { });
@@ -329,9 +329,9 @@ public class IssueReproductionTests
         throw new InvalidOperationException("no collision found in 4,000,000 keys");
     }
 
-    private static int WorkerCount(QueryClient client)
+    private static int WorkerCount(RevalClient client)
     {
-        var registry = (QueryRegistry)typeof(QueryClient)
+        var registry = (QueryRegistry)typeof(RevalClient)
             .GetField("_registry", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(client)!;
 

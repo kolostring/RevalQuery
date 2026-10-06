@@ -4,7 +4,7 @@ namespace RevalQuery.Core.Mutation;
 
 /// <summary>
 /// Represents a component's subscription to a mutation state.
-/// Created by QueryClient.CreateMutation() - hand it new options on every render with
+/// Created by RevalClient.CreateMutation() - hand it new options on every render with
 /// <see cref="SetOptions"/>.
 /// </summary>
 /// <typeparam name="TParams">The parameters type.</typeparam>

@@ -1,8 +1,8 @@
 @page "/products"
-@inject QueryClient Client
-@inject QueryTracker Q
+@inject RevalClient Client
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 <PageTitle>Table and detail</PageTitle>
 
@@ -87,7 +87,7 @@ else if (Detail.Data is { } detail)
 @code {
     private int? Selected { get; set; }
 
-    IQueryState<List<Product>> ProductList => Q.Query(
+    IQueryState<List<Product>> ProductList => Reval.Query(
         QueryOptions
             .Create<List<Product>>(
                 "products",
@@ -95,7 +95,7 @@ else if (Detail.Data is { } detail)
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    IQueryState<ProductDetail> Detail => Q.Query(
+    IQueryState<ProductDetail> Detail => Reval.Query(
         QueryOptions
             .Create<(string, int), ProductDetail>(
                 ("product", Selected ?? 0),

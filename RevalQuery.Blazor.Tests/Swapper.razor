@@ -1,15 +1,15 @@
 @inject Fx Fx
-@inject QueryClient Client
-<QueryRenderer Component="this" Tracker="_tracker" />
-<p id="out">@_tracker.Query(Fx.Detail(Id)).Data</p>
+@inject RevalClient Client
+<RevalRenderer Component="this" Hooks="_hooks" />
+<p id="out">@_hooks.Query(Fx.Detail(Id)).Data</p>
 @code {
     [Parameter] public int Id { get; set; }
-    QueryTracker _tracker = default!;
-    int _trackerId = -1;
+    RevalHooks _hooks = default!;
+    int _hooksId = -1;
     protected override void OnParametersSet()
     {
-        if (_trackerId == Id) return;
-        _trackerId = Id;
-        _tracker = Client.CreateTracker();
+        if (_hooksId == Id) return;
+        _hooksId = Id;
+        _hooks = Client.CreateHooks();
     }
 }

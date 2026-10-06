@@ -11,11 +11,11 @@ public class PollingTests
 {
     private const string Key = "poll";
 
-    private readonly QueryClient _client;
+    private readonly RevalClient _client;
 
     public PollingTests()
     {
-        _client = new QueryClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
 
     [Fact]

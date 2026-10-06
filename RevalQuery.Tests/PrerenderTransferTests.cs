@@ -44,7 +44,7 @@ public class PrerenderTransferTests
         return options.Build();
     }
 
-    private static (QueryClient Client, PrerenderTransfer Transfer, ServiceProvider Provider) Host(
+    private static (RevalClient Client, PrerenderTransfer Transfer, ServiceProvider Provider) Host(
         Microsoft.AspNetCore.Components.PersistentComponentState state)
     {
         var services = new ServiceCollection();
@@ -57,7 +57,7 @@ public class PrerenderTransferTests
 
         var transfer = scope.GetRequiredService<PrerenderTransfer>();
 
-        return (scope.GetRequiredService<QueryClient>(), transfer, provider);
+        return (scope.GetRequiredService<RevalClient>(), transfer, provider);
     }
 
     [Fact]
@@ -238,7 +238,7 @@ public class PrerenderTransferTests
         where TKey : System.Runtime.CompilerServices.ITuple =>
         QueryOptions.Create<TKey, Widget>(key, _ => Task.FromResult(new Widget(0, name))).Build();
 
-    private static async Task<string?> Restored<TKey>(QueryClient client, TKey key)
+    private static async Task<string?> Restored<TKey>(RevalClient client, TKey key)
         where TKey : System.Runtime.CompilerServices.ITuple
     {
         var options = QueryOptions
@@ -278,7 +278,7 @@ public class PrerenderTransferTests
 
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope().ServiceProvider;
-        var client = scope.GetRequiredService<QueryClient>();
+        var client = scope.GetRequiredService<RevalClient>();
 
         await client.QueryAsync(ServerQuery("widget"));
         await Task.Delay(200);

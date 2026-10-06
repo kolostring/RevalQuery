@@ -262,6 +262,6 @@ public class CancellationTests
             () => fetch.WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
-    private static QueryClient NewClient() =>
+    private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 }

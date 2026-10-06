@@ -12,11 +12,11 @@ public class QueryAsyncDiscardedTests
     private const string Key = "discarded";
     private const string Key2 = "discarded2";
 
-    private readonly QueryClient _client;
+    private readonly RevalClient _client;
 
     public QueryAsyncDiscardedTests()
     {
-        _client = new QueryClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
 
     [Fact]

@@ -27,7 +27,7 @@ public enum MutationStatus
 /// Supports concurrent mutations.
 /// </summary>
 /// <remarks>
-/// Created by <see cref="QueryClient.CreateMutation{TParams, TRes}"/>, which supplies the
+/// Created by <see cref="RevalClient.CreateMutation{TParams, TRes}"/>, which supplies the
 /// service provider handlers receive.
 /// </remarks>
 /// <typeparam name="TParams">The parameters type for the mutation.</typeparam>

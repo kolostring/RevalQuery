@@ -34,7 +34,7 @@ public class InvalidateDuringRestoreTests
         var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions(), persistence: persistence);
+        using var client = new RevalClient(sp, new RevalQueryOptions(), persistence: persistence);
 
         var options = QueryOptions.Create<string>("unobserved", _ =>
             {
@@ -69,7 +69,7 @@ public class InvalidateDuringRestoreTests
         var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
 
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions(), persistence: persistence);
+        using var client = new RevalClient(sp, new RevalQueryOptions(), persistence: persistence);
 
         var options = QueryOptions.Create<string>("gated", _ =>
             {

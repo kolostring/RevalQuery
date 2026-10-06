@@ -1,13 +1,13 @@
 @inject Fx Fx
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
-<p class="own">@Q.Query(Fx.Detail(0)).Data</p>
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
+<p class="own">@Reval.Query(Fx.Detail(0)).Data</p>
 @if (Kind == "popover")
 {
     <Popover>
         @foreach (var id in Ids)
         {
-            <span class="item">@Q.Query(Fx.Detail(id)).Data</span>
+            <span class="item">@Reval.Query(Fx.Detail(id)).Data</span>
         }
     </Popover>
 }
@@ -16,7 +16,7 @@ else
     <Gated Gate="Gate">
         @foreach (var id in Ids)
         {
-            <span class="item">@Q.Query(Fx.Detail(id)).Data</span>
+            <span class="item">@Reval.Query(Fx.Detail(id)).Data</span>
         }
     </Gated>
 }

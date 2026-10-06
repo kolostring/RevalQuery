@@ -39,7 +39,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
     /// </summary>
     /// <param name="state">The framework's store for state crossing the prerender boundary.</param>
     /// <param name="serviceProvider">
-    /// Resolves the <see cref="QueryClient"/> at persist time rather than now, because the client
+    /// Resolves the <see cref="RevalClient"/> at persist time rather than now, because the client
     /// depends on this transfer and cannot be asked for while it is still being constructed.
     /// </param>
     /// <param name="serializerOptions">
@@ -125,7 +125,7 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
 
     private Task PersistAsync()
     {
-        var client = _serviceProvider.GetService<QueryClient>();
+        var client = _serviceProvider.GetService<RevalClient>();
 
         if (client is null) return Task.CompletedTask;
 

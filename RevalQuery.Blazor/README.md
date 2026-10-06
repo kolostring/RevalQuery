@@ -11,11 +11,11 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 @using RevalQuery.Blazor
 @using RevalQuery.Core
 @using RevalQuery.Core.Query.Options
-@using RevalQuery.Core.Tracking
+@using RevalQuery.Core.Hooks
 @rendermode InteractiveWebAssembly
-@inject QueryTracker Q
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 <PageTitle>Search Bar Example</PageTitle>
 
@@ -53,7 +53,7 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 @code {
     private string SearchTerm { get; set; } = string.Empty;
 
-    IQueryState<List<string>> Suggestions => Q.Query(
+    IQueryState<List<string>> Suggestions => Reval.Query(
         QueryOptions
             .Create(
                 ("search", SearchTerm),
@@ -69,8 +69,8 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 
 - [Installation](#installation)
 - [Component Integration](#component-integration)
-- [Q.Query](#qquery)
-- [Q.Mutation](#qmutation)
+- [Reval.Query](#revalquery)
+- [Reval.Mutation](#revalmutation)
 - [Known limitations](#known-limitations)
 - [Migrating from QueryComponentBase](#migrating-from-querycomponentbase)
 - [Optimistic updates](#optimistic-updates)
@@ -101,43 +101,43 @@ browser refetching what the server already fetched.
 
 ## Component Integration
 
-A component reads through a `QueryTracker`: one per component, injected because `AddRevalQuery`
-registers it as transient, and handed to a `QueryRenderer` in the markup. The component inherits from nothing, so it can keep whatever base
+A component reads through a `RevalHooks`: one per component, injected because `AddRevalQuery`
+registers it as transient, and handed to a `RevalRenderer` in the markup. The component inherits from nothing, so it can keep whatever base
 class it already has.
 
 ```razor
 @using RevalQuery.Blazor
-@using RevalQuery.Core.Tracking
-@inject QueryTracker Q
+@using RevalQuery.Core.Hooks
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 ```
 
 `Component="this"` names the component to re-render, which is any `IHandleEvent`. The
-`QueryRenderer` renders nothing. It re-renders the component when a query or mutation the tracker
-reads changes, reports each finished render to the tracker, and releases the tracker when the
+`RevalRenderer` renders nothing. It re-renders the component when a query or mutation the hooks
+read changes, reports each finished render to the hooks, and releases the hooks when the
 component is disposed. The owner is passed explicitly because Blazor gives a child no reliable
-reference to the component whose markup it is in. A forgotten `<QueryRenderer>` means the page
-never re-renders and the tracker is never released.
+reference to the component whose markup it is in. A forgotten `<RevalRenderer>` means the page
+never re-renders and the hooks are never released.
 
-Read through the tracker in a property or in the markup, on every render, and read the state it
-returns afterwards. The tracker subscribes on the first read of a key, hands the options of every
+Read through the hooks in a property or in the markup, on every render, and read the state it
+returns afterwards. The hooks subscribe on the first read of a key, hands the options of every
 later read to the same observer, and releases the query when a render stops reading it.
 
 A read is identified by its call site, so a loop, or a helper method called with different keys,
 holds one query per key. Two reads of one key share one observer. See
-[Q.Query](#qquery) for the rules, and [Known limitations](#known-limitations) for what the
+[Reval.Query](#revalquery) for the rules, and [Known limitations](#known-limitations) for what the
 release rule cannot see.
 
 ---
 
-## Q.Query
+## Reval.Query
 
 Read a query - subscribes on the first read, re-applies the options on every later one, and
 releases it when a render stops reading it.
 
 ```csharp
-IQueryState<User[]> Users => Q.Query(
+IQueryState<User[]> Users => Reval.Query(
     QueryOptions.Create<User[]>(
         "users",
         async static ctx =>
@@ -149,14 +149,14 @@ IQueryState<User[]> Users => Q.Query(
 It takes `QueryOptions` or a `QueryOptionsBuilder`, so everything from the
 [QueryFactory pattern](#queryfactory-pattern) works unchanged.
 
-**Release.** When a render completes, the tracker looks at each call site that was read since the
+**Release.** When a render completes, the hooks look at each call site that was read since the
 previous render and releases the keys at that site that were not read. A key switch is the
 common case: the old key is released after the render that read the new one, and its cached
 data stays for `GcTime`. A call site that was not read at all releases nothing. Reads from event
 handlers, or from content that renders in a later batch such as a popover, count towards the next
 render's sweep, so such a read can delay a release by one render.
 
-**Explicit slot.** `Q.Query(slot, options)` identifies the read by a value of your choosing in
+**Explicit slot.** `Reval.Query(slot, options)` identifies the read by a value of your choosing in
 place of the call site, for the case in [Known limitations](#known-limitations). Any value compared
 by value works, for example `"rows"` or `("rows", 0)`.
 
@@ -172,12 +172,12 @@ handler: async static ctx => someComponentField  // Compile error
 
 ---
 
-## Q.Mutation
+## Reval.Mutation
 
 Execute write operations (Create/Update/Delete). Supports callbacks.
 
 ```csharp
-MutationState<CreateUserRequest, User> CreateUserMutation => Q.Mutation(
+MutationState<CreateUserRequest, User> CreateUserMutation => Reval.Mutation(
     MutationOptions.Create<CreateUserRequest, User>(
         async static ctx =>
             await ctx.ServiceProvider.GetRequiredService<IUserService>().CreateAsync(ctx.Params)
@@ -192,9 +192,9 @@ await CreateUserMutation.ExecuteAsync(new CreateUserRequest { Name = "John" });
 
 The mutation is created on the first read, and every later render hands its options to the same
 observer through `MutationObserver.SetOptions`. A mutation is never released by a render: it lives
-until the tracker is released, so a run that outlasts the render that started it keeps its state.
+until the hooks are released, so a run that outlasts the render that started it keeps its state.
 Two mutations on one line, or one in a loop, share a call site and so share one mutation; use
-`Q.Mutation(key, options)` where each needs its own. A callback that
+`Reval.Mutation(key, options)` where each needs its own. A callback that
 closes over something the render changed therefore sees the new value: the latest run reads the
 new handler on its next retry attempt and the new callbacks when each fires. See
 [Reactive options](#reactive-options).
@@ -208,13 +208,13 @@ nothing else: it reads no clock. That is why it cannot tell some things apart, a
 until an alternative is found.
 
 1. **A hidden branch keeps its queries.** A call site that is not read releases nothing, because
-   the tracker cannot tell a branch that is hidden from one that has not rendered yet. Queries in
-   an `@if` that turns false stay subscribed, and keep polling, until the tracker is released or
+   the hooks cannot tell a branch that is hidden from one that has not rendered yet. Queries in
+   an `@if` that turns false stay subscribed, and keep polling, until the hooks are released or
    the branch renders again. Put `Enabled(isVisible)` in the options so a hidden query stops
    fetching meanwhile:
 
    ```csharp
-   Q.Query(UserQueries.GetUserOptions(id).Enabled(isVisible))
+   Reval.Query(UserQueries.GetUserOptions(id).Enabled(isVisible))
    ```
 
 2. **A call site read both in the page and inside an asynchronously loading child, with
@@ -222,7 +222,7 @@ until an alternative is found.
    is released and recreated. Give the child's read its own getter, or an explicit slot:
 
    ```csharp
-   Q.Query(("rows", 0), options)
+   Reval.Query(("rows", 0), options)
    ```
 
 ---
@@ -233,17 +233,17 @@ until an alternative is found.
 
 | Before | After |
 |--------|-------|
-| `@inherits QueryComponentBase` | `@inject QueryTracker Q` and `<QueryRenderer Component="this" Tracker="Q" />` |
-| `UseQuery(key: k, handler: h, o => o.Enabled(x))` | `Q.Query(QueryOptions.Create(k, h).Enabled(x))` |
-| `UseQuery(options)` | `Q.Query(options)` |
-| `UseMutation(options)` | `Q.Mutation(options)` |
-| `override void Dispose()` calling `base.Dispose()` | implement `IDisposable` and drop the `base` call; the renderer releases the tracker |
+| `@inherits QueryComponentBase` | `@inject RevalHooks Reval` and `<RevalRenderer Component="this" Hooks="Reval" />` |
+| `UseQuery(key: k, handler: h, o => o.Enabled(x))` | `Reval.Query(QueryOptions.Create(k, h).Enabled(x))` |
+| `UseQuery(options)` | `Reval.Query(options)` |
+| `UseMutation(options)` | `Reval.Mutation(options)` |
+| `override void Dispose()` calling `base.Dispose()` | implement `IDisposable` and drop the `base` call; the renderer releases the hooks |
 
-`Client` was an injected property of the base class. Keep `@inject QueryClient Client` where the page still calls `Client.Invalidate...` or `Client.QueryAsync`. `ServiceProvider` is gone: handlers receive one in their context.
+`Client` was an injected property of the base class. Keep `@inject RevalClient Client` where the page still calls `Client.Invalidate...` or `Client.QueryAsync`. `ServiceProvider` is gone: handlers receive one in their context.
 
-Coming from the earlier `QueryScope`, `QueryHost` and `Client.CreateScope(this)`: inject `QueryTracker`
-instead of creating the scope, and write `<QueryRenderer Component="this" Tracker="Q" />` for
-`<QueryHost Scope="Q" />`. The namespace is `RevalQuery.Core.Tracking`.
+`QueryClient` is now `RevalClient`: rename it in `@inject` lines and constructors. `RevalClient` handles queries and
+mutations alike, which is why it takes the `Reval` prefix; see ADR 0011. The per-component type is `RevalHooks`
+in `RevalQuery.Core.Hooks`.
 
 ---
 
@@ -254,13 +254,13 @@ has a setter, so the write itself is a plain assignment. The part that needs car
 refetch that may already be in flight: started before the mutation, it lands after it and
 overwrites what you just wrote.
 
-`QueryClient.CancelAsync` is the answer. It stops the in-flight fetch of every query under the
+`RevalClient.CancelAsync` is the answer. It stops the in-flight fetch of every query under the
 key prefix and completes once they have unwound, so once it returns nothing a cancelled fetch
 produces can still reach the query. A handler that ignored its `CancellationToken` and returned
 a value anyway has that value discarded.
 
 ```csharp
-MutationState<Todo, Todo> AddTodoMutation => Q.Mutation(
+MutationState<Todo, Todo> AddTodoMutation => Reval.Mutation(
     MutationOptions.Create<Todo, Todo>(
         async static ctx => await ctx.ServiceProvider
             .GetRequiredService<ITodoService>().AddAsync(ctx.Params, ctx.CancellationToken))
@@ -313,7 +313,7 @@ public static class UserQueries
 **Usage in component:**
 
 ```csharp
-IQueryState<User> User => Q.Query(
+IQueryState<User> User => Reval.Query(
     UserQueries.GetUserOptions(userId)
         .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
         .ConfigureRetry(r => r.Retry(3))
@@ -365,7 +365,7 @@ calls the handler once, and `Retry(3)`, the default for queries, calls it up to 
 Mutations default to no retries.
 
 ```csharp
-IQueryState<User> User => Q.Query(
+IQueryState<User> User => Reval.Query(
     UserQueries.GetUserOptions(userId)
         .ConfigureRetry(r => r.Retry(2))    // up to three calls
 );
@@ -386,7 +386,7 @@ That is what makes the dependent-query pattern work. Render once disabled, and a
 once the value the key depends on arrives:
 
 ```csharp
-IQueryState<Order[]> Orders => Q.Query(
+IQueryState<Order[]> Orders => Reval.Query(
     QueryOptions
         .Create(
             ("orders", UserId),
@@ -402,7 +402,7 @@ subscriber does. Disabling one stops its polling and leaves its cached data alon
 Fetch, retry and cache options belong to the query rather than to the component, so where two
 components watch one key, the most recent render wins.
 
-Mutations are re-optioned the same way. `Q.Mutation` creates the mutation on the first read
+Mutations are re-optioned the same way. `Reval.Mutation` creates the mutation on the first read
 and calls `SetOptions` on every read after. Runs that are already in flight are affected only
 if they are the latest: it picks up the new handler for any further retry attempt and the new
 callbacks as each fires, while its retry count stays what it was at the start. An older run still

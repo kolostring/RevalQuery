@@ -25,13 +25,13 @@ public sealed class RecordingEviction : ICacheEvictionPolicy
 public sealed class Fx : IDisposable
 {
     public RecordingEviction Eviction { get; } = new();
-    public QueryClient Client { get; }
+    public RevalClient Client { get; }
     public TimeSpan Stale { get; set; } = TimeSpan.Zero;
     public ConcurrentDictionary<int, int> Calls { get; } = new();
     public ConcurrentDictionary<int, TaskCompletionSource> Gates { get; } = new();
     public int TotalCalls => Calls.Values.Sum();
 
-    public Fx(IServiceProvider sp) => Client = new QueryClient(sp, new RevalQueryOptions(), Eviction);
+    public Fx(IServiceProvider sp) => Client = new RevalClient(sp, new RevalQueryOptions(), Eviction);
 
     public TaskCompletionSource Gate(int id) =>
         Gates.GetOrAdd(id, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));

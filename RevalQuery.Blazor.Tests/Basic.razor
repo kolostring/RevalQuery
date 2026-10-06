@@ -1,11 +1,11 @@
 @inject Fx Fx
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
 <p id="out">@(Item.IsLoading ? "loading" : Item.Data)</p>
 @code {
     [Parameter] public int Id { get; set; }
     [Parameter] public int Tick { get; set; }
     public int Renders;
-    IQueryState<string> Item => Q.Query(Fx.Detail(Id));
+    IQueryState<string> Item => Reval.Query(Fx.Detail(Id));
     protected override void OnAfterRender(bool firstRender) => Renders++;
 }

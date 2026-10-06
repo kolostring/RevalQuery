@@ -7,7 +7,7 @@ namespace RevalQuery.Core.Abstractions.Caching;
 /// The rule deciding when an unobserved query leaves the registry.
 /// </summary>
 /// <remarks>
-/// An implementation shares the lifetime of the <see cref="QueryClient"/> that uses it.
+/// An implementation shares the lifetime of the <see cref="RevalClient"/> that uses it.
 /// Registering one as a singleton alongside a scoped client leaks data between users.
 /// </remarks>
 public interface ICacheEvictionPolicy

@@ -104,6 +104,6 @@ public class LoadingDuringRestoreTests
         Assert.False(observer.Query.IsLoading);
     }
 
-    private static QueryClient NewClient(IQueryPersistence? persistence) =>
+    private static RevalClient NewClient(IQueryPersistence? persistence) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
 }

@@ -1,10 +1,10 @@
 @inject Fx Fx
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
 <span class="item">@Detail(1)</span>
 <span class="item">@Detail(2)</span>
-<span class="item">@Q.Query(Fx.Detail(3)).Data@Q.Query(Fx.Detail(4)).Data</span>
+<span class="item">@Reval.Query(Fx.Detail(3)).Data@Reval.Query(Fx.Detail(4)).Data</span>
 @code {
     [Parameter] public int Tick { get; set; }
-    string? Detail(int id) => Q.Query(Fx.Detail(id)).Data;
+    string? Detail(int id) => Reval.Query(Fx.Detail(id)).Data;
 }

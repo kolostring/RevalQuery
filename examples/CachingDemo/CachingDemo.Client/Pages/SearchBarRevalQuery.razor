@@ -4,10 +4,10 @@
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
-@inject QueryClient Client
-@inject QueryTracker Q
+@inject RevalClient Client
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 <PageTitle>Search Bar Example</PageTitle>
 
@@ -66,5 +66,5 @@
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build();
 
-    IQueryState<List<string>> Suggestions => Q.Query(SuggestionsFor(SearchTerm));
+    IQueryState<List<string>> Suggestions => Reval.Query(SuggestionsFor(SearchTerm));
 }

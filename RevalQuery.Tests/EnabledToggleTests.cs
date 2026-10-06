@@ -4,7 +4,7 @@ using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
-using RevalQuery.Core.Tracking;
+using RevalQuery.Core.Hooks;
 
 namespace RevalQuery.Tests;
 
@@ -18,17 +18,17 @@ public class EnabledToggleTests
         return Task.FromResult("data");
     }
 
-    private sealed class Probe(QueryClient client) : IDisposable
+    private sealed class Probe(RevalClient client) : IDisposable
     {
-        private readonly QueryTracker _tracker = client.CreateTracker();
+        private readonly RevalHooks _hooks = client.CreateHooks();
         private IDisposable? _handle;
 
         public IQueryState<string> Run(bool enabled, TimeSpan? staleTime = null)
         {
             var options = QueryOptions.Create(ValueTuple.Create("toggle"), CountingHandler).Enabled(enabled);
             if (staleTime is not null) options.ConfigureFetch(f => f.StaleTime(staleTime.Value));
-            _handle ??= _tracker.Attach(() => { });
-            return _tracker.Query(options);
+            _handle ??= _hooks.Attach(() => { });
+            return _hooks.Query(options);
         }
 
         public void Dispose() => _handle?.Dispose();
@@ -39,7 +39,7 @@ public class EnabledToggleTests
     {
         _calls = 0;
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         using var probe = new Probe(client);
 
@@ -62,7 +62,7 @@ public class EnabledToggleTests
     {
         _calls = 0;
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         using var probe = new Probe(client);
 
@@ -84,7 +84,7 @@ public class EnabledToggleTests
     {
         _calls = 0;
         var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new QueryClient(sp, new RevalQueryOptions());
+        using var client = new RevalClient(sp, new RevalQueryOptions());
 
         using var probe = new Probe(client);
 

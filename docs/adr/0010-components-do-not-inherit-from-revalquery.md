@@ -19,7 +19,7 @@ class.
 ## Decision
 
 `QueryClient.CreateScope()` returns a `QueryScope`, framework-agnostic and in Core. The component
-reads with `Q.Query(options)` and `Q.Mutation(options)` on every render, and the scope does what
+reads with `Reval.Query(options)` and `Reval.Mutation(options)` on every render, and the scope does what
 `UseQuery` did: one observer per query key, created on the first read, handed the render's options
 by `SetOptions` on every later one. A state it returns is the observer's own, so it follows the key.
 
@@ -118,27 +118,27 @@ These stand until an alternative is found, and are stated in the XML docs and bo
 
 `QueryComponentBase`, `UseQuery` and `UseMutation` are removed. Breaking for 0.4.0, with the changes
 of ADR 0009. A component replaces `@inherits QueryComponentBase` with a `QueryHost` and a scope, and
-`UseQuery(...)` with `Q.Query(...)`.
+`UseQuery(...)` with `Reval.Query(...)`.
 
 A scope used without a host never re-renders its component and never releases anything. `QueryHost`
 refuses a scope that has no owner or is null, with the fix in the message, but a component that
 creates a scope and forgets the host has no one to complain.
 
 Two reads on one line share a site. That is harmless for queries, since a site holds a set, and
-means one mutation for mutations, which are keyed by site: use `Q.Mutation(key, options)` when each
+means one mutation for mutations, which are keyed by site: use `Reval.Mutation(key, options)` when each
 needs its own.
 
 The explicit slot comes first, `Query(slot, options)`, as `Mutation(key, options)` does, so a string
 slot cannot bind to the call-site overload as its file name.
 
-## Revision: injected tracker
+## Revision: injected hooks
 
-The scope was renamed `QueryTracker` and is injected, registered transient by `AddRevalQuery`,
+The scope became the per-component type `RevalHooks` (ADR 0011) and is injected, registered transient by `AddRevalQuery`,
 instead of created with `CreateScope(this)`. It stopped being `IDisposable` so that DI does not hold
 every instance for the container's lifetime, which in WebAssembly is the app's. Its lifetime is the
-handle `Attach` returns: disposing the handle releases every observer, and a released tracker throws
+handle `Attach` returns: disposing the handle releases every observer, and released hooks throw
 `InvalidOperationException` on reads.
 
-`QueryHost` became `QueryRenderer` and takes the owner as `Component="this"`, because Blazor gives a
+`QueryHost` became `RevalRenderer` and takes the owner as `<RevalRenderer Component="this" Hooks="Reval" />`, because Blazor gives a
 child no public, reliable reference to the component whose markup it is in. A component's render-tree
 parent is whoever renders the fragment, for example `MudPaper` for content inside it.

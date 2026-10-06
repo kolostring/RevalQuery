@@ -88,7 +88,7 @@ public class PersistenceTests
         var sp = new ServiceCollection().AddRevalQuery().BuildServiceProvider();
         using var scope = sp.CreateScope();
 
-        Assert.NotNull(scope.ServiceProvider.GetRequiredService<QueryClient>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<RevalClient>());
     }
 
     [Fact]
@@ -101,18 +101,18 @@ public class PersistenceTests
             .BuildServiceProvider();
 
         using var scope = sp.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<QueryClient>();
+        var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
         await ClientFetch(client, "wired", "from-handler");
 
         Assert.NotNull(persistence.Read<string>(ValueTuple.Create("wired")));
     }
 
-    private static QueryClient NewClient(IQueryPersistence persistence) =>
+    private static RevalClient NewClient(IQueryPersistence persistence) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
 
     private static async Task<RevalQuery.Core.Query.QueryState<ValueTuple<string>, string>> ClientFetch(
-        QueryClient client, string key, string result)
+        RevalClient client, string key, string result)
     {
         var options = QueryOptions.Create(key, _ => Task.FromResult(result)).Build();
         await client.QueryAsync(options);

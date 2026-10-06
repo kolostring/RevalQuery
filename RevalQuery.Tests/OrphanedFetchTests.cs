@@ -80,6 +80,6 @@ public class OrphanedFetchTests
         } while (Interlocked.CompareExchange(ref target, value, seen) != seen);
     }
 
-    private static QueryClient NewClient() =>
+    private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 }

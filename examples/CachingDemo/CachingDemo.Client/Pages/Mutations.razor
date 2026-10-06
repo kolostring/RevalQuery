@@ -4,10 +4,10 @@
 @using RevalQuery.Core.Mutation.Options
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
-@inject QueryClient Client
-@inject QueryTracker Q
+@inject RevalClient Client
+@inject RevalHooks Reval
 
-<QueryRenderer Component="this" Tracker="Q" />
+<RevalRenderer Component="this" Hooks="Reval" />
 
 <PageTitle>Mutations and invalidation</PageTitle>
 
@@ -70,7 +70,7 @@ else
 
     public sealed record AddItemParams(string Text);
 
-    IQueryState<List<string>> Todos => Q.Query(
+    IQueryState<List<string>> Todos => Reval.Query(
         QueryOptions
             .Create<List<string>>(
                 "todos",
@@ -78,7 +78,7 @@ else
             .ConfigureFetch(fetch => fetch.StaleTime(TimeSpan.FromMinutes(5)))
             .Build());
 
-    RevalQuery.Core.Mutation.MutationState<AddItemParams, string> AddItem => Q.Mutation(
+    RevalQuery.Core.Mutation.MutationState<AddItemParams, string> AddItem => Reval.Mutation(
         MutationOptions
             .Create<AddItemParams, string>(
                 async static ctx => await TodoService.AddAsync(ctx.Params.Text, ctx.CancellationToken))

@@ -6,27 +6,27 @@ using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
 
-namespace RevalQuery.Core.Tracking;
+namespace RevalQuery.Core.Hooks;
 
 /// <summary>
 /// Everything one component reads from a client, owned in one place. The component reads
-/// through the tracker on every render and never holds an observer; the tracker subscribes what
+/// through the hooks on every render and never holds an observer; the hooks subscribe what
 /// was read, re-applies options on every read, and releases what a render stopped reading.
 /// </summary>
 /// <remarks>
-/// <para>Created by <see cref="QueryClient.CreateTracker"/>, or injected when
+/// <para>Created by <see cref="RevalClient.CreateHooks"/>, or injected when
 /// <c>AddRevalQuery</c> registered it, which gives every consumer its own. Not tied to any UI
 /// framework: a renderer for the framework attaches with <see cref="Attach"/>, reports each
 /// finished render with <see cref="RenderCompleted"/>, and disposes the handle <see cref="Attach"/>
 /// returned when the component goes away.</para>
-/// <para><b>Lifetime.</b> A tracker lives until the handle from <see cref="Attach"/> is disposed.
-/// Disposing it releases the tracker: every query and mutation observer is disposed, and the
-/// tracker cannot be used again, so create or inject a new one. It is not <see cref="IDisposable"/>,
+/// <para><b>Lifetime.</b> Hooks live until the handle from <see cref="Attach"/> is disposed.
+/// Disposing it releases the hooks: every query and mutation observer is disposed, and the
+/// hooks cannot be used again, so create or inject new ones. They are not <see cref="IDisposable"/>,
 /// which keeps a dependency injection container from holding on to one per component.</para>
 /// <para><b>Identity.</b> A read belongs to a <i>call site</i>: the file and line of the
 /// <c>Query</c> call, or the explicit slot passed in. Each site holds a set of query keys, so a
 /// call site that runs in a loop or from a helper method holds one query per key it was given.
-/// Two reads of one key share one observer for the whole tracker, whichever sites read it. The
+/// Two reads of one key share one observer for the whole hooks instance, whichever sites read it. The
 /// observer is released only when no site holds the key any longer. Options are last read wins,
 /// so two sites reading one key with different options will overwrite each other every render;
 /// give them the same options.</para>
@@ -36,19 +36,19 @@ namespace RevalQuery.Core.Tracking;
 /// renders that happen in later batches, count towards the next one. Nothing in the rule
 /// consults a clock, so what is released is a function of what was rendered and nothing else.</para>
 /// <para><b>Mutations</b> are held by call site or explicit key and are never released by a sweep.
-/// They live until the tracker is released, because a running mutation must outlast the render that
+/// They live until the hooks are released, because a running mutation must outlast the render that
 /// started it.</para>
 /// <para><b>Known limitations.</b> The sweep cannot tell a branch that is hidden from a branch
 /// that has not rendered yet, so (1) a hidden branch keeps its queries, and any polling they
-/// do, until the tracker is released or the branch renders again; put <c>Enabled(isVisible)</c>
+/// do, until the hooks are released or the branch renders again; put <c>Enabled(isVisible)</c>
 /// in the options to pause them meanwhile. And (2) a call site that is read both on the page and
 /// inside a child that loads asynchronously, with different keys, can release and recreate the
 /// query each time the other one renders; read it through a separate getter or pass an explicit
 /// slot. These stand until an alternative is found.</para>
 /// <para>Safe to call from any thread. Observer and renderer callbacks are never invoked while the
-/// tracker's lock is held.</para>
+/// lock of the hooks is held.</para>
 /// </remarks>
-public sealed class QueryTracker
+public sealed class RevalHooks
 {
     private abstract class Entry
     {
@@ -77,7 +77,7 @@ public sealed class QueryTracker
         public HashSet<ITuple> Read { get; } = new(QueryKeyComparer.Instance);
     }
 
-    private readonly QueryClient _client;
+    private readonly RevalClient _client;
 
     private readonly object _gate = new();
     private readonly Dictionary<ITuple, Entry> _queries = new(QueryKeyComparer.Instance);
@@ -88,14 +88,14 @@ public sealed class QueryTracker
     private bool _pending;
     private bool _isReleased;
 
-    internal QueryTracker(QueryClient client) => _client = client;
+    internal RevalHooks(RevalClient client) => _client = client;
 
     private sealed class HostLink(Action onChanged) : IDisposable
     {
         public Action OnChanged { get; } = onChanged;
-        public QueryTracker? Tracker { get; set; }
+        public RevalHooks? Hooks { get; set; }
 
-        public void Dispose() => Tracker?.Release();
+        public void Dispose() => Hooks?.Release();
     }
 
     /// <summary>
@@ -113,7 +113,7 @@ public sealed class QueryTracker
     /// <param name="options">Query configuration, rebuilt by this render.</param>
     /// <param name="file">Filled in by the compiler.</param>
     /// <param name="line">Filled in by the compiler.</param>
-    /// <exception cref="InvalidOperationException">The key is registered with another result type, or the tracker was released.</exception>
+    /// <exception cref="InvalidOperationException">The key is registered with another result type, or the hooks were released.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public IQueryState<TRes> Query<TKey, TRes>(
         QueryOptions<TKey, TRes> options,
@@ -216,7 +216,7 @@ public sealed class QueryTracker
     /// <paramref name="options"/> on every later one.
     /// </summary>
     /// <remarks>
-    /// A mutation is never released by a sweep. It lives until the tracker is released. Two reads on
+    /// A mutation is never released by a sweep. It lives until the hooks are released. Two reads on
     /// one line, or one in a loop, share one mutation: use <see cref="Mutation{TParams, TRes}(object, MutationOptions{TParams, TRes})"/>
     /// when each needs its own.
     /// </remarks>
@@ -225,7 +225,7 @@ public sealed class QueryTracker
     /// <param name="options">Mutation configuration, rebuilt by this render.</param>
     /// <param name="file">Filled in by the compiler.</param>
     /// <param name="line">Filled in by the compiler.</param>
-    /// <exception cref="InvalidOperationException">The tracker was released.</exception>
+    /// <exception cref="InvalidOperationException">The hooks were released.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public MutationState<TParams, TRes> Mutation<TParams, TRes>(
         MutationOptions<TParams, TRes> options,
@@ -301,7 +301,7 @@ public sealed class QueryTracker
     /// </summary>
     /// <remarks>
     /// A site that was not read since the previous call releases nothing, and an observer another
-    /// site still holds stays. Does nothing once the tracker is released.
+    /// site still holds stays. Does nothing once the hooks are released.
     /// </remarks>
     public void RenderCompleted()
     {
@@ -343,8 +343,8 @@ public sealed class QueryTracker
     /// including one raised by a read.
     /// </summary>
     /// <remarks>
-    /// <para>The returned handle owns the tracker: disposing it releases the tracker, disposing
-    /// every query and mutation observer, and the tracker cannot be attached or read again.
+    /// <para>The returned handle owns the hooks: disposing it releases them, disposing
+    /// every query and mutation observer, and the hooks cannot be attached or read again.
     /// Disposing it more than once does nothing. One renderer at a time: attaching while another
     /// is attached throws. A change reported before any renderer attached is kept and delivered
     /// once, now. A read that starts a fetch reports a change, so the owner renders once more,
@@ -352,13 +352,13 @@ public sealed class QueryTracker
     /// from any thread.</para>
     /// </remarks>
     /// <param name="onChanged">Asks the component to render again.</param>
-    /// <returns>A handle that releases the tracker when disposed.</returns>
-    /// <exception cref="InvalidOperationException">A renderer is already attached, or the tracker was released.</exception>
+    /// <returns>A handle that releases the hooks when disposed.</returns>
+    /// <exception cref="InvalidOperationException">A renderer is already attached, or the hooks were released.</exception>
     public IDisposable Attach(Action onChanged)
     {
         ArgumentNullException.ThrowIfNull(onChanged);
 
-        var link = new HostLink(onChanged) { Tracker = this };
+        var link = new HostLink(onChanged) { Hooks = this };
         bool flush;
 
         lock (_gate)
@@ -366,7 +366,7 @@ public sealed class QueryTracker
             ThrowIfReleasedLocked();
 
             if (_host is not null)
-                throw new InvalidOperationException("This QueryTracker already has a renderer attached.");
+                throw new InvalidOperationException("This RevalHooks instance already has a renderer attached.");
 
             _host = link;
             flush = _pending;
@@ -422,14 +422,14 @@ public sealed class QueryTracker
 
     private static void ThrowReleased() =>
         throw new InvalidOperationException(
-            "This QueryTracker was released when its Attach handle was disposed. Inject or create a new one.");
+            "This RevalHooks instance was released when its Attach handle was disposed. Inject or create a new one.");
 
     private QueryEntry<TKey, TRes>? Find<TKey, TRes>(TKey key) where TKey : ITuple
     {
         if (!_queries.TryGetValue(key, out var entry)) return null;
 
         return entry as QueryEntry<TKey, TRes> ?? throw new InvalidOperationException(
-            $"Query key {key} is already read in this tracker with a different key or result type.");
+            $"Query key {key} is already read in these hooks with a different key or result type.");
     }
 
     private void MarkRead(object slot, ITuple key, Entry entry)

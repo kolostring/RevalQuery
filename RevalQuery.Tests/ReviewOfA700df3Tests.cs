@@ -91,7 +91,7 @@ public class ReviewOfA700df3Tests
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryAsync(options));
     }
 
-    private static QueryClient NewClient(IQueryPersistence? persistence = null) =>
+    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
 
     private sealed class SlowPersistence(string stored, int loadDelayMs) : IQueryPersistence

@@ -23,7 +23,7 @@ public sealed class QueryPluginsPipeline(IEnumerable<IQueryPlugin>? initialPlugi
 
     /// <summary>
     /// Processes query options through all plugins in chain.
-    /// Called internally by QueryClient when subscribing/fetching.
+    /// Called internally by RevalClient when subscribing/fetching.
     /// </summary>
     public QueryOptions<TKey, TRes> HandleQueryOptions<TKey, TRes>(QueryOptions<TKey, TRes> queryOptions)
         where TKey : ITuple

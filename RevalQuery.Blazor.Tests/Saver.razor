@@ -1,5 +1,5 @@
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
 <button @onclick="Save">save</button>
 @if (Show)
 {
@@ -12,7 +12,7 @@
     [Parameter] public bool Show { get; set; } = true;
     [Parameter] public int Tick { get; set; }
     public MutationState<Req, string>? Last;
-    MutationState<Req, string> Mut => Last = Q.Mutation(Handler(Label));
+    MutationState<Req, string> Mut => Last = Reval.Mutation(Handler(Label));
     MutationOptionsBuilder<Req, string> Handler(string label) =>
         MutationOptions.Create<Req, string>(async _ => { await Gate; return label; });
     Task Save() => (Last ?? throw new InvalidOperationException()).ExecuteAsync(new Req("x"));

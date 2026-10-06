@@ -10,7 +10,7 @@ public class DisposalTests
     private static QueryOptionsBuilder<ValueTuple<string>, string> Options(string key) =>
         QueryOptions.Create(key, static _ => Task.FromResult("data"));
 
-    private static QueryClient NewClient() =>
+    private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
     [Fact]

@@ -1,9 +1,9 @@
 @inject Fx Fx
-@inject QueryTracker Q
-<QueryRenderer Component="this" Tracker="Q" />
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
 @foreach (var id in Ids)
 {
-    <span class="item">@Q.Query(Fx.Detail(id)).Data</span>
+    <span class="item">@Reval.Query(Fx.Detail(id)).Data</span>
 }
 @code {
     [Parameter] public List<int> Ids { get; set; } = [];
