@@ -6,7 +6,7 @@ using RevalQuery.Core.Mutation;
 using RevalQuery.Core.Mutation.Callbacks;
 using RevalQuery.Core.Mutation.Execution;
 using RevalQuery.Core.Mutation.Options;
-using RevalQuery.Core.Scope;
+using RevalQuery.Core.Tracking;
 
 namespace RevalQuery.Tests;
 
@@ -327,12 +327,12 @@ public class MutationSetOptionsTests
     }
 
     [Fact]
-    public async Task A_Scope_Applies_The_Options_Of_Every_Render()
+    public async Task A_Tracker_Applies_The_Options_Of_Every_Render()
     {
         using var client = NewClient();
-        using var scope = client.CreateScope();
+        var tracker = client.CreateTracker();
 
-        MutationState<Req, string> Run(MutationOptions<Req, string> options) => scope.Mutation(options);
+        MutationState<Req, string> Run(MutationOptions<Req, string> options) => tracker.Mutation(options);
 
         var first = Run(MutationOptions.Create<Req, string>(_ => Task.FromResult("render-1")).Build());
         var second = Run(MutationOptions.Create<Req, string>(_ => Task.FromResult("render-2")).Build());

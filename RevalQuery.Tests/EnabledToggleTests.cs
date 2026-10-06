@@ -4,7 +4,7 @@ using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
-using RevalQuery.Core.Scope;
+using RevalQuery.Core.Tracking;
 
 namespace RevalQuery.Tests;
 
@@ -20,16 +20,18 @@ public class EnabledToggleTests
 
     private sealed class Probe(QueryClient client) : IDisposable
     {
-        private readonly QueryScope _scope = client.CreateScope();
+        private readonly QueryTracker _tracker = client.CreateTracker();
+        private IDisposable? _handle;
 
         public IQueryState<string> Run(bool enabled, TimeSpan? staleTime = null)
         {
             var options = QueryOptions.Create(ValueTuple.Create("toggle"), CountingHandler).Enabled(enabled);
             if (staleTime is not null) options.ConfigureFetch(f => f.StaleTime(staleTime.Value));
-            return _scope.Query(options);
+            _handle ??= _tracker.Attach(() => { });
+            return _tracker.Query(options);
         }
 
-        public void Dispose() => _scope.Dispose();
+        public void Dispose() => _handle?.Dispose();
     }
 
     [Fact]

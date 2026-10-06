@@ -5,8 +5,9 @@
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
 @inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Mutations and invalidation</PageTitle>
 
@@ -58,9 +59,6 @@ else
 }
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     private string Draft { get; set; } = string.Empty;
 
     private async Task Add()

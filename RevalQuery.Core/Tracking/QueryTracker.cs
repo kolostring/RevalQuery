@@ -6,21 +6,27 @@ using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
 
-namespace RevalQuery.Core.Scope;
+namespace RevalQuery.Core.Tracking;
 
 /// <summary>
 /// Everything one component reads from a client, owned in one place. The component reads
-/// through the scope on every render and never holds an observer; the scope subscribes what
+/// through the tracker on every render and never holds an observer; the tracker subscribes what
 /// was read, re-applies options on every read, and releases what a render stopped reading.
 /// </summary>
 /// <remarks>
-/// <para>Created by <see cref="QueryClient.CreateScope"/>. Not tied to any UI framework: a host
-/// for the framework attaches with <see cref="Attach"/>, reports each finished render with
-/// <see cref="RenderCompleted"/>, and disposes the scope with the component.</para>
+/// <para>Created by <see cref="QueryClient.CreateTracker"/>, or injected when
+/// <c>AddRevalQuery</c> registered it, which gives every consumer its own. Not tied to any UI
+/// framework: a renderer for the framework attaches with <see cref="Attach"/>, reports each
+/// finished render with <see cref="RenderCompleted"/>, and disposes the handle <see cref="Attach"/>
+/// returned when the component goes away.</para>
+/// <para><b>Lifetime.</b> A tracker lives until the handle from <see cref="Attach"/> is disposed.
+/// Disposing it releases the tracker: every query and mutation observer is disposed, and the
+/// tracker cannot be used again, so create or inject a new one. It is not <see cref="IDisposable"/>,
+/// which keeps a dependency injection container from holding on to one per component.</para>
 /// <para><b>Identity.</b> A read belongs to a <i>call site</i>: the file and line of the
 /// <c>Query</c> call, or the explicit slot passed in. Each site holds a set of query keys, so a
 /// call site that runs in a loop or from a helper method holds one query per key it was given.
-/// Two reads of one key share one observer for the whole scope, whichever sites read it. The
+/// Two reads of one key share one observer for the whole tracker, whichever sites read it. The
 /// observer is released only when no site holds the key any longer. Options are last read wins,
 /// so two sites reading one key with different options will overwrite each other every render;
 /// give them the same options.</para>
@@ -30,19 +36,19 @@ namespace RevalQuery.Core.Scope;
 /// renders that happen in later batches, count towards the next one. Nothing in the rule
 /// consults a clock, so what is released is a function of what was rendered and nothing else.</para>
 /// <para><b>Mutations</b> are held by call site or explicit key and are never released by a sweep.
-/// They live until the scope is disposed, because a running mutation must outlast the render that
+/// They live until the tracker is released, because a running mutation must outlast the render that
 /// started it.</para>
 /// <para><b>Known limitations.</b> The sweep cannot tell a branch that is hidden from a branch
 /// that has not rendered yet, so (1) a hidden branch keeps its queries, and any polling they
-/// do, until the scope is disposed or the branch renders again; put <c>Enabled(isVisible)</c>
+/// do, until the tracker is released or the branch renders again; put <c>Enabled(isVisible)</c>
 /// in the options to pause them meanwhile. And (2) a call site that is read both on the page and
 /// inside a child that loads asynchronously, with different keys, can release and recreate the
 /// query each time the other one renders; read it through a separate getter or pass an explicit
 /// slot. These stand until an alternative is found.</para>
-/// <para>Safe to call from any thread. Observer and host callbacks are never invoked while the
-/// scope's lock is held.</para>
+/// <para>Safe to call from any thread. Observer and renderer callbacks are never invoked while the
+/// tracker's lock is held.</para>
 /// </remarks>
-public sealed class QueryScope : IDisposable
+public sealed class QueryTracker
 {
     private abstract class Entry
     {
@@ -80,16 +86,16 @@ public sealed class QueryScope : IDisposable
 
     private HostLink? _host;
     private bool _pending;
-    private bool _isDisposed;
+    private bool _isReleased;
 
-    internal QueryScope(QueryClient client) => _client = client;
+    internal QueryTracker(QueryClient client) => _client = client;
 
     private sealed class HostLink(Action onChanged) : IDisposable
     {
         public Action OnChanged { get; } = onChanged;
-        public QueryScope? Scope { get; set; }
+        public QueryTracker? Tracker { get; set; }
 
-        public void Dispose() => Scope?.Detach(this);
+        public void Dispose() => Tracker?.Release();
     }
 
     /// <summary>
@@ -107,8 +113,8 @@ public sealed class QueryScope : IDisposable
     /// <param name="options">Query configuration, rebuilt by this render.</param>
     /// <param name="file">Filled in by the compiler.</param>
     /// <param name="line">Filled in by the compiler.</param>
-    /// <exception cref="InvalidOperationException">The key is registered with another result type.</exception>
-    /// <exception cref="ObjectDisposedException">The scope or the client was disposed.</exception>
+    /// <exception cref="InvalidOperationException">The key is registered with another result type, or the tracker was released.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public IQueryState<TRes> Query<TKey, TRes>(
         QueryOptions<TKey, TRes> options,
         [CallerFilePath] string file = "",
@@ -146,14 +152,22 @@ public sealed class QueryScope : IDisposable
 
         lock (_gate)
         {
-            ThrowIfDisposedLocked();
+            ThrowIfReleasedLocked();
             existing = Find<TKey, TRes>(options.Key);
             if (existing is not null) MarkRead(slot, options.Key, existing);
         }
 
         if (existing is not null)
         {
-            existing.Observer.SetOptions(options);
+            try
+            {
+                existing.Observer.SetOptions(options);
+            }
+            catch (ObjectDisposedException) when (IsReleased())
+            {
+                ThrowReleased();
+            }
+
             return existing.Observer.Query;
         }
 
@@ -163,7 +177,7 @@ public sealed class QueryScope : IDisposable
 
         lock (_gate)
         {
-            if (_isDisposed)
+            if (_isReleased)
             {
                 loser = new QueryEntry<TKey, TRes>(observer);
             }
@@ -184,7 +198,7 @@ public sealed class QueryScope : IDisposable
         if (loser is not null)
         {
             loser.Dispose();
-            ObjectDisposedException.ThrowIf(existing is null, this);
+            if (existing is null) ThrowReleased();
             return existing!.Observer.Query;
         }
 
@@ -202,7 +216,7 @@ public sealed class QueryScope : IDisposable
     /// <paramref name="options"/> on every later one.
     /// </summary>
     /// <remarks>
-    /// A mutation is never released by a sweep. It lives until the scope is disposed. Two reads on
+    /// A mutation is never released by a sweep. It lives until the tracker is released. Two reads on
     /// one line, or one in a loop, share one mutation: use <see cref="Mutation{TParams, TRes}(object, MutationOptions{TParams, TRes})"/>
     /// when each needs its own.
     /// </remarks>
@@ -211,7 +225,8 @@ public sealed class QueryScope : IDisposable
     /// <param name="options">Mutation configuration, rebuilt by this render.</param>
     /// <param name="file">Filled in by the compiler.</param>
     /// <param name="line">Filled in by the compiler.</param>
-    /// <exception cref="ObjectDisposedException">The scope or the client was disposed.</exception>
+    /// <exception cref="InvalidOperationException">The tracker was released.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public MutationState<TParams, TRes> Mutation<TParams, TRes>(
         MutationOptions<TParams, TRes> options,
         [CallerFilePath] string file = "",
@@ -243,7 +258,7 @@ public sealed class QueryScope : IDisposable
 
         lock (_gate)
         {
-            ThrowIfDisposedLocked();
+            ThrowIfReleasedLocked();
             existing = _mutations.TryGetValue(id, out var found) ? (MutationEntry<TParams, TRes>)found : null;
         }
 
@@ -259,7 +274,7 @@ public sealed class QueryScope : IDisposable
 
         lock (_gate)
         {
-            if (_isDisposed) disposed = true;
+            if (_isReleased) disposed = true;
             else if (_mutations.TryGetValue(id, out var found)) raced = (MutationEntry<TParams, TRes>)found;
             else _mutations[id] = new MutationEntry<TParams, TRes>(observer);
         }
@@ -267,7 +282,7 @@ public sealed class QueryScope : IDisposable
         if (disposed || raced is not null)
         {
             observer.Dispose();
-            ObjectDisposedException.ThrowIf(disposed, this);
+            if (disposed) ThrowReleased();
             return raced!.Observer.State;
         }
 
@@ -286,7 +301,7 @@ public sealed class QueryScope : IDisposable
     /// </summary>
     /// <remarks>
     /// A site that was not read since the previous call releases nothing, and an observer another
-    /// site still holds stays. Does nothing once the scope is disposed.
+    /// site still holds stays. Does nothing once the tracker is released.
     /// </remarks>
     public void RenderCompleted()
     {
@@ -294,7 +309,7 @@ public sealed class QueryScope : IDisposable
 
         lock (_gate)
         {
-            if (_isDisposed) return;
+            if (_isReleased) return;
 
             foreach (var site in _sites.Values.ToArray())
             {
@@ -324,32 +339,34 @@ public sealed class QueryScope : IDisposable
     }
 
     /// <summary>
-    /// Attaches the component's host, which is told whenever an observer reports a change,
+    /// Attaches the component's renderer, which is told whenever an observer reports a change,
     /// including one raised by a read.
     /// </summary>
     /// <remarks>
-    /// One host at a time: attaching while another is attached throws, and disposing the returned
-    /// handle frees the scope for the next. A change reported before any host attached is kept
-    /// and delivered once, now. A read that starts a fetch reports a change, so the owner renders
-    /// once more, and that render's reads report nothing new. <paramref name="onChanged"/> may be called from any thread.
+    /// <para>The returned handle owns the tracker: disposing it releases the tracker, disposing
+    /// every query and mutation observer, and the tracker cannot be attached or read again.
+    /// Disposing it more than once does nothing. One renderer at a time: attaching while another
+    /// is attached throws. A change reported before any renderer attached is kept and delivered
+    /// once, now. A read that starts a fetch reports a change, so the owner renders once more,
+    /// and that render's reads report nothing new. <paramref name="onChanged"/> may be called
+    /// from any thread.</para>
     /// </remarks>
     /// <param name="onChanged">Asks the component to render again.</param>
-    /// <returns>A handle that detaches the host.</returns>
-    /// <exception cref="InvalidOperationException">A host is already attached.</exception>
-    /// <exception cref="ObjectDisposedException">The scope was disposed.</exception>
+    /// <returns>A handle that releases the tracker when disposed.</returns>
+    /// <exception cref="InvalidOperationException">A renderer is already attached, or the tracker was released.</exception>
     public IDisposable Attach(Action onChanged)
     {
         ArgumentNullException.ThrowIfNull(onChanged);
 
-        var link = new HostLink(onChanged) { Scope = this };
+        var link = new HostLink(onChanged) { Tracker = this };
         bool flush;
 
         lock (_gate)
         {
-            ThrowIfDisposedLocked();
+            ThrowIfReleasedLocked();
 
             if (_host is not null)
-                throw new InvalidOperationException("This QueryScope already has a host attached.");
+                throw new InvalidOperationException("This QueryTracker already has a renderer attached.");
 
             _host = link;
             flush = _pending;
@@ -361,40 +378,14 @@ public sealed class QueryScope : IDisposable
         return link;
     }
 
-    private void Detach(HostLink link)
-    {
-        lock (_gate)
-        {
-            if (ReferenceEquals(_host, link)) _host = null;
-        }
-    }
-
-    private void OnObserverChanged()
-    {
-        HostLink? host;
-
-        lock (_gate)
-        {
-            if (_isDisposed) return;
-            host = _host;
-            if (host is null) _pending = true;
-        }
-
-        host?.OnChanged();
-    }
-
-    /// <summary>
-    /// Disposes every observer, queries and mutations alike, and detaches the host. Safe to call
-    /// more than once. Reads afterwards throw; sweeps and notifications are ignored.
-    /// </summary>
-    public void Dispose()
+    private void Release()
     {
         Entry[] all;
 
         lock (_gate)
         {
-            if (_isDisposed) return;
-            _isDisposed = true;
+            if (_isReleased) return;
+            _isReleased = true;
             all = [.. _queries.Values, .. _mutations.Values];
             _queries.Clear();
             _mutations.Clear();
@@ -405,14 +396,40 @@ public sealed class QueryScope : IDisposable
         foreach (var entry in all) entry.Dispose();
     }
 
-    private void ThrowIfDisposedLocked() => ObjectDisposedException.ThrowIf(_isDisposed, this);
+    private void OnObserverChanged()
+    {
+        HostLink? host;
+
+        lock (_gate)
+        {
+            if (_isReleased) return;
+            host = _host;
+            if (host is null) _pending = true;
+        }
+
+        host?.OnChanged();
+    }
+
+    private void ThrowIfReleasedLocked()
+    {
+        if (_isReleased) ThrowReleased();
+    }
+
+    private bool IsReleased()
+    {
+        lock (_gate) return _isReleased;
+    }
+
+    private static void ThrowReleased() =>
+        throw new InvalidOperationException(
+            "This QueryTracker was released when its Attach handle was disposed. Inject or create a new one.");
 
     private QueryEntry<TKey, TRes>? Find<TKey, TRes>(TKey key) where TKey : ITuple
     {
         if (!_queries.TryGetValue(key, out var entry)) return null;
 
         return entry as QueryEntry<TKey, TRes> ?? throw new InvalidOperationException(
-            $"Query key {key} is already read in this scope with a different key or result type.");
+            $"Query key {key} is already read in this tracker with a different key or result type.");
     }
 
     private void MarkRead(object slot, ITuple key, Entry entry)

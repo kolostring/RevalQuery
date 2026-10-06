@@ -3,9 +3,9 @@
 @using RevalQuery.Core.Abstractions.Query
 @using RevalQuery.Core.Query.Options
 @rendermode @(new InteractiveWebAssemblyRenderMode(prerender: false))
-@inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Loading covers restores</PageTitle>
 
@@ -48,9 +48,6 @@
 <p>Data: <strong>@(Orders.Data ?? "none yet")</strong></p>
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     IQueryState<string> Profile => Q.Query(
         QueryOptions
             .Create<(string, string), string>(

@@ -3,11 +3,11 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
-using RevalQuery.Core.Scope;
+using RevalQuery.Core.Tracking;
 
 namespace RevalQuery.Blazor.Tests;
 
-public class QueryHostTests : TestContext
+public class QueryRendererTests : TestContext
 {
     private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -16,6 +16,7 @@ public class QueryHostTests : TestContext
         var fx = new Fx(Services);
         Services.AddSingleton(fx);
         Services.AddSingleton(fx.Client);
+        Services.AddTransient(_ => fx.Client.CreateTracker());
         return fx;
     }
 
@@ -237,7 +238,7 @@ public class QueryHostTests : TestContext
     }
 
     [Fact]
-    public void Disposing_The_Page_Disposes_The_Scope_And_Releases_Every_Query()
+    public void Disposing_The_Page_Releases_The_Tracker_And_Every_Query()
     {
         var fx = NewFx();
         var cut = RenderComponent<Loop>(p => p.Add(c => c.Ids, [1, 2, 3]));
@@ -252,7 +253,7 @@ public class QueryHostTests : TestContext
     }
 
     [Fact]
-    public void Swapping_The_Scope_Disposes_The_Old_One_And_Releases_Its_Queries()
+    public void Swapping_The_Tracker_Releases_The_Old_One_And_Its_Queries()
     {
         var fx = NewFx();
         var cut = RenderComponent<Swapper>(p => p.Add(c => c.Id, 1));
@@ -266,24 +267,41 @@ public class QueryHostTests : TestContext
     }
 
     [Fact]
-    public void A_Host_Without_A_Scope_Says_So()
+    public async Task A_Renderer_Inside_Child_Content_Re_Renders_The_Owning_Component()
     {
-        NewFx();
+        var fx = NewFx();
+        var gate = fx.Gate(1);
+        var cut = RenderComponent<Wrapped>(p => p.Add(c => c.Id, 1));
 
-        var error = Assert.ThrowsAny<Exception>(() => RenderComponent<QueryHost>());
+        Assert.Equal("loading", cut.Find("#out").TextContent);
 
-        Assert.Contains("requires a Scope", error.ToString());
+        gate.SetResult();
+        cut.WaitForAssertion(() => Assert.Equal("item1", cut.Find("#out").TextContent));
+        await Flush(cut);
+
+        Assert.Equal(1, fx.CallsFor(1));
     }
 
     [Fact]
-    public void A_Scope_Made_Without_An_Owner_Is_Refused_With_The_Fix()
+    public void A_Renderer_Without_A_Component_Says_So()
     {
         var fx = NewFx();
-        using var scope = fx.Client.CreateScope();
+        var tracker = fx.Client.CreateTracker();
 
-        var error = Assert.ThrowsAny<Exception>(() => RenderComponent<QueryHost>(p => p.Add(c => c.Scope, scope)));
+        var error = Assert.ThrowsAny<Exception>(() => RenderComponent<QueryRenderer>(p => p.Add(c => c.Tracker, tracker)));
 
-        Assert.Contains("CreateScope(this)", error.ToString());
+        Assert.Contains("requires a Component", error.ToString());
+    }
+
+    [Fact]
+    public void A_Renderer_Without_A_Tracker_Says_So()
+    {
+        NewFx();
+        var owner = new HandOwner();
+
+        var error = Assert.ThrowsAny<Exception>(() => RenderComponent<QueryRenderer>(p => p.Add(c => c.Component, owner)));
+
+        Assert.Contains("requires a Tracker", error.ToString());
     }
 
     [Fact]
@@ -293,7 +311,7 @@ public class QueryHostTests : TestContext
         var gate = fx.Gate(1);
         var cut = RenderComponent<HandOwner>();
 
-        cut.Instance.Scope!.Query(fx.Detail(1));
+        cut.Instance.Tracker!.Query(fx.Detail(1));
         cut.WaitForState(() => cut.Instance.Events > 0);
         var events = cut.Instance.Events;
 
@@ -308,7 +326,7 @@ public class QueryHostTests : TestContext
 
         [Inject] public QueryClient Client { get; set; } = default!;
 
-        public QueryScope? Scope { get; private set; }
+        public QueryTracker? Tracker { get; private set; }
         public int Events;
 
         public void Attach(RenderHandle renderHandle) => _handle = renderHandle;
@@ -316,7 +334,7 @@ public class QueryHostTests : TestContext
         public Task SetParametersAsync(ParameterView parameters)
         {
             parameters.SetParameterProperties(this);
-            Scope ??= Client.CreateScope(this);
+            Tracker ??= Client.CreateTracker();
             Render();
             return Task.CompletedTask;
         }
@@ -330,8 +348,9 @@ public class QueryHostTests : TestContext
 
         private void Render() => _handle.Render(builder =>
         {
-            builder.OpenComponent<QueryHost>(0);
-            builder.AddComponentParameter(1, nameof(QueryHost.Scope), Scope);
+            builder.OpenComponent<QueryRenderer>(0);
+            builder.AddComponentParameter(1, nameof(QueryRenderer.Component), this);
+            builder.AddComponentParameter(2, nameof(QueryRenderer.Tracker), Tracker);
             builder.CloseComponent();
         });
     }

@@ -4,6 +4,7 @@ using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Caching.Eviction;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Persistence;
+using RevalQuery.Core.Tracking;
 
 namespace RevalQuery.Core;
 
@@ -21,6 +22,9 @@ public static class DependencyInjection
     /// Register an <see cref="IQueryPersistence"/> of your own to have queries loaded from and
     /// saved to a durable store. Several may be registered: a load takes the first that has the
     /// key, so registration order is preference order, and a save goes to all of them.
+    /// A <see cref="QueryTracker"/> is registered as transient, so every injection gets its own.
+    /// It is not disposable, so the container never holds one: its lifetime is the handle from
+    /// its <c>Attach</c>.
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="configure">Optional configuration callback.</param>
@@ -41,6 +45,8 @@ public static class DependencyInjection
             sp.GetRequiredService<ICacheEvictionPolicy>(),
             CompositeQueryPersistence.From(sp.GetServices<IQueryPersistence>())
         ));
+
+        services.AddTransient(sp => sp.GetRequiredService<QueryClient>().CreateTracker());
 
         return services;
     }

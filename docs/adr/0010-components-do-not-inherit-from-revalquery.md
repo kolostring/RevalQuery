@@ -130,3 +130,15 @@ needs its own.
 
 The explicit slot comes first, `Query(slot, options)`, as `Mutation(key, options)` does, so a string
 slot cannot bind to the call-site overload as its file name.
+
+## Revision: injected tracker
+
+The scope was renamed `QueryTracker` and is injected, registered transient by `AddRevalQuery`,
+instead of created with `CreateScope(this)`. It stopped being `IDisposable` so that DI does not hold
+every instance for the container's lifetime, which in WebAssembly is the app's. Its lifetime is the
+handle `Attach` returns: disposing the handle releases every observer, and a released tracker throws
+`InvalidOperationException` on reads.
+
+`QueryHost` became `QueryRenderer` and takes the owner as `Component="this"`, because Blazor gives a
+child no public, reliable reference to the component whose markup it is in. A component's render-tree
+parent is whoever renders the fragment, for example `MudPaper` for content inside it.

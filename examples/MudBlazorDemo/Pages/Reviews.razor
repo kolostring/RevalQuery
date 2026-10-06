@@ -1,8 +1,9 @@
 @page "/reviews"
 @inject ISnackbar Snackbar
 @inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Form and mutation</PageTitle>
 
@@ -93,9 +94,6 @@ else
 }
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     private int ProductId { get; set; } = 1;
     private string Author { get; set; } = string.Empty;
     private int Rating { get; set; } = 4;

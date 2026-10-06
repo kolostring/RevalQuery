@@ -1,6 +1,6 @@
 @inject Fx Fx
-@inject QueryClient Client
-<QueryHost Scope="Q" />
+@inject QueryTracker Q
+<QueryRenderer Component="this" Tracker="Q" />
 @if (Show)
 {
     <span class="item">@Q.Query(Fx.Detail(1)).Data</span>
@@ -8,6 +8,4 @@
 @code {
     [Parameter] public bool Show { get; set; } = true;
     [Parameter] public int Tick { get; set; }
-    QueryScope? _q;
-    QueryScope Q => _q ??= Client.CreateScope(this);
 }

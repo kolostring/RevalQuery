@@ -10,7 +10,7 @@ using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
-using RevalQuery.Core.Scope;
+using RevalQuery.Core.Tracking;
 
 namespace RevalQuery.Core;
 
@@ -59,19 +59,20 @@ public sealed class QueryClient : IDisposable
     }
 
     /// <summary>
-    /// Creates a scope: the place one component reads its queries and mutations through, so it
+    /// Creates a tracker: the place one component reads its queries and mutations through, so it
     /// holds no observers of its own.
     /// </summary>
     /// <remarks>
-    /// The caller disposes the scope with the component. A framework adapter attaches a host to
-    /// it; see <see cref="QueryScope"/>.
+    /// The tracker lives until the handle from its <c>Attach</c> is disposed. A framework adapter
+    /// attaches to it; see <see cref="QueryTracker"/>. When <c>AddRevalQuery</c> registered the
+    /// client, a tracker can be injected instead.
     /// </remarks>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public QueryScope CreateScope()
+    public QueryTracker CreateTracker()
     {
         lock (_gate) ThrowIfDisposedLocked();
 
-        return new QueryScope(this);
+        return new QueryTracker(this);
     }
 
     /// <summary>
@@ -376,7 +377,7 @@ public sealed class QueryClient : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>The whole of what a component does on a render, for a caller that has nothing like
-    /// a <see cref="QueryScope"/> to do it for them. The slot is the caller's: a field of the
+    /// a <see cref="QueryTracker"/> to do it for them. The slot is the caller's: a field of the
     /// component, dispose it with the component. The observer inside it follows the key, so the
     /// caller never compares one.</para>
     /// <para>Returns the state to read from, which is a different object after a key change.

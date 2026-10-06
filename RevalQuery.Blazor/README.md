@@ -11,11 +11,11 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 @using RevalQuery.Blazor
 @using RevalQuery.Core
 @using RevalQuery.Core.Query.Options
-@using RevalQuery.Core.Scope
+@using RevalQuery.Core.Tracking
 @rendermode InteractiveWebAssembly
-@inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Search Bar Example</PageTitle>
 
@@ -51,9 +51,6 @@ Inspired by TanStack Query, RevalQuery provides type-safe async data fetching, c
 </div>
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     private string SearchTerm { get; set; } = string.Empty;
 
     IQueryState<List<string>> Suggestions => Q.Query(
@@ -104,31 +101,27 @@ browser refetching what the server already fetched.
 
 ## Component Integration
 
-A component reads through a `QueryScope`: one per component, created from the client and handed to
-a `QueryHost` in the markup. The component inherits from nothing, so it can keep whatever base
+A component reads through a `QueryTracker`: one per component, injected because `AddRevalQuery`
+registers it as transient, and handed to a `QueryRenderer` in the markup. The component inherits from nothing, so it can keep whatever base
 class it already has.
 
 ```razor
 @using RevalQuery.Blazor
-@using RevalQuery.Core.Scope
-@inject QueryClient Client
+@using RevalQuery.Core.Tracking
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
-
-@code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-}
+<QueryRenderer Component="this" Tracker="Q" />
 ```
 
-`Client.CreateScope(this)` binds the scope to the component, which is any `IHandleEvent`. The
-`QueryHost` renders nothing. It re-renders the component when a query or mutation it reads
-changes, reports each finished render to the scope, and disposes the scope when the component is
-disposed. A scope with no host never re-renders its component and never releases anything, and
-a host given a scope made without `(this)` throws and says so.
+`Component="this"` names the component to re-render, which is any `IHandleEvent`. The
+`QueryRenderer` renders nothing. It re-renders the component when a query or mutation the tracker
+reads changes, reports each finished render to the tracker, and releases the tracker when the
+component is disposed. The owner is passed explicitly because Blazor gives a child no reliable
+reference to the component whose markup it is in. A forgotten `<QueryRenderer>` means the page
+never re-renders and the tracker is never released.
 
-Read through the scope in a property or in the markup, on every render, and read the state it
-returns afterwards. The scope subscribes on the first read of a key, hands the options of every
+Read through the tracker in a property or in the markup, on every render, and read the state it
+returns afterwards. The tracker subscribes on the first read of a key, hands the options of every
 later read to the same observer, and releases the query when a render stops reading it.
 
 A read is identified by its call site, so a loop, or a helper method called with different keys,
@@ -156,7 +149,7 @@ IQueryState<User[]> Users => Q.Query(
 It takes `QueryOptions` or a `QueryOptionsBuilder`, so everything from the
 [QueryFactory pattern](#queryfactory-pattern) works unchanged.
 
-**Release.** When a render completes, the scope looks at each call site that was read since the
+**Release.** When a render completes, the tracker looks at each call site that was read since the
 previous render and releases the keys at that site that were not read. A key switch is the
 common case: the old key is released after the render that read the new one, and its cached
 data stays for `GcTime`. A call site that was not read at all releases nothing. Reads from event
@@ -199,7 +192,7 @@ await CreateUserMutation.ExecuteAsync(new CreateUserRequest { Name = "John" });
 
 The mutation is created on the first read, and every later render hands its options to the same
 observer through `MutationObserver.SetOptions`. A mutation is never released by a render: it lives
-until the scope is disposed, so a run that outlasts the render that started it keeps its state.
+until the tracker is released, so a run that outlasts the render that started it keeps its state.
 Two mutations on one line, or one in a loop, share a call site and so share one mutation; use
 `Q.Mutation(key, options)` where each needs its own. A callback that
 closes over something the render changed therefore sees the new value: the latest run reads the
@@ -215,8 +208,8 @@ nothing else: it reads no clock. That is why it cannot tell some things apart, a
 until an alternative is found.
 
 1. **A hidden branch keeps its queries.** A call site that is not read releases nothing, because
-   the scope cannot tell a branch that is hidden from one that has not rendered yet. Queries in
-   an `@if` that turns false stay subscribed, and keep polling, until the page is disposed or
+   the tracker cannot tell a branch that is hidden from one that has not rendered yet. Queries in
+   an `@if` that turns false stay subscribed, and keep polling, until the tracker is released or
    the branch renders again. Put `Enabled(isVisible)` in the options so a hidden query stops
    fetching meanwhile:
 
@@ -240,14 +233,17 @@ until an alternative is found.
 
 | Before | After |
 |--------|-------|
-| `@inherits QueryComponentBase` | `@inject QueryClient Client`, `<QueryHost Scope="Q" />`, and `private QueryScope? _q; private QueryScope Q => _q ??= Client.CreateScope(this);` in `@code` |
+| `@inherits QueryComponentBase` | `@inject QueryTracker Q` and `<QueryRenderer Component="this" Tracker="Q" />` |
 | `UseQuery(key: k, handler: h, o => o.Enabled(x))` | `Q.Query(QueryOptions.Create(k, h).Enabled(x))` |
 | `UseQuery(options)` | `Q.Query(options)` |
 | `UseMutation(options)` | `Q.Mutation(options)` |
-| `override void Dispose()` calling `base.Dispose()` | implement `IDisposable` and drop the `base` call; the host disposes the scope |
+| `override void Dispose()` calling `base.Dispose()` | implement `IDisposable` and drop the `base` call; the renderer releases the tracker |
 
-`Client` was an injected property of the base class, and the `@inject` above replaces it under the
-same name. `ServiceProvider` is gone with it: handlers receive one in their context.
+`Client` was an injected property of the base class. Keep `@inject QueryClient Client` where the page still calls `Client.Invalidate...` or `Client.QueryAsync`. `ServiceProvider` is gone: handlers receive one in their context.
+
+Coming from the earlier `QueryScope`, `QueryHost` and `Client.CreateScope(this)`: inject `QueryTracker`
+instead of creating the scope, and write `<QueryRenderer Component="this" Tracker="Q" />` for
+`<QueryHost Scope="Q" />`. The namespace is `RevalQuery.Core.Tracking`.
 
 ---
 
@@ -417,7 +413,7 @@ running keeps the options it began with.
 ## Prerender state transfer
 
 With prerendering on, which is the default for every interactive render mode, the server
-renders your components and fetches their queries, its scope then ends, and the browser starts
+renders your components and fetches their queries, its DI scope then ends, and the browser starts
 with an empty cache and fetches the same keys over again. The transfer carries what the
 prerender resolved across, so the browser renders from it instead.
 

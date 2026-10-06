@@ -1,7 +1,8 @@
 @page "/products"
 @inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Table and detail</PageTitle>
 
@@ -84,9 +85,6 @@ else if (Detail.Data is { } detail)
 }
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     private int? Selected { get; set; }
 
     IQueryState<List<Product>> ProductList => Q.Query(

@@ -1,15 +1,15 @@
 @inject Fx Fx
 @inject QueryClient Client
-<QueryHost Scope="_scope" />
-<p id="out">@_scope.Query(Fx.Detail(Id)).Data</p>
+<QueryRenderer Component="this" Tracker="_tracker" />
+<p id="out">@_tracker.Query(Fx.Detail(Id)).Data</p>
 @code {
     [Parameter] public int Id { get; set; }
-    QueryScope _scope = default!;
-    int _scopeId = -1;
+    QueryTracker _tracker = default!;
+    int _trackerId = -1;
     protected override void OnParametersSet()
     {
-        if (_scopeId == Id) return;
-        _scopeId = Id;
-        _scope = Client.CreateScope(this);
+        if (_trackerId == Id) return;
+        _trackerId = Id;
+        _tracker = Client.CreateTracker();
     }
 }

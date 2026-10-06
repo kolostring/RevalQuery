@@ -50,7 +50,7 @@ must be seen whole, `QueryState` takes `_dataGate` and does the whole thing unde
 step, which is what stops a restore landing between a fetch's data and its clock, or a
 snapshot carrying one fetch's data with another's time.
 
-Observer callbacks are deliberately left unsynchronised, because `QueryHost`
+Observer callbacks are deliberately left unsynchronised, because `QueryRenderer`
 already routes them through `InvokeAsync`, which is the renderer's job rather than ours.
 
 The registry, the eviction policy and `QueryClient` all share one lifetime. Registering

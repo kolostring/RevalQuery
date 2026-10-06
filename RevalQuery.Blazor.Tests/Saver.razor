@@ -1,5 +1,5 @@
-@inject QueryClient Client
-<QueryHost Scope="Q" />
+@inject QueryTracker Q
+<QueryRenderer Component="this" Tracker="Q" />
 <button @onclick="Save">save</button>
 @if (Show)
 {
@@ -17,6 +17,4 @@
         MutationOptions.Create<Req, string>(async _ => { await Gate; return label; });
     Task Save() => (Last ?? throw new InvalidOperationException()).ExecuteAsync(new Req("x"));
     public sealed record Req(string Name);
-    QueryScope? _q;
-    QueryScope Q => _q ??= Client.CreateScope(this);
 }

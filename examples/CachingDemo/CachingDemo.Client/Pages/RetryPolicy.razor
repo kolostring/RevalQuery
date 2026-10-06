@@ -4,9 +4,9 @@
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
 @implements IDisposable
-@inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Retry counts retries</PageTitle>
 
@@ -66,9 +66,6 @@
 }
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     private int Retries { get; set; } = 2;
     private int Failures { get; set; } = 2;
 

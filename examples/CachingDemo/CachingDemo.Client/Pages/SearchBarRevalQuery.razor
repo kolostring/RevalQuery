@@ -5,8 +5,9 @@
 @using RevalQuery.Core.Query.Options
 @rendermode InteractiveWebAssembly
 @inject QueryClient Client
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 <PageTitle>Search Bar Example</PageTitle>
 
@@ -42,9 +43,6 @@
 </div>
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     private string SearchTerm { get; set; } = string.Empty;
 
     protected override async Task OnInitializedAsync()

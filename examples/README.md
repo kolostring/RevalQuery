@@ -48,5 +48,5 @@ dotnet run --project examples/MudBlazorDemo
 | `/reviews` | A `MudForm` posts through `Q.Mutation`, which invalidates the reviews key on success. |
 
 Integrating with a component library needs nothing special: `AddRevalQuery()` in `Program.cs`,
-a `<QueryHost Scope="Q" />` on the pages that query, and the query state's flags bound to
-whichever properties the components expose.
+a `<QueryRenderer Component="this" Tracker="Q" />` on the pages that query, and the query
+state's flags bound to whichever properties the components expose.

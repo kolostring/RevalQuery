@@ -81,21 +81,22 @@ _Avoid_: Active, paused, on
 
 How a component reads from the library, and who looks after its subscriptions.
 
-**Scope**:
+**Tracker**:
 Everything one component reads, owned in one place. The component reads through it on every
-render and never holds an observer itself; the scope subscribes what was read, re-applies options
+render and never holds an observer itself; the tracker subscribes what was read, re-applies options
 on every read, and releases what a render stopped reading. A read is identified by its call site,
 or by an explicit slot, and each site holds a set of query keys.
 _Avoid_: Context, session, subscription group
 
-**Host**:
-The framework adapter connected to a scope. It tells the component to render when an observer
-reports a change, reports each finished render to the scope, and disposes the scope with the
-component. A scope has one host at a time.
-_Avoid_: Owner, provider, wrapper
+**Renderer**:
+The framework adapter attached to a tracker. It tells the component to render when an observer
+reports a change, reports each finished render to the tracker, and releases the tracker with the
+component. A tracker has one renderer at a time, and its lifetime is the handle `Attach` returns:
+disposing the handle releases every observer, and a released tracker refuses reads.
+_Avoid_: Host, owner, provider, wrapper
 
 **Sweep**:
-What a scope does when a render completes: for every call site read since the previous sweep,
+What a tracker does when a render completes: for every call site read since the previous sweep,
 release the keys at that site that were not read, then start counting reads afresh. A site that was
 not read releases nothing, so a hidden branch keeps its queries until it renders again.
 _Avoid_: Garbage collection, cleanup, expiry

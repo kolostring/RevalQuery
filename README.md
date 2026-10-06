@@ -7,7 +7,7 @@ Type-safe async data fetching and caching library for .NET. Inspired by TanStack
 | Package | Description |
 |---------|-------------|
 | [RevalQuery.Core](./RevalQuery.Core) | Core library with QueryClient, QueryOptions, MutationOptions |
-| [RevalQuery.Blazor](./RevalQuery.Blazor) | Blazor integration: `QueryHost` and `Client.CreateScope(this)` |
+| [RevalQuery.Blazor](./RevalQuery.Blazor) | Blazor integration: `QueryRenderer` and an injected `QueryTracker` |
 
 ## Installation
 
@@ -29,15 +29,12 @@ browser afterwards. To stop the browser refetching what the server already fetch
 
 ```razor
 @using RevalQuery.Blazor
-@using RevalQuery.Core.Scope
-@inject QueryClient Client
+@using RevalQuery.Core.Tracking
+@inject QueryTracker Q
 
-<QueryHost Scope="Q" />
+<QueryRenderer Component="this" Tracker="Q" />
 
 @code {
-    private QueryScope? _q;
-    private QueryScope Q => _q ??= Client.CreateScope(this);
-
     IQueryState<User[]> Users => Q.Query(
         QueryOptions.Create<User[]>(
             "users",
@@ -61,8 +58,8 @@ browser afterwards. To stop the browser refetching what the server already fetch
 }
 ```
 
-A component reads through a `QueryScope` and inherits from nothing. A hidden branch keeps its
-queries until it renders again, and a call site read by a page and by an asynchronously loading
+A component reads through an injected `QueryTracker` and inherits from nothing. A hidden branch keeps its
+queries until it renders again or the tracker is released, and a call site read by a page and by an asynchronously loading
 child with different keys can thrash: see the
 [known limitations](./RevalQuery.Blazor/README.md#known-limitations) and their workarounds.
 Upgrading from `QueryComponentBase`? See the
