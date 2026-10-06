@@ -120,6 +120,12 @@ component is disposed. The owner is passed explicitly because Blazor gives a chi
 reference to the component whose markup it is in. A forgotten `<RevalRenderer>` means the page
 never re-renders and the hooks are never released.
 
+Place the `RevalRenderer` once, at the top level of the component's markup, outside any `@if`,
+`@foreach`, `AuthorizeView`, `ErrorBoundary`, tab panel or other wrapper component. Removing it
+releases the hooks for good, and nothing re-attaches them. Razor allows several root nodes, so
+this is always possible. A wrapper that always renders its child content still works, but is not
+recommended.
+
 Read through the hooks in a property or in the markup, on every render, and read the state it
 returns afterwards. The hooks subscribe on the first read of a key, hands the options of every
 later read to the same observer, and releases the query when a render stops reading it.

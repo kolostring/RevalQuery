@@ -366,7 +366,7 @@ public sealed class RevalHooks
             ThrowIfReleasedLocked();
 
             if (_host is not null)
-                throw new InvalidOperationException("This RevalHooks instance already has a renderer attached.");
+                throw new InvalidOperationException("This RevalHooks instance already has a renderer attached. In Blazor, place RevalRenderer once per component, at the top level of its markup.");
 
             _host = link;
             flush = _pending;
@@ -422,7 +422,7 @@ public sealed class RevalHooks
 
     private static void ThrowReleased() =>
         throw new InvalidOperationException(
-            "This RevalHooks instance was released when its Attach handle was disposed. Inject or create a new one.");
+            "This RevalHooks instance was released when its Attach handle was disposed. In Blazor this happens when RevalRenderer is removed: place it once at the top level of the component's markup, outside any conditional. Otherwise inject or create a new one.");
 
     private QueryEntry<TKey, TRes>? Find<TKey, TRes>(TKey key) where TKey : ITuple
     {

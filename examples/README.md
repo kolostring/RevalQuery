@@ -48,5 +48,5 @@ dotnet run --project examples/MudBlazorDemo
 | `/reviews` | A `MudForm` posts through `Reval.Mutation`, which invalidates the reviews key on success. |
 
 Integrating with a component library needs nothing special: `AddRevalQuery()` in `Program.cs`,
-a `<RevalRenderer Component="this" Hooks="Reval" />` on the pages that query, and the query
+a `<RevalRenderer Component="this" Hooks="Reval" />` at the top level of each page that queries, and the query
 state's flags bound to whichever properties the components expose.

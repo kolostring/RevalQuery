@@ -368,7 +368,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
             Query.ApplyFetched(fetched);
             succeeded = true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (fetchCts.IsCancellationRequested)
         {
             cancelled = true;
         }

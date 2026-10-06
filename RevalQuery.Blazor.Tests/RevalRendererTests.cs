@@ -267,7 +267,7 @@ public class RevalRendererTests : TestContext
     }
 
     [Fact]
-    public async Task A_Renderer_Inside_Child_Content_Re_Renders_The_Owning_Component()
+    public async Task A_Renderer_In_Always_Rendered_Child_Content_Still_Re_Renders_The_Owning_Component()
     {
         var fx = NewFx();
         var gate = fx.Gate(1);
@@ -280,6 +280,30 @@ public class RevalRendererTests : TestContext
         await Flush(cut);
 
         Assert.Equal(1, fx.CallsFor(1));
+    }
+
+    [Fact]
+    public async Task A_Second_Renderer_On_The_Same_Hooks_Throws_On_Every_Parameter_Set()
+    {
+        var fx = NewFx();
+        var hooks = fx.Client.CreateHooks();
+        var owner = new HandOwner();
+        RenderComponent<RevalRenderer>(p => p.Add(c => c.Component, owner).Add(c => c.Hooks, hooks));
+        var second = new RevalRenderer();
+        ComponentFactories.Add<RevalRenderer>(second);
+        var parameters = ParameterView.FromDictionary(new Dictionary<string, object?>
+        {
+            [nameof(RevalRenderer.Component)] = owner,
+            [nameof(RevalRenderer.Hooks)] = hooks,
+        });
+
+        Assert.ThrowsAny<Exception>(() => RenderComponent<RevalRenderer>(p => p.Add(c => c.Component, owner).Add(c => c.Hooks, hooks)));
+
+        for (var i = 0; i < 2; i++)
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => second.SetParametersAsync(parameters));
+            Assert.Contains("already has a renderer attached", error.Message);
+        }
     }
 
     [Fact]

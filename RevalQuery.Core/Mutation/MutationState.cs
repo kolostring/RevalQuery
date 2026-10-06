@@ -76,6 +76,7 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
 
     private readonly List<CancellationTokenSource> _runningMutationsCancellationTokens = [];
     private int _currentVersion = 0;
+    private MutationStatus _settledStatus = MutationStatus.Idle;
 
     /// <summary>
     /// Raised when mutation status changes.
@@ -109,6 +110,14 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
     /// <param name="variables">The parameters for the mutation.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="mutateOptions">Optional per-call callbacks (OnResolved, OnException, OnSettled).</param>
+    /// <remarks>
+    /// A handler that throws, including an <see cref="OperationCanceledException"/> nobody
+    /// requested such as an <c>HttpClient</c> timeout, is an ordinary failure. When <paramref name="ct"/>
+    /// cancels the run, no callback fires and the exception reaches the caller; if it was the
+    /// latest run, the status returns to that of the last run that settled. A run cancelled by
+    /// <see cref="Reset"/> ends silently.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled.</exception>
     public async Task ExecuteAsync(
         TParams variables,
         CancellationToken ct = default,
@@ -166,7 +175,7 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
 
                 if (isLatestMutation)
                 {
-                    Status = MutationStatus.Resolved;
+                    Status = _settledStatus = MutationStatus.Resolved;
                     Data = resolved;
                     Exception = null;
                 }
@@ -179,9 +188,17 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
                 await (mutateOptions?.OnResolved?.Invoke(resolved, variables) ?? Task.CompletedTask);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
             isMutationCancelled = true;
+            if (internalCts.IsCancellationRequested) return;
+
+            lock (_mutationLock)
+            {
+                if (version == _currentVersion) Status = _settledStatus;
+            }
+
+            throw;
         }
         catch (Exception ex)
         {
@@ -193,7 +210,7 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
                 isLatestMutation = version == _currentVersion;
                 if (isLatestMutation)
                 {
-                    Status = MutationStatus.Exception;
+                    Status = _settledStatus = MutationStatus.Exception;
                     Exception = ex;
                     Data = default;
                 }
@@ -264,7 +281,7 @@ public sealed class MutationState<TParams, TResponse> where TParams : class
             _runningMutationsCancellationTokens.Clear();
             Data = default;
             Exception = null;
-            Status = MutationStatus.Idle;
+            Status = _settledStatus = MutationStatus.Idle;
         }
         NotifyChanged();
     }
