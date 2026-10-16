@@ -9,7 +9,7 @@ namespace RevalQuery.Core.Caching.Eviction;
 
 /// <summary>
 /// Evicts an unobserved query once its GcTime has elapsed.
-/// The collection loop starts on the first registration and stops with the owning client,
+/// The sweep timer is created on the first registration and stops with the owning client,
 /// so there is no hosted service to start and WebAssembly needs no host.
 /// </summary>
 public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) : ICacheEvictionPolicy, IDisposable, IAsyncDisposable
@@ -19,8 +19,9 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
 
     private readonly ConcurrentDictionary<ITuple, EvictionToken> _deathRow = new(QueryKeyComparer.Instance);
     private readonly object _lifecycleGate = new();
-    private CancellationTokenSource? _cancellationTokenSource;
-    private Task _collectionTask = Task.CompletedTask;
+    private ITimer? _timer;
+    private TaskCompletionSource _sweepsDone = new();
+    private int _runningSweeps;
     private bool _isStopped;
 
     /// <summary>
@@ -39,7 +40,7 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
         _deathRow[key] = new EvictionToken
         {
             Key = key,
-            Expiry = DateTime.UtcNow.Add(gcTime)
+            Expiry = defaultOptions.TimeProvider.GetUtcNow().Add(gcTime)
         };
 
         EnsureStarted();
@@ -56,33 +57,22 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
     }
 
     /// <summary>
-    /// Stops the collection loop. Further registrations will not restart it.
+    /// Stops the collection loop and waits for any sweep that is running, including one that
+    /// was running when <see cref="Dispose"/> stopped the timer. Further registrations will not
+    /// restart it.
     /// </summary>
     public async Task StopAsync()
     {
-        Task collectionTask;
-        CancellationTokenSource? cts;
+        Task sweepsDone;
 
         lock (_lifecycleGate)
         {
-            if (_isStopped) return;
             _isStopped = true;
-            cts = _cancellationTokenSource;
-            collectionTask = _collectionTask;
+            _timer?.Dispose();
+            sweepsDone = _runningSweeps is 0 ? Task.CompletedTask : _sweepsDone.Task;
         }
 
-        if (cts is null) return;
-
-        await cts.CancelAsync();
-        try
-        {
-            await collectionTask;
-        }
-        catch (OperationCanceledException)
-        {
-        }
-
-        cts.Dispose();
+        await sweepsDone;
     }
 
     /// <summary>
@@ -94,30 +84,26 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
     }
 
     /// <summary>
-    /// Stops the collection loop without waiting for it to finish. Present so a container
+    /// Stops the collection loop without waiting for a running sweep. Present so a container
     /// disposing its scope synchronously, which is the common case, does not have to.
+    /// <see cref="StopAsync"/> still waits for that sweep afterwards.
     /// </summary>
     public void Dispose()
     {
-        CancellationTokenSource? cts;
-
         lock (_lifecycleGate)
         {
-            if (_isStopped) return;
             _isStopped = true;
-            cts = _cancellationTokenSource;
+            _timer?.Dispose();
         }
-
-        cts?.Cancel();
     }
 
     /// <summary>
     /// Evicts every entry whose expiry has passed. Public for tests and admin scenarios;
-    /// the collection loop calls it on each interval.
+    /// the sweep timer calls it on each interval.
     /// </summary>
     public void CollectExpiredEntries()
     {
-        var now = DateTime.UtcNow;
+        var now = defaultOptions.TimeProvider.GetUtcNow();
         var expired = _deathRow
             .Where(x => x.Value.Expiry <= now)
             .Select(x => x.Key)
@@ -130,34 +116,35 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
 
     private void EnsureStarted()
     {
-        if (_cancellationTokenSource is not null) return;
+        if (_timer is not null) return;
 
         lock (_lifecycleGate)
         {
-            if (_cancellationTokenSource is not null || _isStopped) return;
+            if (_timer is not null || _isStopped) return;
 
-            var cts = new CancellationTokenSource();
-            _cancellationTokenSource = cts;
-            _collectionTask = Task.Run(() => RunCollectionLoopAsync(cts));
+            var interval = defaultOptions.CacheOptions.GcInterval;
+            _timer = defaultOptions.TimeProvider.CreateTimer(_ => Sweep(), null, interval, interval);
         }
     }
 
-    private async Task RunCollectionLoopAsync(CancellationTokenSource cts)
+    private void Sweep()
     {
+        lock (_lifecycleGate)
+        {
+            if (_isStopped) return;
+            if (_runningSweeps++ is 0) _sweepsDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
         try
         {
-            while (!cts.IsCancellationRequested)
-            {
-                await Task.Delay(defaultOptions.CacheOptions.GcInterval, cts.Token);
-                CollectExpiredEntries();
-            }
-        }
-        catch (OperationCanceledException)
-        {
+            CollectExpiredEntries();
         }
         finally
         {
-            cts.Dispose();
+            lock (_lifecycleGate)
+            {
+                if (--_runningSweeps is 0) _sweepsDone.TrySetResult();
+            }
         }
     }
 
