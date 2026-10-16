@@ -44,20 +44,38 @@ public class PrerenderTransferTests
         return options.Build();
     }
 
-    private static (RevalClient Client, PrerenderTransfer Transfer, ServiceProvider Provider) Host(
-        Microsoft.AspNetCore.Components.PersistentComponentState state)
+    private static Hosted Host(Microsoft.AspNetCore.Components.PersistentComponentState state)
     {
         var services = new ServiceCollection();
         services.AddSingleton(state);
         services.AddRevalQuery();
         services.AddRevalQueryPrerenderTransfer(Serializer);
 
-        var provider = services.BuildServiceProvider();
-        var scope = provider.CreateScope().ServiceProvider;
+        return new Hosted(services.BuildServiceProvider());
+    }
 
-        var transfer = scope.GetRequiredService<PrerenderTransfer>();
+    private sealed class Hosted : IDisposable
+    {
+        private readonly ServiceProvider _provider;
+        private readonly IServiceScope _scope;
 
-        return (scope.GetRequiredService<RevalClient>(), transfer, provider);
+        public Hosted(ServiceProvider provider)
+        {
+            _provider = provider;
+            _scope = provider.CreateScope();
+            Transfer = _scope.ServiceProvider.GetRequiredService<PrerenderTransfer>();
+            Client = _scope.ServiceProvider.GetRequiredService<RevalClient>();
+        }
+
+        public RevalClient Client { get; }
+
+        public PrerenderTransfer Transfer { get; }
+
+        public void Dispose()
+        {
+            _scope.Dispose();
+            _provider.Dispose();
+        }
     }
 
     [Fact]
@@ -66,20 +84,22 @@ public class PrerenderTransferTests
         _serverCalls = 0;
         _clientCalls = 0;
 
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
-        var (server, _, serverProvider) = Host(serverState);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
+        using var serverHost = Host(serverState.State);
+        var server = serverHost.Client;
 
         var fetched = await server.QueryAsync(ServerQuery("widget"));
         Assert.Equal(new Widget(7, "from server"), fetched);
         Assert.Equal(1, _serverCalls);
 
-        await PersistentStateHarness.PersistAsync(serverState);
+        var written = await serverState.PersistAsync();
         Assert.NotEmpty(written);
 
-        serverProvider.Dispose();
+        serverHost.Dispose();
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var (client, _, clientProvider) = Host(clientState);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var clientHost = Host(clientState.State);
+        var client = clientHost.Client;
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
         await Task.Delay(300);
@@ -88,7 +108,7 @@ public class PrerenderTransferTests
         Assert.Equal(0, _clientCalls);
 
         observer.Dispose();
-        clientProvider.Dispose();
+        clientHost.Dispose();
     }
 
     [Fact]
@@ -97,18 +117,20 @@ public class PrerenderTransferTests
         _serverCalls = 0;
         _clientCalls = 0;
 
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
-        var (server, _, serverProvider) = Host(serverState);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
+        using var serverHost = Host(serverState.State);
+        var server = serverHost.Client;
 
         await server.QueryAsync(ServerQuery("widget"));
 
         server.Invalidate("widget");
 
-        await PersistentStateHarness.PersistAsync(serverState);
-        serverProvider.Dispose();
+        var written = await serverState.PersistAsync();
+        serverHost.Dispose();
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var (client, _, clientProvider) = Host(clientState);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var clientHost = Host(clientState.State);
+        var client = clientHost.Client;
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
 
@@ -118,7 +140,7 @@ public class PrerenderTransferTests
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
 
         observer.Dispose();
-        clientProvider.Dispose();
+        clientHost.Dispose();
     }
 
     [Fact]
@@ -127,15 +149,17 @@ public class PrerenderTransferTests
         _serverCalls = 0;
         _clientCalls = 0;
 
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
-        var (server, _, serverProvider) = Host(serverState);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
+        using var serverHost = Host(serverState.State);
+        var server = serverHost.Client;
 
         await server.QueryAsync(ServerQuery("widget"));
-        await PersistentStateHarness.PersistAsync(serverState);
-        serverProvider.Dispose();
+        var written = await serverState.PersistAsync();
+        serverHost.Dispose();
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var (client, _, clientProvider) = Host(clientState);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var clientHost = Host(clientState.State);
+        var client = clientHost.Client;
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
         await Task.Delay(300);
@@ -144,7 +168,7 @@ public class PrerenderTransferTests
         Assert.Equal(new Widget(7, "from server"), observer.Query.Data);
 
         observer.Dispose();
-        clientProvider.Dispose();
+        clientHost.Dispose();
     }
 
     [Fact]
@@ -153,19 +177,21 @@ public class PrerenderTransferTests
         _serverCalls = 0;
         _clientCalls = 0;
 
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
-        var (server, _, serverProvider) = Host(serverState);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
+        using var serverHost = Host(serverState.State);
+        var server = serverHost.Client;
 
         await server.QueryAsync(ServerQuery("widget"));
-        await PersistentStateHarness.PersistAsync(serverState);
-        serverProvider.Dispose();
+        var written = await serverState.PersistAsync();
+        serverHost.Dispose();
 
         var payload = System.Text.Encoding.UTF8.GetString(written[TransferStateKey()]);
         written[TransferStateKey()] = System.Text.Encoding.UTF8.GetBytes(
             payload.Replace(FindTimestamp(payload), "2020-01-01T00:00:00+00:00"));
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var (client, _, clientProvider) = Host(clientState);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var clientHost = Host(clientState.State);
+        var client = clientHost.Client;
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
 
@@ -175,7 +201,7 @@ public class PrerenderTransferTests
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
 
         observer.Dispose();
-        clientProvider.Dispose();
+        clientHost.Dispose();
     }
 
     [Fact]
@@ -183,20 +209,22 @@ public class PrerenderTransferTests
     {
         _clientCalls = 0;
 
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
-        var (server, _, serverProvider) = Host(serverState);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
+        using var serverHost = Host(serverState.State);
+        var server = serverHost.Client;
 
         await Assert.ThrowsAnyAsync<Exception>(() => server.QueryAsync(
             QueryOptions.Create("widget", static _ =>
                 Task.FromException<Widget>(new InvalidOperationException("boom"))).Build()));
 
-        await PersistentStateHarness.PersistAsync(serverState);
-        serverProvider.Dispose();
+        var written = await serverState.PersistAsync();
+        serverHost.Dispose();
 
         Assert.Empty(written);
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var (client, _, clientProvider) = Host(clientState);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var clientHost = Host(clientState.State);
+        var client = clientHost.Client;
 
         var observer = client.Subscribe(ClientQuery("widget"), () => { });
 
@@ -206,32 +234,34 @@ public class PrerenderTransferTests
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
 
         observer.Dispose();
-        clientProvider.Dispose();
+        clientHost.Dispose();
     }
 
     [Fact]
     public async Task Keys_That_Differ_Only_By_Segment_Type_Or_Punctuation_Do_Not_Collide()
     {
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
-        var (server, _, serverProvider) = Host(serverState);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
+        using var serverHost = Host(serverState.State);
+        var server = serverHost.Client;
 
         await server.QueryAsync(Named(("k", "1"), "text one"));
         await server.QueryAsync(Named(("k", 1), "number one"));
         await server.QueryAsync(Named(("a/b", "c"), "slash left"));
         await server.QueryAsync(Named(("a", "b/c"), "slash right"));
 
-        await PersistentStateHarness.PersistAsync(serverState);
-        serverProvider.Dispose();
+        var written = await serverState.PersistAsync();
+        serverHost.Dispose();
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var (client, _, clientProvider) = Host(clientState);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var clientHost = Host(clientState.State);
+        var client = clientHost.Client;
 
         Assert.Equal("text one", await Restored(client, ("k", "1")));
         Assert.Equal("number one", await Restored(client, ("k", 1)));
         Assert.Equal("slash left", await Restored(client, ("a/b", "c")));
         Assert.Equal("slash right", await Restored(client, ("a", "b/c")));
 
-        clientProvider.Dispose();
+        clientHost.Dispose();
     }
 
     private static QueryOptions<TKey, Widget> Named<TKey>(TKey key, string name)
@@ -269,23 +299,22 @@ public class PrerenderTransferTests
     public async Task The_Transfer_Joins_A_Persistence_Store_Rather_Than_Replacing_It()
     {
         var store = new RecordingPersistence();
+        using var harness = await PersistentStateHarness.CreateEmptyAsync();
 
         var services = new ServiceCollection();
-        services.AddSingleton(PersistentStateHarness.CreateEmpty(out _));
+        services.AddSingleton(harness.State);
         services.AddRevalQuery();
         services.AddRevalQueryPrerenderTransfer(Serializer);
         services.AddScoped<IQueryPersistence>(_ => store);
 
-        var provider = services.BuildServiceProvider();
-        var scope = provider.CreateScope().ServiceProvider;
-        var client = scope.GetRequiredService<RevalClient>();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
         await client.QueryAsync(ServerQuery("widget"));
         await Task.Delay(200);
 
         Assert.Equal(1, store.Saves);
-
-        provider.Dispose();
     }
 
     private static string TransferStateKey() => "RevalQuery.PrerenderTransfer";
