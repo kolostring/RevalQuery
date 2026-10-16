@@ -2,6 +2,4 @@
 # Format: <file> <member>  # <ticket>
 # The check fails on a hit not listed here and on an entry that no longer hits.
 #
-# Each of these stamps persisted data's freshness from the real clock, because the library
-# judges staleness on the real clock. #19 moves them to a FakeTimeProvider and empties this list.
-
+# Empty: every time-driven test runs on a FakeTimeProvider. Do not add entries; fix the test.
