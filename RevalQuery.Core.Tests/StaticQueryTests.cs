@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
@@ -12,8 +13,10 @@ namespace RevalQuery.Core.Tests;
 /// </remarks>
 public class StaticQueryTests
 {
-    private static RevalClient NewClient() =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+    private readonly FakeTimeProvider _clock = new();
+
+    private RevalClient NewClient() =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock });
 
     private static QueryOptions<ValueTuple<string>, string> Options(string key, bool neverStale, Counter calls) =>
         QueryOptions.Create(key, _ => Task.FromResult($"call-{calls.Increment()}"))
@@ -47,6 +50,7 @@ public class StaticQueryTests
         Assert.True(first.Query.IsResolved);
         first.Dispose();
 
+        _clock.Advance(TimeSpan.FromMinutes(1));
         using var second = client.Subscribe(Options("resubscribe", neverStale: true, calls), () => { });
 
         Assert.Equal(1, calls.Value);
@@ -63,9 +67,7 @@ public class StaticQueryTests
         Assert.True(first.Query.IsResolved);
         first.Dispose();
 
-        // Relies on the clock having ticked since the fetch: StaleTime zero counts an age of
-        // exactly zero as fresh (L1). Under a fake clock this control needs an Advance first, or
-        // it stops proving the static test above.
+        _clock.Advance(TimeSpan.FromMinutes(1));
         using var second = client.Subscribe(Options("resubscribe-control", neverStale: false, calls), () => { });
 
         Assert.Equal(2, calls.Value);
@@ -131,6 +133,7 @@ public class StaticQueryTests
         var fetchedAt = state.LastUpdatedAt;
         Assert.NotEqual(DateTimeOffset.MinValue, fetchedAt);
 
+        _clock.Advance(TimeSpan.FromMinutes(1));
         client.Invalidate("clock");
 
         Assert.True(state.IsInvalidated);
