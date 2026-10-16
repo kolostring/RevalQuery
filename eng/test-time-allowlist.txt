@@ -5,6 +5,3 @@
 # Each of these stamps persisted data's freshness from the real clock, because the library
 # judges staleness on the real clock. #19 moves them to a FakeTimeProvider and empties this list.
 
-RevalQuery.Core.Tests/ReviewFindingsTests.cs Fresh_Persisted_Data_Suppresses_The_Fetch  # #19
-RevalQuery.Core.Tests/ReviewFindingsTests.cs Stale_Persisted_Data_Still_Refetches  # #19
-RevalQuery.Core.Tests/ReviewFindingsTests.cs A_Late_Restore_Never_Overwrites_A_Landed_Fetch  # #19
