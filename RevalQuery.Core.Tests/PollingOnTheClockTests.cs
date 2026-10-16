@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
@@ -72,6 +72,33 @@ public class PollingOnTheClockTests
 
         handler.ReleaseAll("done");
         Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Resubscribing_From_Inside_The_Last_Unsubscribe_Keeps_Polling()
+    {
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create(Key, handler.Handle)
+            .ConfigureFetch(f => f.RefetchInterval(Interval))
+            .Build();
+        using var client = NewClient();
+        var state = client.GetOrCreateQuery(options);
+        IDisposable? second = null;
+        state.OnLastSubscriberRemoved += _ => second ??= client.Subscribe(options, () => { });
+        var first = client.Subscribe(options, () => { });
+        await handler.Started(0).WaitAsync(HangGuard);
+
+        first.Dispose();
+        Assert.NotNull(second);
+        var join = client.QueryAsync(options);
+        handler.Release(0, "data");
+        await join.WaitAsync(HangGuard);
+        var before = handler.Calls;
+
+        _clock.Advance(Interval);
+
+        Assert.Equal(before + 1, handler.Calls);
+        second!.Dispose();
     }
 
     private RevalClient NewClient() =>

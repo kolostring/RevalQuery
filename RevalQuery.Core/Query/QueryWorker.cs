@@ -90,14 +90,21 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         }
     }
 
-    private void PausePolling(QueryState<TKey, TRes> state) => StopPolling();
+    /// <summary>
+    /// Ends polling because the last observer left, unless one has arrived since. The client
+    /// releases the worker before this runs, and a release refused by a hold leaves the worker
+    /// in place under a subscriber who may already have come back.
+    /// </summary>
+    private void PausePolling(QueryState<TKey, TRes> state) => StopPolling(onlyIfUnobserved: true);
 
-    private void StopPolling()
+    private void StopPolling(bool onlyIfUnobserved = false)
     {
         ITimer? timer;
 
         lock (_gate)
         {
+            if (onlyIfUnobserved && Query.HasObservers) return;
+
             timer = _pollingTimer;
             _pollingTimer = null;
         }
