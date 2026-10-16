@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
+using RevalQuery.Core.Abstractions.Mutation;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Mutation.Options;
@@ -147,14 +148,15 @@ public class SignalsTests
             await gate.Task;
             return "done";
         }).Build(), () => { });
+        IMutationState<string> state = observer.State;
         var execution = observer.State.ExecuteAsync("params");
 
-        var resolved = Signals.UntilAsync(observer.State, s => s.IsResolved);
+        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
         Assert.False(resolved.IsCompleted);
         gate.Open();
 
         await resolved;
-        Assert.Equal("done", observer.State.Data);
+        Assert.Equal("done", state.Data);
         await execution.WaitAsync(HangGuard);
     }
 }

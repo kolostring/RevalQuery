@@ -1,4 +1,5 @@
-﻿using RevalQuery.Core.Abstractions;
+using RevalQuery.Core.Abstractions;
+using RevalQuery.Core.Abstractions.Mutation;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Mutation.Callbacks;
 using RevalQuery.Core.Mutation.Execution;
@@ -32,7 +33,7 @@ public enum MutationStatus
 /// </remarks>
 /// <typeparam name="TParams">The parameters type for the mutation.</typeparam>
 /// <typeparam name="TResponse">The response type from the mutation.</typeparam>
-public sealed class MutationState<TParams, TResponse> where TParams : class
+public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse> where TParams : class
 {
     private readonly IRetryPolicy _retryPolicy;
     private readonly object _mutationLock = new();
