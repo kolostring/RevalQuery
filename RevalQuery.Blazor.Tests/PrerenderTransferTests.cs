@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Blazor;
 using RevalQuery.Blazor.Prerender;
 using RevalQuery.Core;
@@ -62,11 +63,11 @@ public class PrerenderTransferTests
         return (observer, state);
     }
 
-    private static Hosted Host(Microsoft.AspNetCore.Components.PersistentComponentState state)
+    private static Hosted Host(Microsoft.AspNetCore.Components.PersistentComponentState state, TimeProvider? clock = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(state);
-        services.AddRevalQuery();
+        services.AddRevalQuery(o => { if (clock is not null) o.TimeProvider = clock; });
         services.AddRevalQueryPrerenderTransfer(Serializer);
 
         return new Hosted(services.BuildServiceProvider());
@@ -209,7 +210,8 @@ public class PrerenderTransferTests
         written[TransferStateKey] = JsonSerializer.SerializeToUtf8Bytes(aged);
 
         using var clientState = await PersistentStateHarness.CreateFromAsync(written);
-        using var clientHost = Host(clientState.State);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2020, 1, 1, 1, 0, 0, TimeSpan.Zero));
+        using var clientHost = Host(clientState.State, clock);
         var handler = new GatedHandler<Widget>();
 
         var (observer, state) = await SubscribeRestored(
