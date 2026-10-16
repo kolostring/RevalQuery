@@ -89,10 +89,12 @@ public class ReviewFindingsTests
     {
         using var client = NewClient();
         var calls = 0;
+        var target = int.MaxValue;
+        var reached = new Gate();
 
         var options = QueryOptions.Create("polled", _ =>
         {
-            Interlocked.Increment(ref calls);
+            if (Interlocked.Increment(ref calls) >= Volatile.Read(ref target)) reached.Open();
             return Task.FromResult("ok");
         }).ConfigureFetch(f => f.RefetchInterval(TimeSpan.FromMilliseconds(30))).Build();
 
@@ -107,9 +109,10 @@ public class ReviewFindingsTests
         var observer = client.Subscribe(options, () => { });
         var before = Volatile.Read(ref calls);
 
-        await WaitUntil(() => Volatile.Read(ref calls) >= before + 3);
+        Volatile.Write(ref target, before + 3);
+        if (Volatile.Read(ref calls) >= before + 3) reached.Open();
 
-        Assert.True(Volatile.Read(ref calls) >= before + 3, "polling stopped after the churn");
+        await reached.Task.WaitAsync(HangGuard);
         observer.Dispose();
     }
 
@@ -212,10 +215,4 @@ public class ReviewFindingsTests
 
     private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
-
-    private static async Task WaitUntil(Func<bool> predicate, int timeoutMs = 3000)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (!predicate() && DateTime.UtcNow < deadline) await Task.Delay(5);
-    }
 }
