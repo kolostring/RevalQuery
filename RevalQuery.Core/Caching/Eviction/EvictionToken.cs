@@ -16,5 +16,5 @@ public sealed class EvictionToken
     /// <summary>
     /// When the query becomes eligible for eviction.
     /// </summary>
-    public DateTime Expiry { get; init; }
+    public DateTimeOffset Expiry { get; init; }
 }
