@@ -3,6 +3,8 @@
   <Project Path="RevalQuery.Blazor.Tests/RevalQuery.Blazor.Tests.csproj" />
   <Project Path="RevalQuery.Core/RevalQuery.Core.csproj" />
   <Project Path="RevalQuery.Core.Tests/RevalQuery.Core.Tests.csproj" />
+  <Project Path="RevalQuery.TestKit/RevalQuery.TestKit.csproj" />
+  <Project Path="RevalQuery.TestKit.Tests/RevalQuery.TestKit.Tests.csproj" />
   <Folder Name="/examples/">
     <Project Path="examples/CachingDemo/CachingDemo/CachingDemo.csproj" />
     <Project Path="examples/CachingDemo/CachingDemo.Client/CachingDemo.Client.csproj" />
