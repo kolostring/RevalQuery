@@ -50,7 +50,7 @@ public class ReviewFindingsTests
 
         var fetch = client.QueryAsync(options);
         await Task.Delay(5);
-        TestUtils.Discard(client.QueryAsync(options));
+        Discard(client.QueryAsync(options));
 
         Assert.Equal("value", await fetch);
     }

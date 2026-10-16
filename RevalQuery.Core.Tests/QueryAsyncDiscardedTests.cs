@@ -24,7 +24,7 @@ public class QueryAsyncDiscardedTests
     {
         var queryOptions = QueryOptions.Create(Key, DataHandler).Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var state = _client.FindQuery(Key);
@@ -42,12 +42,12 @@ public class QueryAsyncDiscardedTests
             .ConfigureCache(c => c.GcTime(TimeSpan.FromMinutes(10)))
             .Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var firstData = ((QueryState<ValueTuple<string>, string>)_client.FindQuery(Key)!).Data;
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await Task.Delay(50);
 
         var state = (QueryState<ValueTuple<string>, string>)_client.FindQuery(Key)!;
@@ -62,7 +62,7 @@ public class QueryAsyncDiscardedTests
             .ConfigureRetry(r => r.Retry(0))
             .Build();
 
-        var thrown = Record.Exception(() => TestUtils.Discard(_client.QueryAsync(queryOptions)));
+        var thrown = Record.Exception(() => Discard(_client.QueryAsync(queryOptions)));
         Assert.Null(thrown);
 
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsException);
@@ -84,8 +84,8 @@ public class QueryAsyncDiscardedTests
     [Fact]
     public async Task Discarded_Calls_On_Different_Keys_Are_Independent()
     {
-        TestUtils.Discard(_client.QueryAsync(QueryOptions.Create(Key, DataHandler).Build()));
-        TestUtils.Discard(_client.QueryAsync(QueryOptions.Create(Key2, Data2Handler).Build()));
+        Discard(_client.QueryAsync(QueryOptions.Create(Key, DataHandler).Build()));
+        Discard(_client.QueryAsync(QueryOptions.Create(Key2, Data2Handler).Build()));
 
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key2)!, s => s.IsResolved);

@@ -20,11 +20,14 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="RevalQuery.TestKit" />
+    <Using Include="RevalQuery.TestKit.Kit" Static="true" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\RevalQuery.Core\RevalQuery.Core.csproj" />
     <ProjectReference Include="..\RevalQuery.Blazor\RevalQuery.Blazor.csproj" />
+    <ProjectReference Include="..\RevalQuery.TestKit\RevalQuery.TestKit.csproj" />
   </ItemGroup>
 
 </Project>

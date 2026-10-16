@@ -10,22 +10,6 @@ public static class TestUtils
         while (!predicate() && DateTime.UtcNow < deadline) await Task.Delay(10);
     }
 
-    public static void Discard<TRes>(Task<TRes> query)
-    {
-        _ = Swallow(query);
-
-        static async Task Swallow(Task<TRes> task)
-        {
-            try
-            {
-                await task;
-            }
-            catch
-            {
-            }
-        }
-    }
-
     public static async Task WaitForStateAsync(IQueryState state, Func<IQueryState, bool> predicate, int timeoutMs = 2000)
     {
         if (predicate(state)) return;

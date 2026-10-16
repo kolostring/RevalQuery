@@ -128,7 +128,7 @@ public class IssueReproductionTests
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new RevalClient(sp, new RevalQueryOptions());
 
-        TestUtils.Discard(client.QueryAsync(QueryOptions.Create("prefetched", Handler).Build()));
+        Discard(client.QueryAsync(QueryOptions.Create("prefetched", Handler).Build()));
         await WaitUntil(() => client.FindQuery("prefetched")?.IsResolved == true);
         await WaitUntil(() => WorkerCount(client) == 0);
 

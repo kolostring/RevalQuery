@@ -40,7 +40,7 @@ public class PollingTests
     {
         var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         var state = _client.GetOrCreateQuery(queryOptions);
         var firstData = state.Data;
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
@@ -75,7 +75,7 @@ public class PollingTests
             .ConfigureFetch(b => b.RefetchInterval(TimeSpan.FromMilliseconds(50)))
             .Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var firstData = ((QueryState<ValueTuple<string>, string>)_client.FindQuery(Key)!).Data;

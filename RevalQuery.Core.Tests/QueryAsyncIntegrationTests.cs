@@ -22,7 +22,7 @@ public class QueryAsyncIntegrationTests
     {
         var queryOptions = QueryOptions.Create(Key, CachedHandler).Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var observer = _client.Subscribe(queryOptions, () => { });
@@ -51,7 +51,7 @@ public class QueryAsyncIntegrationTests
             .ConfigureFetch(b => b.StaleTime(TimeSpan.FromSeconds(30)))
             .Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var observer = _client.Subscribe(queryOptions, () => { });
@@ -72,7 +72,7 @@ public class QueryAsyncIntegrationTests
             .Enabled(false)
             .Build();
 
-        TestUtils.Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions));
         await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
         var state = _client.FindQuery(Key);
