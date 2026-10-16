@@ -1,5 +1,5 @@
+using RevalQuery.Core.Abstractions.Mutation;
 using RevalQuery.Core.Abstractions.Query;
-using RevalQuery.Core.Mutation;
 
 namespace RevalQuery.TestKit;
 
@@ -34,15 +34,13 @@ public static class Signals
     /// <summary>
     /// Completes once <paramref name="condition"/> holds for the mutation <paramref name="state"/>.
     /// </summary>
-    /// <typeparam name="TParams">The mutation's parameters type.</typeparam>
     /// <typeparam name="TResponse">The mutation's response type.</typeparam>
     /// <param name="state">The mutation state to watch.</param>
     /// <param name="condition">What the test waits for. Checked on the thread raising each change.</param>
     /// <exception cref="TimeoutException">The condition did not hold within the hang guard.</exception>
-    public static Task UntilAsync<TParams, TResponse>(
-        MutationState<TParams, TResponse> state,
-        Func<MutationState<TParams, TResponse>, bool> condition)
-        where TParams : class =>
+    public static Task UntilAsync<TResponse>(
+        IMutationState<TResponse> state,
+        Func<IMutationState<TResponse>, bool> condition) =>
         WaitAsync(h => state.OnChanged += h, h => state.OnChanged -= h, () => condition(state), Kit.HangGuard);
 
     internal static Task UntilAsync<TState>(TState state, Func<TState, bool> condition, TimeSpan guard)
