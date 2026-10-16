@@ -24,17 +24,17 @@ public class ReviewOf1784595Tests
     [Fact]
     public async Task Persisting_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
-        var state = PersistentStateHarness.CreateEmpty(out var written);
+        using var harness = await PersistentStateHarness.CreateEmptyAsync();
 
         var services = new ServiceCollection();
-        services.AddSingleton(state);
+        services.AddSingleton(harness.State);
         services.AddRevalQuery();
         services.AddRevalQueryPrerenderTransfer(Serializer);
 
         using var provider = services.BuildServiceProvider();
-        var scope = provider.CreateScope().ServiceProvider;
-        scope.GetRequiredService<PrerenderTransfer>();
-        var client = scope.GetRequiredService<RevalClient>();
+        using var scope = provider.CreateScope();
+        scope.ServiceProvider.GetRequiredService<PrerenderTransfer>();
+        var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
         await client.QueryAsync(
             QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
@@ -42,7 +42,7 @@ public class ReviewOf1784595Tests
         await client.QueryAsync(
             QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build());
 
-        await PersistentStateHarness.PersistAsync(state);
+        var written = await harness.PersistAsync();
 
         Assert.True(written.ContainsKey(PrerenderTransferStateKey));
 
@@ -54,25 +54,26 @@ public class ReviewOf1784595Tests
     [Fact]
     public async Task Loading_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
 
         var serverServices = new ServiceCollection();
-        serverServices.AddSingleton(serverState);
+        serverServices.AddSingleton(serverState.State);
         serverServices.AddRevalQuery();
         serverServices.AddRevalQueryPrerenderTransfer(
             new JsonSerializerOptions { TypeInfoResolver = GizmoContext.Default });
 
         using var serverProvider = serverServices.BuildServiceProvider();
-        var serverScope = serverProvider.CreateScope().ServiceProvider;
-        serverScope.GetRequiredService<PrerenderTransfer>();
+        using var serverScope = serverProvider.CreateScope();
+        serverScope.ServiceProvider.GetRequiredService<PrerenderTransfer>();
 
-        await serverScope.GetRequiredService<RevalClient>().QueryAsync(
+        await serverScope.ServiceProvider.GetRequiredService<RevalClient>().QueryAsync(
             QueryOptions.Create("gizmo", static _ => Task.FromResult(new Gizmo(2))).Build());
 
-        await PersistentStateHarness.PersistAsync(serverState);
+        var written = await serverState.PersistAsync();
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var transfer = new PrerenderTransfer(clientState, new ServiceCollection().BuildServiceProvider(), Serializer);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var emptyProvider = new ServiceCollection().BuildServiceProvider();
+        var transfer = new PrerenderTransfer(clientState.State, emptyProvider, Serializer);
 
         var loaded = await transfer.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
 
@@ -80,12 +81,12 @@ public class ReviewOf1784595Tests
     }
 
     [Fact]
-    public void Disposing_The_Prerender_Transfer_Twice_Is_Harmless()
+    public async Task Disposing_The_Prerender_Transfer_Twice_Is_Harmless()
     {
-        var state = PersistentStateHarness.CreateEmpty(out _);
+        using var harness = await PersistentStateHarness.CreateEmptyAsync();
 
         var services = new ServiceCollection();
-        services.AddSingleton(state);
+        services.AddSingleton(harness.State);
         services.AddRevalQuery();
         services.AddRevalQueryPrerenderTransfer(Serializer);
 
