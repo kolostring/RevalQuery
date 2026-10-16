@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
@@ -14,7 +15,9 @@ public class QueryAsyncTests : IDisposable
 
     public QueryAsyncTests()
     {
-        _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        SynchronizationContext.SetSynchronizationContext(null);
+        _client = new RevalClient(new ServiceCollection().BuildServiceProvider(),
+            new RevalQueryOptions { TimeProvider = new FakeTimeProvider() });
     }
 
     public void Dispose() => _client.Dispose();
