@@ -251,6 +251,11 @@ until an alternative is found.
 mutations alike, which is why it takes the `Reval` prefix; see the `reval-prefix-for-types-that-span-queries-and-mutations` ADR. The per-component type is `RevalHooks`
 in `RevalQuery.Core.Hooks`.
 
+`MutationState<TParams, TResponse>` now implements `IMutationState<TResponse>`, so code that waits on, renders or
+logs any mutation can take the interface instead of naming both type parameters. The interface's members take the
+names the concrete type and `IQueryState` already use: `IsError` is now `IsException`, `IsSuccess` is now `IsResolved`
+and `Error` is now `Exception`. See the `mutation-state-implements-imutationstate` ADR.
+
 ---
 
 ## Optimistic updates
