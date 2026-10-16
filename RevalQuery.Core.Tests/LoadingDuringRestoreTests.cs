@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -11,6 +12,8 @@ namespace RevalQuery.Core.Tests;
 
 public class LoadingDuringRestoreTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     [Fact]
     public async Task A_Query_Waiting_On_A_Restore_Is_Loading_But_Not_Fetching()
     {
@@ -34,7 +37,7 @@ public class LoadingDuringRestoreTests
 
         Assert.True(state.CanFetch);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
         Assert.False(state.IsRestoring);
@@ -92,6 +95,6 @@ public class LoadingDuringRestoreTests
         Assert.False(observer.Query.IsLoading);
     }
 
-    private static RevalClient NewClient(IQueryPersistence? persistence) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+    private RevalClient NewClient(IQueryPersistence? persistence) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 }
