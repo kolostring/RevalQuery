@@ -649,6 +649,14 @@ public sealed class RevalClient : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Reads the registry under the client's lock, for tests that walk it.
+    /// </summary>
+    internal T ReadRegistry<T>(Func<QueryRegistry, T> read)
+    {
+        lock (_gate) return read(_registry);
+    }
+
     private void HandleEviction(ITuple key)
     {
         IQueryWorker? worker;

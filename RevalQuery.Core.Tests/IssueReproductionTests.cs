@@ -1,4 +1,4 @@
-using System.Reflection;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
@@ -243,108 +243,80 @@ public class IssueReproductionTests
     [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue5_OnSettled_Receives_Its_Own_Params_And_Data()
     {
-        var run = new MutationRun();
+        var handler = new GatedHandler<string>();
+        var settlements = new Settlements();
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        var state = NewSettlingMutation(client, handler, settlements);
 
-        run.Start("SLOW");
-        await run.Started("SLOW").WaitAsync(TestContext.Current.CancellationToken);
-        run.Start("FAST");
-        await run.Started("FAST").WaitAsync(TestContext.Current.CancellationToken);
+        _ = state.ExecuteAsync(new Box("SLOW"));
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
+        _ = state.ExecuteAsync(new Box("FAST"));
+        await handler.Started(1).WaitAsync(TestContext.Current.CancellationToken);
 
-        run.Release("FAST");
-        await run.Settled("FAST").WaitAsync(TestContext.Current.CancellationToken);
-        Assert.Equal([("FAST", "FAST")], run.Observed());
+        handler.Release(1, "FAST");
+        await settlements.For("FAST").Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([("FAST", "FAST")], settlements.Observed());
 
-        run.Release("SLOW");
-        await run.Settled("SLOW").WaitAsync(TestContext.Current.CancellationToken);
+        handler.Release(0, "SLOW");
+        await settlements.For("SLOW").Task.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal("SLOW", run.Observed().Single(x => x.Param == "SLOW").Data);
-        Assert.Equal("FAST", run.Observed().Single(x => x.Param == "FAST").Data);
+        Assert.Equal("SLOW", settlements.Observed().Single(x => x.Param == "SLOW").Data);
+        Assert.Equal("FAST", settlements.Observed().Single(x => x.Param == "FAST").Data);
     }
 
     [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue5_OnSettled_Receives_Its_Own_Params_And_Data_When_The_First_Call_Settles_First()
     {
-        var run = new MutationRun();
+        var handler = new GatedHandler<string>();
+        var settlements = new Settlements();
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        var state = NewSettlingMutation(client, handler, settlements);
 
-        run.Start("SLOW");
-        await run.Started("SLOW").WaitAsync(TestContext.Current.CancellationToken);
-        run.Start("FAST");
-        await run.Started("FAST").WaitAsync(TestContext.Current.CancellationToken);
+        _ = state.ExecuteAsync(new Box("SLOW"));
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
+        _ = state.ExecuteAsync(new Box("FAST"));
+        await handler.Started(1).WaitAsync(TestContext.Current.CancellationToken);
 
-        run.Release("SLOW");
-        await run.Settled("SLOW").WaitAsync(TestContext.Current.CancellationToken);
-        Assert.Equal([("SLOW", "SLOW")], run.Observed());
+        handler.Release(0, "SLOW");
+        await settlements.For("SLOW").Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([("SLOW", "SLOW")], settlements.Observed());
 
-        run.Release("FAST");
-        await run.Settled("FAST").WaitAsync(TestContext.Current.CancellationToken);
+        handler.Release(1, "FAST");
+        await settlements.For("FAST").Task.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal("SLOW", run.Observed().Single(x => x.Param == "SLOW").Data);
-        Assert.Equal("FAST", run.Observed().Single(x => x.Param == "FAST").Data);
+        Assert.Equal("SLOW", settlements.Observed().Single(x => x.Param == "SLOW").Data);
+        Assert.Equal("FAST", settlements.Observed().Single(x => x.Param == "FAST").Data);
     }
 
-    /// <summary>
-    /// Mutation calls keyed by name, each held until the test releases it and each reporting
-    /// when its <c>OnSettled</c> has run.
-    /// </summary>
-    private sealed class MutationRun
-    {
-        private readonly object _lock = new();
-        private readonly Dictionary<string, Gate> _started = [];
-        private readonly Dictionary<string, Gate> _settled = [];
-        private readonly Dictionary<string, TaskCompletionSource<string>> _release = [];
-        private readonly List<(string? Data, string Param)> _observed = [];
-        private readonly RevalClient _client;
-        private readonly RevalQuery.Core.Mutation.MutationState<Box, string> _state;
-
-        public MutationRun()
-        {
-            _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
-            var options = MutationOptions.Create<Box, string>(async ctx =>
-                {
-                    Gate(_started, ctx.Params.Name).Open();
-                    return await Gated(ctx.Params.Name).Task;
-                })
+    private static RevalQuery.Core.Mutation.MutationState<Box, string> NewSettlingMutation(
+        RevalClient client, GatedHandler<string> handler, Settlements settlements) =>
+        client.CreateMutation(
+            MutationOptions.Create<Box, string>(handler.Handle)
                 .OnSettled((data, _, p) =>
                 {
-                    lock (_lock) _observed.Add((data, p.Name));
-                    Gate(_settled, p.Name).Open();
+                    settlements.Record(data, p.Name);
                     return Task.CompletedTask;
-                });
-            _state = _client.CreateMutation(options.Build(), () => { }).State;
-        }
+                })
+                .Build(),
+            () => { }).State;
 
-        public void Start(string name) => _ = _state.ExecuteAsync(new Box(name));
+    /// <summary>
+    /// What each mutation's <c>OnSettled</c> saw, and a gate per param name that opens once it has run.
+    /// </summary>
+    private sealed class Settlements
+    {
+        private readonly ConcurrentDictionary<string, Gate> _gates = new();
+        private readonly ConcurrentQueue<(string? Data, string Param)> _observed = new();
 
-        public Task Started(string name) => Gate(_started, name).Task;
+        public Gate For(string param) => _gates.GetOrAdd(param, _ => new Gate());
 
-        public Task Settled(string name) => Gate(_settled, name).Task;
-
-        public void Release(string name) => Gated(name).TrySetResult(name);
-
-        public (string? Data, string Param)[] Observed()
+        public void Record(string? data, string param)
         {
-            lock (_lock) return [.. _observed];
+            _observed.Enqueue((data, param));
+            For(param).Open();
         }
 
-        private Gate Gate(Dictionary<string, Gate> gates, string name)
-        {
-            lock (_lock)
-            {
-                if (!gates.TryGetValue(name, out var gate)) gates[name] = gate = new Gate();
-                return gate;
-            }
-        }
-
-        private TaskCompletionSource<string> Gated(string name)
-        {
-            lock (_lock)
-            {
-                if (!_release.TryGetValue(name, out var tcs))
-                    _release[name] = tcs = new TaskCompletionSource<string>(
-                        TaskCreationOptions.RunContinuationsAsynchronously);
-                return tcs;
-            }
-        }
+        public (string? Data, string Param)[] Observed() => [.. _observed];
     }
 
     private sealed record Box(string Name);
@@ -412,12 +384,7 @@ public class IssueReproductionTests
         throw new InvalidOperationException("no collision found in 4,000,000 keys");
     }
 
-    private static int EvictionSubscriberCount(TtlQueryGarbageCollector gc)
-    {
-        var field = typeof(TtlQueryGarbageCollector)
-            .GetField("OnEvictionRequired", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        return ((Delegate?)field.GetValue(gc))?.GetInvocationList().Length ?? 0;
-    }
+    private static int EvictionSubscriberCount(TtlQueryGarbageCollector gc) => gc.EvictionSubscriberCount;
 }
 
 /// <summary>

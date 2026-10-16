@@ -1,11 +1,9 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
-using RevalQuery.Core.Registry;
 
 namespace RevalQuery.Core.Tests;
 
@@ -120,13 +118,5 @@ public class PollingTests : IDisposable
     private static Func<QueryHandlerExecutionContext<ValueTuple<string>>, Task<string>> Counting(Counter calls) =>
         _ => Task.FromResult($"data-{calls.Increment()}");
 
-    private static int WorkerCount(RevalClient client)
-    {
-        var gate = typeof(RevalClient).GetField("_gate", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(client)!;
-        var registry = (QueryRegistry)typeof(RevalClient)
-            .GetField("_registry", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .GetValue(client)!;
-
-        lock (gate) return QueryRegistry.WorkersFrom(registry.Root).Count;
-    }
+    private static int WorkerCount(RevalClient client) => RegistryProbe.WorkerCount(client);
 }

@@ -1,20 +1,13 @@
-using System.Reflection;
 using RevalQuery.Core.Registry;
 
 namespace RevalQuery.Core.Tests;
 
 /// <summary>
-/// Reads a client's registry by reflection, under the client's own lock, so a walk never races
+/// Reads a client's registry under the client's own lock, so a walk never races
 /// the library mutating the tree.
 /// </summary>
 internal static class RegistryProbe
 {
-    private static readonly FieldInfo RegistryField =
-        typeof(RevalClient).GetField("_registry", BindingFlags.NonPublic | BindingFlags.Instance)!;
-
-    private static readonly FieldInfo GateField =
-        typeof(RevalClient).GetField("_gate", BindingFlags.NonPublic | BindingFlags.Instance)!;
-
     /// <summary>
     /// How many workers the client's registry holds.
     /// </summary>
@@ -31,11 +24,8 @@ internal static class RegistryProbe
             return 0;
         });
 
-    private static T Locked<T>(RevalClient client, Func<QueryRegistry, T> read)
-    {
-        var registry = (QueryRegistry)RegistryField.GetValue(client)!;
-        lock (GateField.GetValue(client)!) return read(registry);
-    }
+    private static T Locked<T>(RevalClient client, Func<QueryRegistry, T> read) =>
+        client.ReadRegistry(read);
 
     private static void Walk(RegistryNode node)
     {

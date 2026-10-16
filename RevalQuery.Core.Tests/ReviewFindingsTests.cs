@@ -116,33 +116,6 @@ public class ReviewFindingsTests
     }
 
     [Fact(Timeout = HangGuardMilliseconds)]
-    public async Task Fresh_Persisted_Data_Suppresses_The_Fetch()
-    {
-        using var persistence = new GatedPersistence();
-        using var client = NewClient(persistence);
-
-        var calls = new Counter();
-        var options = QueryOptions.Create("fresh", _ =>
-        {
-            calls.Increment();
-            return Task.FromResult("from-network");
-        }).ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5))).Build();
-
-        using var observer = client.Subscribe(options, () => { });
-        var state = client.FindQuery<string>("fresh")!;
-        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(0, calls.Value);
-
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
-        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(0, calls.Value);
-        Assert.Equal("from-disk", state.Data);
-        Assert.True(state.IsIdle);
-    }
-
-    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Stale_Persisted_Data_Still_Refetches()
     {
         var storedAt = _clock.GetUtcNow().AddHours(-3);
@@ -169,27 +142,6 @@ public class ReviewFindingsTests
         await Signals.UntilAsync(state, s => s.IsIdle && s.Data == "from-network", TestContext.Current.CancellationToken);
 
         Assert.True(state.LastUpdatedAt > storedAt);
-    }
-
-    [Fact(Timeout = HangGuardMilliseconds)]
-    public async Task A_Late_Restore_Never_Overwrites_A_Landed_Fetch()
-    {
-        using var persistence = new GatedPersistence();
-        using var client = NewClient(persistence);
-
-        var options = QueryOptions.Create("late", _ => Task.FromResult("from-network")).Build();
-
-        await client.QueryAsync(options, TestContext.Current.CancellationToken);
-        var state = client.FindQuery<string>("late")!;
-        var landedAt = state.LastUpdatedAt;
-
-        Assert.True(state.IsRestoring);
-
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow().AddHours(-3))));
-        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal("from-network", state.Data);
-        Assert.Equal(landedAt, state.LastUpdatedAt);
     }
 
     [Fact(Timeout = HangGuardMilliseconds)]

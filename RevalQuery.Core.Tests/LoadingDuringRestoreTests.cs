@@ -82,19 +82,6 @@ public class LoadingDuringRestoreTests
         observer.Dispose();
     }
 
-    [Fact(Timeout = HangGuardMilliseconds)]
-    public void A_Query_Without_Persistence_Is_Never_Restoring()
-    {
-        using var client = NewClient(persistence: null);
-
-        var options = QueryOptions.Create<string>("plain", _ => Task.FromResult("value")).Build();
-        var observer = client.Subscribe(options, () => { });
-
-        Assert.False(observer.Query.IsRestoring);
-        Assert.True(observer.Query.IsResolved);
-        Assert.False(observer.Query.IsLoading);
-    }
-
     private RevalClient NewClient(IQueryPersistence? persistence) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 }

@@ -418,7 +418,6 @@ public class ObserverSetOptionsRaceTests
         client.Observe(ref slot, Item(0), () => { });
 
         var churning = new Gate();
-        var gaveUp = new Counter();
         using var stop = new CancellationTokenSource();
         var churn = Task.Run(async () =>
         {
@@ -432,12 +431,6 @@ public class ObserverSetOptionsRaceTests
                         churning.Open();
                     }
                     catch (OperationCanceledException) { }
-                    catch (InvalidOperationException e) when (e.Message.Contains("could not be run"))
-                    {
-                        // QueryAsync gives up after its worker is released too many times while
-                        // the fetch starts. That is documented behaviour, not the invariant.
-                        gaveUp.Increment();
-                    }
                 }
             }
         }, TestContext.Current.CancellationToken);
