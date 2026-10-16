@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -9,6 +10,8 @@ namespace RevalQuery.Core.Tests;
 
 public class ReviewOfA700df3Tests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     [Fact]
     public async Task A_Cancelled_Fetch_Does_Not_Return_Data_It_Never_Fetched()
     {
@@ -41,7 +44,7 @@ public class ReviewOfA700df3Tests
         Assert.True(state.IsException);
         Assert.True(state.IsRestoring);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
         Assert.True(state.IsException);
@@ -84,7 +87,7 @@ public class ReviewOfA700df3Tests
         var fetch = client.QueryAsync(options);
         Assert.Equal(1, handler.Calls);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
         var state = client.FindQuery<string>("racing")!;
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
@@ -97,6 +100,6 @@ public class ReviewOfA700df3Tests
         Assert.True(state.IsException);
     }
 
-    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+    private RevalClient NewClient(IQueryPersistence? persistence = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 }
