@@ -28,19 +28,18 @@ public sealed class Fx : IDisposable
     public RevalClient Client { get; }
     public TimeSpan Stale { get; set; } = TimeSpan.Zero;
     public ConcurrentDictionary<int, int> Calls { get; } = new();
-    public ConcurrentDictionary<int, TaskCompletionSource> Gates { get; } = new();
+    public ConcurrentDictionary<int, TestKit.Gate> Gates { get; } = new();
     public int TotalCalls => Calls.Values.Sum();
 
     public Fx(IServiceProvider sp) => Client = new RevalClient(sp, new RevalQueryOptions(), Eviction);
 
-    public TaskCompletionSource Gate(int id) =>
-        Gates.GetOrAdd(id, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+    public TestKit.Gate Gate(int id) => Gates.GetOrAdd(id, _ => new TestKit.Gate());
 
     public QueryOptionsBuilder<ValueTuple<string, int>, string> Detail(int id) =>
-        QueryOptions.Create<ValueTuple<string, int>, string>(("detail", id), async _ =>
+        QueryOptions.Create<ValueTuple<string, int>, string>(("detail", id), async context =>
         {
             Calls.AddOrUpdate(id, 1, (_, n) => n + 1);
-            if (Gates.TryGetValue(id, out var gate)) await gate.Task;
+            if (Gates.TryGetValue(id, out var gate)) await gate.Task.WaitAsync(context.CancellationToken ?? CancellationToken.None);
             return $"item{id}";
         }).ConfigureFetch(f => f.StaleTime(Stale));
 
