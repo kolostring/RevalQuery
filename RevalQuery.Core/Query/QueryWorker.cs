@@ -184,7 +184,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     /// Runs the fetch a claim was made for, and spends the claim: it becomes the fetch in
     /// flight, or a join of it.
     /// </summary>
-    /// <returns>What the run did, as <see cref="RunAsync"/>.</returns>
+    /// <returns>What the run did, as <see cref="RunAsync()"/>.</returns>
     public Task<FetchOutcome> RunClaimedAsync() => RunAsync(claimed: true);
 
     /// <inheritdoc />

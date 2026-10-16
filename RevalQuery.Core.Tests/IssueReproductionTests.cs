@@ -248,9 +248,9 @@ public class IssueReproductionTests
         using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
         var state = NewSettlingMutation(client, handler, settlements);
 
-        _ = state.ExecuteAsync(new Box("SLOW"));
+        _ = state.ExecuteAsync(new Box("SLOW"), TestContext.Current.CancellationToken);
         await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
-        _ = state.ExecuteAsync(new Box("FAST"));
+        _ = state.ExecuteAsync(new Box("FAST"), TestContext.Current.CancellationToken);
         await handler.Started(1).WaitAsync(TestContext.Current.CancellationToken);
 
         handler.Release(1, "FAST");
@@ -272,9 +272,9 @@ public class IssueReproductionTests
         using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
         var state = NewSettlingMutation(client, handler, settlements);
 
-        _ = state.ExecuteAsync(new Box("SLOW"));
+        _ = state.ExecuteAsync(new Box("SLOW"), TestContext.Current.CancellationToken);
         await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
-        _ = state.ExecuteAsync(new Box("FAST"));
+        _ = state.ExecuteAsync(new Box("FAST"), TestContext.Current.CancellationToken);
         await handler.Started(1).WaitAsync(TestContext.Current.CancellationToken);
 
         handler.Release(0, "SLOW");
