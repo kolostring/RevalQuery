@@ -59,6 +59,12 @@ public class QueryAsyncIntegrationTests : IDisposable
         Assert.True(observer.Query.IsResolved);
     }
 
+    /// <remarks>
+    /// The first fetch is awaited, not waited on through the query's state: the state reads
+    /// resolved while the run is still in flight, and an invalidation that arrives then joins
+    /// that run instead of starting the second fetch this test counts. The call's own task
+    /// completes only once the run is over.
+    /// </remarks>
     [Fact]
     public async Task InvalidateAfterQueryAsync_TriggersRefetch()
     {
@@ -67,11 +73,9 @@ public class QueryAsyncIntegrationTests : IDisposable
             .ConfigureFetch(b => b.StaleTime(TimeSpan.FromSeconds(30)))
             .Build();
 
-        Discard(_client.QueryAsync(queryOptions));
-        var state = _client.FindQuery<string>(Key)!;
-        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
+        var first = _client.QueryAsync(queryOptions);
         handler.Release(0, "v1");
-        await resolved;
+        await first.WaitAsync(HangGuard);
 
         var observer = _client.Subscribe(queryOptions, () => { });
         Assert.Equal(1, handler.Calls);

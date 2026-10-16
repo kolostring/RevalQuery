@@ -21,6 +21,10 @@ jobs:
             9.0.x
             10.0.x
 
+      # Test code must not sleep, poll to a deadline or read the real clock (docs/CONVENTIONS.md #11).
+      - name: No real time in tests
+        run: ./eng/check-test-time.sh
+
       - name: Restore
         run: dotnet restore
 
