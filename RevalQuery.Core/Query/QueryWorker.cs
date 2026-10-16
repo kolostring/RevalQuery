@@ -46,7 +46,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
     private QueryState<TKey, TRes> Query { get; }
 
-    private CancellationTokenSource? _pollingCts;
+    private ITimer? _pollingTimer;
     private CancellationTokenSource? _currentFetchCts;
     private TaskCompletionSource<FetchOutcome>? _inFlight;
     private bool _isDisposed;
@@ -94,15 +94,15 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
     private void StopPolling()
     {
-        CancellationTokenSource? cts;
+        ITimer? timer;
 
         lock (_gate)
         {
-            cts = _pollingCts;
-            _pollingCts = null;
+            timer = _pollingTimer;
+            _pollingTimer = null;
         }
 
-        CancelSafely(cts);
+        timer?.Dispose();
     }
 
     /// <summary>
@@ -246,34 +246,14 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         var interval = EnsuredFetchOptions.RefetchInterval;
         if (interval <= TimeSpan.Zero) return;
 
-        CancellationTokenSource cts;
         lock (_gate)
         {
             if (_isDisposed) return;
-            if (_pollingCts is { IsCancellationRequested: false }) return;
+            if (_pollingTimer is not null) return;
 
-            cts = new CancellationTokenSource();
-            _pollingCts = cts;
+            _pollingTimer = _revalQueryOptions.TimeProvider.CreateTimer(
+                _ => RunIfAllowed(), null, interval, interval);
         }
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                while (!cts.IsCancellationRequested)
-                {
-                    await Task.Delay(interval, cts.Token);
-                    RunIfAllowed();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                cts.Dispose();
-            }
-        });
     }
 
     private void HandleInvalidation()
@@ -479,13 +459,14 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     /// </remarks>
     public void Dispose()
     {
-        CancellationTokenSource? pollingCts;
+        ITimer? pollingTimer;
 
         lock (_gate)
         {
             if (_isDisposed) return;
             _isDisposed = true;
-            pollingCts = _pollingCts;
+            pollingTimer = _pollingTimer;
+            _pollingTimer = null;
         }
 
         Query.OnFirstSubscriberAdded -= StartPolling;
@@ -493,6 +474,6 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         Query.OnInvalidated -= HandleInvalidation;
         Query.OnCancelRequested -= CancelCurrentFetch;
 
-        CancelSafely(pollingCts);
+        pollingTimer?.Dispose();
     }
 }
