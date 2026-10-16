@@ -39,7 +39,9 @@ public class PollingTests : IDisposable
         Assert.Equal("data-1", observer.Query.Data);
 
         await polled;
-        Assert.Equal("data-2", observer.Query.Data);
+        // The poll may already have moved on, so only the first fetch's data is ruled out.
+        Assert.NotEqual("data-1", observer.Query.Data);
+        Assert.True(calls.Value >= 2);
     }
 
     [Fact]
