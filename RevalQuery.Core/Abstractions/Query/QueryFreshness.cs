@@ -9,7 +9,7 @@ namespace RevalQuery.Core.Abstractions.Query;
 /// transfer, a persistence adapter — so that the two halves of a staleness decision cannot
 /// become separated on the way. They were, once: invalidation used to move
 /// <see cref="LastUpdatedAt"/> to MinValue instead of being carried, which let a timestamp
-/// stand in for a flag and made a restore silently erase it. See docs/adr/0008.</para>
+/// stand in for a flag and made a restore silently erase it. See docs/adr/2026-10-01-the-imperative-api-is-one-method.md.</para>
 /// <para>Both fields are intrinsic to the data rather than to anything observing it, which is
 /// what lets a restored or transferred query be correctly stale on arrival.</para>
 /// </remarks>

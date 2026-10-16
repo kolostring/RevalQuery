@@ -28,7 +28,7 @@ public static class DependencyInjection
     /// Options whose TypeInfoResolver covers every query result type you want transferred.
     /// Required, and required to have a resolver: the framework offers no way to hand a
     /// JsonTypeInfo to PersistAsJson, so the library serialises query data itself, and
-    /// reflection-based serialisation fails silently in trimmed WebAssembly. See ADR 0004.
+    /// reflection-based serialisation fails silently in trimmed WebAssembly. See docs/adr/2026-09-29-prerender-state-transfer-serialises-its-own-payload.md.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="serializerOptions"/> is null.</exception>

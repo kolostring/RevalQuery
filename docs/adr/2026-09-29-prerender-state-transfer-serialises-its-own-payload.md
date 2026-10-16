@@ -43,7 +43,7 @@ So that registering the transfer does not cost a consumer their own store, sever
 takes the first store holding the key, and a save goes to all of them.
 
 Keys are encoded losslessly, with each segment contributing its type name and its invariant
-string form. This follows ADR 0003 for the same reason: a collision would hand one query
+string form. This follows the `query-keys-are-compared-by-value-never-hashed` ADR for the same reason: a collision would hand one query
 another query's data, and no hash width makes that impossible. A segment whose type does not
 override `ToString` has no distinct string form, and a key containing one is not transferred.
 

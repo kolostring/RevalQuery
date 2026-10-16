@@ -263,7 +263,7 @@ started. Older runs still in flight keep the options they began with, and the pe
 
 ## QueryFactory Pattern
 
-Standardized way to organize and reuse queries (ADR-016).
+Standardized way to organize and reuse queries.
 
 ```csharp
 public static class UserQueries

@@ -47,7 +47,7 @@ query that is pending and not loading. Suppressing one observer path leaves the 
 lying.
 
 Merging `IsRestoring` and `IsFetching` into one status was raised again and rejected again, for
-the reason in ADR 0005 and one more: a restore and a fetch can genuinely be in flight at once,
+the reason in the `loading-spans-restores-without-touching-fetch-status` ADR and one more: a restore and a fetch can genuinely be in flight at once,
 which `InvalidateDuringRestoreTests` pins. No single enum expresses that.
 
 Exposing the restore's task on `IQueryState` was rejected deliberately. `RestoreCompleted` is on
@@ -58,7 +58,7 @@ consumer holds. Handing a consumer a task to await invites exactly the hang that
 ## Consequences
 
 `IsLoading` is still `(IsFetching || IsRestoring) && IsPending`. The predicate did not change;
-what changed is when `IsRestoring` goes false. ADR 0005 stands as written.
+what changed is when `IsRestoring` goes false. The `loading-spans-restores-without-touching-fetch-status` ADR stands as written.
 
 `QueryWorker` no longer takes or awaits a restore task, and `RegistryNode` no longer holds one.
 The decision that needed the restore moved into the state, so the worker has nothing left to

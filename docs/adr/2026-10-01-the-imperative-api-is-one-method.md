@@ -17,7 +17,7 @@ data was stale and got no answer from the library.
 
 `CONTEXT.md` had already said otherwise: stale is "data old enough to be refetched", with no
 mention of observers. `LastUpdatedAt` is likewise intrinsic, saved and restored verbatim so
-restored data is correctly stale (ADR 0001). The timestamp lived on the data and its
+restored data is correctly stale (the `persistence-as-an-interface-not-hybridcache-as-the-store` ADR). The timestamp lived on the data and its
 interpretation lived on the subscription. One concept, two homes.
 
 The cost landed on consumers. `examples/MudBlazorDemo/Pages/Autocomplete.razor` had to
@@ -99,11 +99,11 @@ Testing the status instead — `Status != Resolved` — was rejected. `ApplyFail
 timestamp alone, so a query that succeeded and then failed still knows when its data arrived
 and should fall through to the clock. The status test would have forced it stale.
 
-This qualifies a claim ADR 0005 makes without exceptions. That record treats a dropped
+This qualifies a claim the `loading-spans-restores-without-touching-fetch-status` ADR makes without exceptions. That record treats a dropped
 invalidation as a defect: "the restore lands... nothing is stale any more, and the query never
 refetches. The user is left on stale data with no way to tell." That is still true of the bug
-0005 describes. What is new is a second, deliberate way for an invalidation not to produce a
-refetch, chosen by the consumer rather than suffered. ADR 0005 is left as written; this is the
+it describes. What is new is a second, deliberate way for an invalidation not to produce a
+refetch, chosen by the consumer rather than suffered. The `loading-spans-restores-without-touching-fetch-status` ADR is left as written; this is the
 record that qualifies it.
 
 ## Invalidation stops moving the clock
@@ -155,7 +155,7 @@ export function defaultShouldDehydrateQuery(query: Query) {
 
 and invalidation is not a status, so an invalidated query is still successful and still
 crosses. The filter and the payload shape are separate concerns and stay separate here too:
-ADR 0004's refusal to carry pending or failed queries is unchanged.
+The `prerender-state-transfer-serialises-its-own-payload` ADR's refusal to carry pending or failed queries is unchanged.
 
 ## Consequences
 
@@ -174,7 +174,7 @@ it was never invalidated at all. This is TanStack's behaviour, for the same reas
 
 `QueryAsync` judges staleness against what the registry holds at the moment of the call, and
 does not wait for a restore that is still outstanding. Waiting was tried and is wrong twice
-over. ADR 0006 has restores never hold a fetch up, and an adapter that is slow or wedged would
+over. The `a-restore-ends-when-the-query-knows-what-follows-it` ADR has restores never hold a fetch up, and an adapter that is slow or wedged would
 hang every imperative caller behind it — `PersistenceTests` deadlocks on exactly that, because
 its gate opens only after the fetch it is gating has returned. The race needs no handling here
 anyway: `TryRestore` already refuses to overwrite a fetch that landed first. The cost is that
@@ -188,14 +188,14 @@ who discards it sees it only through the `catch` they write around the discard. 
 means one error channel, which is the trade the collapse makes everywhere else too.
 
 `PrefetchQuery` is removed and `FetchQueryAsync` is renamed. Both are breaking changes for
-0.4.0, which already carries one in `QueryClient.Cancel` (ADR 0007).
+0.4.0, which already carries one in `QueryClient.Cancel` (the `cancelling-a-fetch-and-abandoning-a-wait-are-different-operations` ADR).
 
-ADR 0007 argued cancellation entirely in terms of `FetchQueryAsync`. Its reasoning is
+The `cancelling-a-fetch-and-abandoning-a-wait-are-different-operations` ADR argued cancellation entirely in terms of `FetchQueryAsync`. Its reasoning is
 untouched; only its vocabulary broke, and it has been amended in place to say `QueryAsync`
-with no claim altered. ADR 0005 is amended in the same narrow way: it explained a dropped
+with no claim altered. The `loading-spans-restores-without-touching-fetch-status` ADR is amended in the same narrow way: it explained a dropped
 invalidation through the `MinValue` write, which no longer exists. Its argument and its
 conclusion stand; only the mechanism it named is gone. That is separate from the qualification
-this record makes to 0005's claim about invalidations, which is recorded here and not there.
+this record makes to that ADR's claim about invalidations, which is recorded here and not there.
 
 `CONTEXT.md` loses **Prefetch**. The activity survives as a way of calling `QueryAsync` and
 discarding the task, but it is no longer a thing in the language, and the old definition was

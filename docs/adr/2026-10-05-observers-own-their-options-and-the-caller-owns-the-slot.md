@@ -45,7 +45,7 @@ forwards notifications only from the query it currently holds, and it removes th
 which an observer is on no query at all while the registry is free to change under it.
 
 The old query's in-flight fetch is not cancelled. Other callers may be joined to it, disposing a
-worker has never cancelled one for the same reason (ADR 0007 keeps cancelling a fetch apart from
+worker has never cancelled one for the same reason (the `cancelling-a-fetch-and-abandoning-a-wait-are-different-operations` ADR keeps cancelling a fetch apart from
 releasing it), and a user flicking between two keys
 should find the first one's answer cached when they come back inside `GcTime`. The old worker
 cannot be disposed under a running fetch, so it is let go when that fetch settles, through the
@@ -147,6 +147,6 @@ with the changes above.
 
 ## Later
 
-ADR 0010 removed `QueryComponentBase`. What it did here, holding one slot per query and calling
+The `components-do-not-inherit-from-revalquery` ADR removed `QueryComponentBase`. What it did here, holding one slot per query and calling
 `Subscribe` on a new one and `SetOptions` on an existing one, is now `RevalHooks`, which holds an
 observer per query key and does the same two things. The observer is unchanged.

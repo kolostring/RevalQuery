@@ -58,11 +58,11 @@ component. One type cannot be both without disposal and DI rules that depend on 
 resolved, and it would put the per-render surface next to the whole imperative API.
 
 A static, ambient `Query(...)` available on every component was rejected because it needs runtime
-subclassing or a base class, which ADR 0010 removed.
+subclassing or a base class, which the `components-do-not-inherit-from-revalquery` ADR removed.
 
 ## Consequences
 
 `QueryClient` becoming `RevalClient` is a breaking rename for existing users, and goes in the
 migration notes. Anyone coming from TanStack Query loses the familiar `QueryClient` name; the
-cost is accepted for names that stay accurate at the call site. ADRs 0001 to 0010 keep
+cost is accepted for names that stay accurate at the call site. The ADRs written before this one keep
 `QueryClient` where they use it, as history.

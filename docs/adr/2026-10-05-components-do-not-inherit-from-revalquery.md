@@ -12,7 +12,7 @@ the component. Nothing in the component's inheritance chain belongs to this libr
 own services could not use `UseQuery` without giving one of them up, and the ones that could not be
 given up were the usual ones. The goal was to drop the inheritance and keep what it did: subscribe
 on the first read, re-apply options on every later one, re-render when a query changes, and release
-everything when the component goes. ADR 0009 moved the first two into the observer. What was left to
+everything when the component goes. The `observers-own-their-options-and-the-caller-owns-the-slot` ADR moved the first two into the observer. What was left to
 replace is the slot bookkeeping and the lifecycle, and the lifecycle was the part that needed a base
 class.
 
@@ -117,7 +117,7 @@ These stand until an alternative is found, and are stated in the XML docs and bo
 ## Consequences
 
 `QueryComponentBase`, `UseQuery` and `UseMutation` are removed. Breaking for 0.4.0, with the changes
-of ADR 0009. A component replaces `@inherits QueryComponentBase` with a `QueryHost` and a scope, and
+of the `observers-own-their-options-and-the-caller-owns-the-slot` ADR. A component replaces `@inherits QueryComponentBase` with a `QueryHost` and a scope, and
 `UseQuery(...)` with `Reval.Query(...)`.
 
 A scope used without a host never re-renders its component and never releases anything. `QueryHost`
@@ -133,7 +133,7 @@ slot cannot bind to the call-site overload as its file name.
 
 ## Revision: injected hooks
 
-The scope became the per-component type `RevalHooks` (ADR 0011) and is injected, registered transient by `AddRevalQuery`,
+The scope became the per-component type `RevalHooks` (the `reval-prefix-for-types-that-span-queries-and-mutations` ADR) and is injected, registered transient by `AddRevalQuery`,
 instead of created with `CreateScope(this)`. It stopped being `IDisposable` so that DI does not hold
 every instance for the container's lifetime, which in WebAssembly is the app's. Its lifetime is the
 handle `Attach` returns: disposing the handle releases every observer, and released hooks throw

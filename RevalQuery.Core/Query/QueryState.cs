@@ -182,7 +182,7 @@ public sealed class QueryState<TKey, TResponse>(
     /// there is one answer to when a restore is over instead of two that stop agreeing.</para>
     /// <para>Deliberately not a FetchStatus value. A restore is not a fetch, and reporting one
     /// as Fetching would turn CanFetch false for its duration and drop any invalidation
-    /// arriving meanwhile. See docs/adr/0005 and docs/adr/0006.</para>
+    /// arriving meanwhile. See docs/adr/2026-09-29-loading-spans-restores-without-touching-fetch-status.md and docs/adr/2026-09-30-a-restore-ends-when-the-query-knows-what-follows-it.md.</para>
     /// </remarks>
     public bool IsRestoring
     {

@@ -248,7 +248,7 @@ until an alternative is found.
 `Client` was an injected property of the base class. Keep `@inject RevalClient Client` where the page still calls `Client.Invalidate...` or `Client.QueryAsync`. `ServiceProvider` is gone: handlers receive one in their context.
 
 `QueryClient` is now `RevalClient`: rename it in `@inject` lines and constructors. `RevalClient` handles queries and
-mutations alike, which is why it takes the `Reval` prefix; see ADR 0011. The per-component type is `RevalHooks`
+mutations alike, which is why it takes the `Reval` prefix; see the `reval-prefix-for-types-that-span-queries-and-mutations` ADR. The per-component type is `RevalHooks`
 in `RevalQuery.Core.Hooks`.
 
 ---
@@ -444,8 +444,8 @@ builder.Services.AddRevalQueryPrerenderTransfer(
 A source-generated context is required, not a suggestion. `AddRevalQueryPrerenderTransfer`
 throws on options without a `TypeInfoResolver`, because the alternative is reflection-based
 serialisation, which is trimmed out of a published WebAssembly app and fails there silently
-after working perfectly in development. [ADR
-0004](../docs/adr/0004-prerender-state-transfer-serialises-its-own-payload.md) has the detail.
+after working perfectly in development. [The
+`prerender-state-transfer-serialises-its-own-payload` ADR](../docs/adr/2026-09-29-prerender-state-transfer-serialises-its-own-payload.md) has the detail.
 
 What travels and what does not:
 

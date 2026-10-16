@@ -8,7 +8,7 @@ current, and tells them when it changed.
 
 Types that span queries and mutations take the `Reval` prefix: `RevalClient`, `RevalHooks`,
 `RevalRenderer`. Types about only one kind take `Query` or `Mutation`: `QueryObserver`,
-`QueryOptions`, `MutationState`. See ADR 0011.
+`QueryOptions`, `MutationState`. See the `reval-prefix-for-types-that-span-queries-and-mutations` ADR.
 
 ## Language
 

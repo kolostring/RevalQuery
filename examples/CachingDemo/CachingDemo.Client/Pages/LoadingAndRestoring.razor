@@ -42,7 +42,7 @@
     beneath it and the wait is continuous, with no flicker where the restore has ended and the
     fetch has not started. That is by construction: a restore is not over until the query knows
     what follows the stored data, so the fetch is already running the moment
-    <code>IsRestoring</code> goes false. See <code>docs/adr/0006</code>.
+    <code>IsRestoring</code> goes false. See <code>docs/adr/2026-09-30-a-restore-ends-when-the-query-knows-what-follows-it.md</code>.
 </p>
 <StateTable State="Orders" />
 <p>Data: <strong>@(Orders.Data ?? "none yet")</strong></p>
