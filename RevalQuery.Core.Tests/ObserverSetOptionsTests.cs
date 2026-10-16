@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Abstractions.Query;
@@ -12,6 +13,8 @@ namespace RevalQuery.Core.Tests;
 
 public class ObserverSetOptionsTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private static readonly (string, int) Key1 = ("item", 1);
     private static readonly (string, int) Key2 = ("item", 2);
 
@@ -40,8 +43,8 @@ public class ObserverSetOptionsTests
         return Task.FromResult($"data-{n}");
     };
 
-    private static RevalClient NewClient(ICacheEvictionPolicy? eviction = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
+    private RevalClient NewClient(ICacheEvictionPolicy? eviction = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, eviction);
 
     private static QueryState<(string, int), string> StateOf(QueryObserver<(string, int), string> observer) =>
         (QueryState<(string, int), string>)observer.Query;
@@ -60,6 +63,7 @@ public class ObserverSetOptionsTests
         var before = observer.Query;
         Assert.Equal(1, calls.Value);
 
+        _clock.Advance(TimeSpan.FromMinutes(1));
         var rebuilt = options with { FetchOptions = FetchOptions.Create().StaleTime(TimeSpan.FromHours(1)).Build() };
         observer.SetOptions(rebuilt);
 
@@ -71,14 +75,11 @@ public class ObserverSetOptionsTests
     }
 
     [Fact]
-    public async Task Switching_To_A_Key_Held_Only_By_Disabled_Observers_Starts_Polling()
+    public void Switching_To_A_Key_Held_Only_By_Disabled_Observers_Starts_Polling()
     {
-        // Stopgap until the library takes an injected TimeProvider: the polls still run on the
-        // real clock, so this waits on their change notifications rather than advancing a fake
-        // clock by exactly two intervals. The wait fails loudly at the hang guard.
         var key1Calls = new Counter();
         var key2Calls = new Counter();
-        var interval = TimeSpan.FromMilliseconds(40);
+        var interval = TimeSpan.FromSeconds(10);
         using var client = NewClient();
 
         Task<string> Fetch(int n, CancellationToken _)
@@ -96,7 +97,15 @@ public class ObserverSetOptionsTests
         switching.SetOptions(Item(2, Fetch, refetchInterval: interval));
         Assert.Equal(1, key2Calls.Value);
 
-        await Signals.UntilAsync(client.FindQuery(Key2)!, _ => key2Calls.Value >= 3);
+        _clock.Advance(interval - TimeSpan.FromTicks(1));
+        Assert.Equal(1, key2Calls.Value);
+
+        _clock.Advance(TimeSpan.FromTicks(1));
+        Assert.Equal(2, key2Calls.Value);
+
+        _clock.Advance(interval);
+        Assert.Equal(3, key2Calls.Value);
+        Assert.Equal(1, key1Calls.Value);
     }
 
     [Fact]

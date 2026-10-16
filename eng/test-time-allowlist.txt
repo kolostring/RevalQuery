@@ -2,16 +2,4 @@
 # Format: <file> <member>  # <ticket>
 # The check fails on a hit not listed here and on an entry that no longer hits.
 #
-# Each of these stamps persisted data's freshness from the real clock, because the library
-# judges staleness on the real clock. #19 moves them to a FakeTimeProvider and empties this list.
-
-RevalQuery.Core.Tests/InvalidateDuringRestoreTests.cs Fresh  # #19
-RevalQuery.Core.Tests/LoadingDuringRestoreTests.cs A_Query_Waiting_On_A_Restore_Is_Loading_But_Not_Fetching  # #19
-RevalQuery.Core.Tests/PersistenceTests.cs PersistedData_Is_Restored_Before_The_Fetch_Lands  # #19
-RevalQuery.Core.Tests/PersistenceTests.cs A_Fetch_That_Already_Landed_Is_Not_Overwritten_By_The_Load  # #19
-RevalQuery.Core.Tests/RestoreBoundaryTests.cs Stored_Data_That_Is_Still_Fresh_Ends_The_Restore_With_No_Fetch_At_All  # #19
-RevalQuery.Core.Tests/ReviewFindingsTests.cs Fresh_Persisted_Data_Suppresses_The_Fetch  # #19
-RevalQuery.Core.Tests/ReviewFindingsTests.cs Stale_Persisted_Data_Still_Refetches  # #19
-RevalQuery.Core.Tests/ReviewFindingsTests.cs A_Late_Restore_Never_Overwrites_A_Landed_Fetch  # #19
-RevalQuery.Core.Tests/ReviewOfA700df3Tests.cs A_Restore_Does_Not_Clear_A_Failed_Query  # #19
-RevalQuery.Core.Tests/ReviewOfA700df3Tests.cs A_Failed_Fetch_Still_Throws_When_A_Restore_Lands_During_It  # #19
+# Empty: every time-driven test runs on a FakeTimeProvider. Do not add entries; fix the test.

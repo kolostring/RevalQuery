@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -11,6 +12,8 @@ namespace RevalQuery.Core.Tests;
 
 public class RestoreBoundaryTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private sealed record Frame(bool IsLoading, bool IsRestoring, bool IsFetching, bool IsPending);
 
     private sealed class Watcher
@@ -41,8 +44,8 @@ public class RestoreBoundaryTests
         return (state, watcher);
     }
 
-    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+    private RevalClient NewClient(IQueryPersistence? persistence = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
     [Fact]
     public async Task A_Query_With_Nothing_Stored_Never_Reports_A_Moment_With_No_Work_In_Progress()
@@ -117,7 +120,7 @@ public class RestoreBoundaryTests
         var (state, watcher) = Watch(client, options);
         await persistence.LoadStarted.WaitAsync(HangGuard);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
         Assert.Equal(0, calls.Value);

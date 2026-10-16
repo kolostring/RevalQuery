@@ -53,8 +53,6 @@ public class PollingTests : IDisposable
         Discard(fetch);
         await fetch.WaitAsync(HangGuard);
 
-        // Relies on the clock having ticked since the fetch: StaleTime zero counts an age of
-        // exactly zero as fresh (L1), and then the subscriber would not refetch.
         using var observer = _client.Subscribe(queryOptions, () => { });
 
         Assert.Equal("cached", observer.Query.Data);

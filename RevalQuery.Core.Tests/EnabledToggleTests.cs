@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
@@ -15,6 +16,8 @@ namespace RevalQuery.Core.Tests;
 /// </remarks>
 public class EnabledToggleTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private static Func<QueryHandlerExecutionContext<ValueTuple<string>>, Task<string>> Counting(Counter calls) =>
         _ =>
         {
@@ -38,8 +41,8 @@ public class EnabledToggleTests
         public void Dispose() => _handle?.Dispose();
     }
 
-    private static RevalClient NewClient() =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+    private RevalClient NewClient() =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock });
 
     [Fact]
     public void Flipping_Enabled_On_Rerender_Enables_The_Query_And_Fetches()
@@ -89,6 +92,7 @@ public class EnabledToggleTests
         probe.Run(enabled: true, staleTime: TimeSpan.FromHours(1));
         Assert.Equal(1, calls.Value);
 
+        _clock.Advance(TimeSpan.FromMinutes(1));
         using var other = new Probe(client, calls);
         other.Run(enabled: true, staleTime: TimeSpan.FromHours(1));
         Assert.Equal(1, calls.Value);
@@ -96,8 +100,6 @@ public class EnabledToggleTests
         probe.Run(enabled: true, staleTime: TimeSpan.Zero);
         Assert.Equal(1, calls.Value);
 
-        // Relies on the clock having ticked since the fetch: StaleTime zero counts an age of
-        // exactly zero as fresh (L1). Under a fake clock this needs an Advance first.
         using var third = new Probe(client, calls);
         third.Run(enabled: true, staleTime: TimeSpan.Zero);
         Assert.Equal(2, calls.Value);

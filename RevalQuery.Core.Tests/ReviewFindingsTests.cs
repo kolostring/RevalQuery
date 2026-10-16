@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Caching;
@@ -15,6 +16,8 @@ namespace RevalQuery.Core.Tests;
 
 public class ReviewFindingsTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     [Fact]
     public void An_Observer_That_Throws_Does_Not_Wedge_The_Query()
     {
@@ -56,7 +59,7 @@ public class ReviewFindingsTests
                 return Task.FromResult("value");
             },
             null, null, null);
-        var worker = new QueryWorker<ValueTuple<string>, string>(new RevalQueryOptions(), new ServiceCollection().BuildServiceProvider(), state);
+        var worker = new QueryWorker<ValueTuple<string>, string>(new RevalQueryOptions { TimeProvider = _clock }, new ServiceCollection().BuildServiceProvider(), state);
 
         worker.Dispose();
 
@@ -85,18 +88,14 @@ public class ReviewFindingsTests
     }
 
     [Fact]
-    public async Task Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling()
+    public void Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling()
     {
+        var interval = TimeSpan.FromSeconds(10);
         using var client = NewClient();
-        var calls = 0;
-        var target = int.MaxValue;
-        var reached = new Gate();
+        var calls = new Counter();
 
-        var options = QueryOptions.Create("polled", _ =>
-        {
-            if (Interlocked.Increment(ref calls) >= Volatile.Read(ref target)) reached.Open();
-            return Task.FromResult("ok");
-        }).ConfigureFetch(f => f.RefetchInterval(TimeSpan.FromMilliseconds(30))).Build();
+        var options = QueryOptions.Create("polled", _ => Task.FromResult($"ok-{calls.Increment()}"))
+            .ConfigureFetch(f => f.RefetchInterval(interval)).Build();
 
         for (var round = 0; round < 20; round++)
         {
@@ -106,14 +105,14 @@ public class ReviewFindingsTests
             second.Dispose();
         }
 
-        var observer = client.Subscribe(options, () => { });
-        var before = Volatile.Read(ref calls);
+        using var observer = client.Subscribe(options, () => { });
+        var before = calls.Value;
 
-        Volatile.Write(ref target, before + 3);
-        if (Volatile.Read(ref calls) >= before + 3) reached.Open();
+        _clock.Advance(interval);
+        _clock.Advance(interval);
+        _clock.Advance(interval);
 
-        await reached.Task.WaitAsync(HangGuard);
-        observer.Dispose();
+        Assert.Equal(before + 3, calls.Value);
     }
 
     [Fact]
@@ -135,7 +134,7 @@ public class ReviewFindingsTests
 
         Assert.Equal(0, calls.Value);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
         Assert.Equal(0, calls.Value);
@@ -146,7 +145,7 @@ public class ReviewFindingsTests
     [Fact]
     public async Task Stale_Persisted_Data_Still_Refetches()
     {
-        var storedAt = DateTimeOffset.UtcNow.AddHours(-3);
+        var storedAt = _clock.GetUtcNow().AddHours(-3);
         using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
         var handler = new GatedHandler<string>();
@@ -186,7 +185,7 @@ public class ReviewFindingsTests
 
         Assert.True(state.IsRestoring);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow().AddHours(-3))));
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
         Assert.Equal("from-network", state.Data);
@@ -213,6 +212,6 @@ public class ReviewFindingsTests
         policy.Dispose();
     }
 
-    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+    private RevalClient NewClient(IQueryPersistence? persistence = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 }
