@@ -7,7 +7,6 @@
 
 RevalQuery.Core.Tests/PersistenceTests.cs PersistedData_Is_Restored_Before_The_Fetch_Lands  # #19
 RevalQuery.Core.Tests/PersistenceTests.cs A_Fetch_That_Already_Landed_Is_Not_Overwritten_By_The_Load  # #19
-RevalQuery.Core.Tests/RestoreBoundaryTests.cs Stored_Data_That_Is_Still_Fresh_Ends_The_Restore_With_No_Fetch_At_All  # #19
 RevalQuery.Core.Tests/ReviewFindingsTests.cs Fresh_Persisted_Data_Suppresses_The_Fetch  # #19
 RevalQuery.Core.Tests/ReviewFindingsTests.cs Stale_Persisted_Data_Still_Refetches  # #19
 RevalQuery.Core.Tests/ReviewFindingsTests.cs A_Late_Restore_Never_Overwrites_A_Landed_Fetch  # #19
