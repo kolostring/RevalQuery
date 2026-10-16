@@ -168,10 +168,10 @@ public sealed class PrerenderTransfer : IQueryPersistence, IDisposable
 
     private Dictionary<string, TransferEntry>? Take()
     {
-        if (!_state.TryTakeFromJson<string>(StateKey, out var payload) || payload is null) return null;
-
         try
         {
+            if (!_state.TryTakeFromJson<string>(StateKey, out var payload) || payload is null) return null;
+
             return JsonSerializer
                 .Deserialize(payload, TransferSerializerContext.Default.TransferPayload)?.Queries;
         }
