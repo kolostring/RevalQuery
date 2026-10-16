@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -10,14 +11,16 @@ namespace RevalQuery.Core.Tests;
 
 public class InvalidateDuringRestoreTests
 {
-    private static readonly PersistedQuery<string> Fresh = new("from-disk", new QueryFreshness(DateTimeOffset.UtcNow));
+    private readonly FakeTimeProvider _clock = new();
+    private PersistedQuery<string> Fresh => new("from-disk", new QueryFreshness(_clock.GetUtcNow()));
+
 
     [Fact]
     public async Task An_Invalidation_During_A_Restore_Survives_When_Nothing_Can_Fetch_Yet()
     {
         var calls = new Counter();
         using var persistence = new GatedPersistence();
-        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
         var options = QueryOptions.Create<string>("unobserved", _ =>
             {
@@ -51,7 +54,7 @@ public class InvalidateDuringRestoreTests
     {
         var calls = new Counter();
         using var persistence = new GatedPersistence();
-        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
         var options = QueryOptions.Create<string>("gated", _ =>
             {
