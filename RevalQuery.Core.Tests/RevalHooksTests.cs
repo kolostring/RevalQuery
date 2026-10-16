@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
@@ -11,10 +12,12 @@ namespace RevalQuery.Core.Tests;
 
 public class RevalHooksTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private sealed record Req(string Name);
 
-    private static RevalClient NewClient() =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+    private RevalClient NewClient() =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock });
 
     private static QueryOptions<ValueTuple<string>, string> Opts(string key, Counter? calls = null) =>
         QueryOptions.Create<string>(key, _ =>
