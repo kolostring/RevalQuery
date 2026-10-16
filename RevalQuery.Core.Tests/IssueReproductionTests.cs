@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Caching.Eviction;
@@ -96,30 +97,57 @@ public class IssueReproductionTests
     }
 
     [Fact]
-    public async Task Issue2_BackgroundEviction_Runs_Without_A_Manual_Start()
+    public void Issue2_BackgroundEviction_Runs_Without_A_Manual_Start()
     {
+        var time = new FakeTimeProvider();
         var sp = new ServiceCollection()
-            .AddRevalQuery(o => o.CacheOptions = new CoreCacheOptions(
-                GcTime: TimeSpan.Zero,
-                GcInterval: TimeSpan.FromMilliseconds(20)))
+            .AddRevalQuery(o =>
+            {
+                o.TimeProvider = time;
+                o.CacheOptions = new CoreCacheOptions(
+                    GcTime: TimeSpan.FromMilliseconds(10),
+                    GcInterval: TimeSpan.FromMilliseconds(20));
+            })
             .BuildServiceProvider();
 
         using var scope = sp.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
-        var gc = (TtlQueryGarbageCollector)scope.ServiceProvider.GetRequiredService<ICacheEvictionPolicy>();
-        var evicted = new Gate();
-        gc.OnEvictionRequired += key =>
-        {
-            if (QueryKeyComparer.Instance.Equals(key, ValueTuple.Create("gc-key"))) evicted.Open();
-        };
-
         var observer = client.Subscribe(QueryOptions.Create("gc-key", Handler).Build(), () => { });
         Assert.True(observer.Query.IsResolved);
         observer.Dispose();
 
-        await evicted.Task.WaitAsync(HangGuard);
+        time.Advance(TimeSpan.FromMilliseconds(19));
+        Assert.NotNull(client.FindQuery("gc-key"));
 
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Null(client.FindQuery("gc-key"));
+    }
+
+    [Fact]
+    public void A_Released_Query_Survives_Until_The_Clock_Passes_GcTime_And_The_Next_Sweep()
+    {
+        var time = new FakeTimeProvider();
+        var sp = new ServiceCollection()
+            .AddRevalQuery(o =>
+            {
+                o.TimeProvider = time;
+                o.CacheOptions = new CoreCacheOptions(
+                    GcTime: TimeSpan.FromSeconds(30),
+                    GcInterval: TimeSpan.FromSeconds(60));
+            })
+            .BuildServiceProvider();
+
+        using var scope = sp.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
+
+        var observer = client.Subscribe(QueryOptions.Create("gc-key", Handler).Build(), () => { });
+        observer.Dispose();
+
+        time.Advance(TimeSpan.FromSeconds(59));
+        Assert.NotNull(client.FindQuery("gc-key"));
+
+        time.Advance(TimeSpan.FromSeconds(1));
         Assert.Null(client.FindQuery("gc-key"));
     }
 
