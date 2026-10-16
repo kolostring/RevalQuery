@@ -1,66 +1,101 @@
-using System.Collections;
-using System.Reflection;
+using Bunit;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Infrastructure;
+using Microsoft.AspNetCore.Components.RenderTree;
+using Microsoft.Extensions.Logging;
 
 namespace RevalQuery.Blazor.Tests;
 
-internal static class PersistentStateHarness
+/// <summary>
+/// One side of a prerender: the framework's public <see cref="ComponentStatePersistenceManager"/>,
+/// restored from and persisted into an in-memory store, persisting on a bUnit renderer.
+/// </summary>
+internal sealed class PersistentStateHarness : IDisposable
 {
-    private const BindingFlags Any =
-        BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance;
+    private readonly ComponentStatePersistenceManager _manager;
+    private readonly FailureLog _log;
+    private readonly TestContext _context = new();
 
-    public static PersistentComponentState CreateEmpty(out IDictionary<string, byte[]> written)
+    private PersistentStateHarness(ComponentStatePersistenceManager manager, FailureLog log)
     {
-        var store = new Dictionary<string, byte[]>();
-        written = store;
-
-        var constructor = typeof(PersistentComponentState).GetConstructors(Any).Single();
-        var arguments = constructor.GetParameters()
-            .Select(p => p.Position == 0 ? store : NewInstance(p.ParameterType))
-            .ToArray();
-
-        return (PersistentComponentState)constructor.Invoke(arguments);
+        _manager = manager;
+        _log = log;
     }
 
-    public static PersistentComponentState CreateFrom(IDictionary<string, byte[]> persisted)
+    public PersistentComponentState State => _manager.State;
+
+    public static Task<PersistentStateHarness> CreateEmptyAsync() =>
+        CreateFromAsync(new Dictionary<string, byte[]>());
+
+    public static async Task<PersistentStateHarness> CreateFromAsync(IDictionary<string, byte[]> persisted)
     {
-        var state = CreateEmpty(out _);
+        var log = new FailureLog();
+        var manager = new ComponentStatePersistenceManager(log);
 
-        var initialize = typeof(PersistentComponentState)
-            .GetMethods(Any)
-            .Single(m => m.Name == "InitializeExistingState");
+        await manager.RestoreStateAsync(new MemoryStore(persisted));
 
-        var arguments = initialize.GetParameters()
-            .Select(p => p.Position == 0 ? persisted : DefaultOf(p.ParameterType))
-            .ToArray();
-
-        initialize.Invoke(state, arguments);
-
-        return state;
+        return new PersistentStateHarness(manager, log);
     }
 
-    public static async Task PersistAsync(PersistentComponentState state)
+    /// <summary>
+    /// Runs every persisting callback once and returns what they wrote.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Nothing was registered to persist, or a callback threw.
+    /// </exception>
+    public async Task<Dictionary<string, byte[]>> PersistAsync()
     {
-        typeof(PersistentComponentState).GetProperty("PersistingState", Any)!.SetValue(state, true);
+        var store = new MemoryStore(new Dictionary<string, byte[]>());
 
-        var registered = (IEnumerable)typeof(PersistentComponentState)
-            .GetField("_registeredCallbacks", Any)!.GetValue(state)!;
+        await _manager.PersistStateAsync(store, (Renderer)_context.Renderer);
 
-        foreach (var registration in registered)
+        if (_log.Failure is { } failure)
+            throw new InvalidOperationException("A persisting callback threw.", failure);
+
+        if (store.Registrations == 0)
+            throw new InvalidOperationException("Nothing was registered to persist.");
+
+        return store.Written;
+    }
+
+    public void Dispose() => _context.Dispose();
+
+    private sealed class MemoryStore(IDictionary<string, byte[]> persisted) : IPersistentComponentStateStore
+    {
+        public int Registrations { get; private set; }
+
+        public Dictionary<string, byte[]> Written { get; } = new(StringComparer.Ordinal);
+
+        public Task<IDictionary<string, byte[]>> GetPersistedStateAsync() =>
+            Task.FromResult<IDictionary<string, byte[]>>(new Dictionary<string, byte[]>(persisted));
+
+        public Task PersistStateAsync(IReadOnlyDictionary<string, byte[]> state)
         {
-            var callback = registration.GetType()
-                .GetProperties(Any)
-                .Select(p => p.GetValue(registration))
-                .OfType<Func<Task>>()
-                .Single();
-
-            await callback();
+            foreach (var (key, value) in state) Written[key] = value;
+            return Task.CompletedTask;
         }
 
-        typeof(PersistentComponentState).GetProperty("PersistingState", Any)!.SetValue(state, false);
+        // The manager asks once per registered callback, on every supported framework.
+        public bool SupportsRenderMode(IComponentRenderMode renderMode)
+        {
+            Registrations++;
+            return true;
+        }
     }
 
-    private static object NewInstance(Type type) => Activator.CreateInstance(type)!;
+    private sealed class FailureLog : ILogger<ComponentStatePersistenceManager>
+    {
+        public Exception? Failure { get; private set; }
 
-    private static object? DefaultOf(Type type) => type.IsValueType ? Activator.CreateInstance(type) : null;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Error) Failure ??= exception ?? new Exception(formatter(state, exception));
+        }
+    }
 }
