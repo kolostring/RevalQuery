@@ -2,3 +2,4 @@
 **/obj
 .idea
 .vscode
+.claude/STATUS.local.md
