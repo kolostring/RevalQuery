@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
@@ -412,12 +411,7 @@ public class IssueReproductionTests
         throw new InvalidOperationException("no collision found in 4,000,000 keys");
     }
 
-    private static int EvictionSubscriberCount(TtlQueryGarbageCollector gc)
-    {
-        var field = typeof(TtlQueryGarbageCollector)
-            .GetField("OnEvictionRequired", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        return ((Delegate?)field.GetValue(gc))?.GetInvocationList().Length ?? 0;
-    }
+    private static int EvictionSubscriberCount(TtlQueryGarbageCollector gc) => gc.EvictionSubscriberCount;
 }
 
 /// <summary>

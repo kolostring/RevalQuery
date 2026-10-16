@@ -29,6 +29,8 @@ public sealed class TtlQueryGarbageCollector(RevalQueryOptions defaultOptions) :
     /// </summary>
     public event Action<ITuple>? OnEvictionRequired;
 
+    internal int EvictionSubscriberCount => OnEvictionRequired?.GetInvocationList().Length ?? 0;
+
     /// <summary>
     /// Registers a key for eviction once its GcTime elapses, starting the collection loop
     /// if this is the first registration.
