@@ -7,8 +7,11 @@ namespace RevalQuery.Core.Query.Execution;
 /// Default retry policy with exponential backoff.
 /// Retries on failure with increasing delays between attempts.
 /// </summary>
-public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
+/// <param name="timeProvider">The clock the backoff waits on. Defaults to <see cref="TimeProvider.System"/>.</param>
+public sealed class ExponentialBackoffRetryPolicy(TimeProvider? timeProvider = null) : IRetryPolicy
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     /// <summary>
     /// Executes the handler, retrying a failure up to retryOptions.Retry further times with
     /// the delay from retryOptions.RetryDelay between them.
@@ -34,7 +37,7 @@ public sealed class ExponentialBackoffRetryPolicy : IRetryPolicy
                 var delay = retryDelayCalculator(attempt);
                 if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
 
-                await Task.Delay(delay, cancellationToken);
+                await Task.Delay(delay, _timeProvider, cancellationToken);
             }
 
             try
