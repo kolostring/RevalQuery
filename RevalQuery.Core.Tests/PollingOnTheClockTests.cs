@@ -13,9 +13,7 @@ public class PollingOnTheClockTests
     private readonly FakeTimeProvider _clock = new();
     private readonly Counter _calls = new();
 
-    public PollingOnTheClockTests() => SynchronizationContext.SetSynchronizationContext(null);
-
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Advancing_One_Interval_Refetches_Once()
     {
         using var client = NewClient();
@@ -29,7 +27,7 @@ public class PollingOnTheClockTests
         Assert.Equal(2, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Advancing_Three_Intervals_Refetches_Three_Times()
     {
         using var client = NewClient();
@@ -42,7 +40,7 @@ public class PollingOnTheClockTests
         Assert.Equal(4, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void After_The_Last_Observer_Leaves_Advancing_Refetches_Nothing()
     {
         using var client = NewClient();
@@ -56,7 +54,7 @@ public class PollingOnTheClockTests
         Assert.Equal(2, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Poll_Firing_During_An_In_Flight_Fetch_Joins_It()
     {
         var handler = new GatedHandler<string>();
@@ -74,7 +72,7 @@ public class PollingOnTheClockTests
         Assert.Equal(1, handler.Calls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Resubscribing_From_Inside_The_Last_Unsubscribe_Keeps_Polling()
     {
         var handler = new GatedHandler<string>();
@@ -86,13 +84,13 @@ public class PollingOnTheClockTests
         IDisposable? second = null;
         state.OnLastSubscriberRemoved += _ => second ??= client.Subscribe(options, () => { });
         var first = client.Subscribe(options, () => { });
-        await handler.Started(0).WaitAsync(HangGuard);
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         first.Dispose();
         Assert.NotNull(second);
-        var join = client.QueryAsync(options);
+        var join = client.QueryAsync(options, TestContext.Current.CancellationToken);
         handler.Release(0, "data");
-        await join.WaitAsync(HangGuard);
+        await join.WaitAsync(TestContext.Current.CancellationToken);
         var before = handler.Calls;
 
         _clock.Advance(Interval);

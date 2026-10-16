@@ -14,7 +14,7 @@ public sealed class StressCollection;
 
 public class EvictionRaceTests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Retry_After_An_Eviction_Takes_A_Fresh_State_And_Worker()
     {
         var eviction = new ManualEviction();
@@ -23,24 +23,24 @@ public class EvictionRaceTests
         var handler = new GatedHandler<string>(honourToken: false);
         var options = QueryOptions.Create("raced", handler.Handle).Build();
 
-        var superseded = client.QueryAsync(options);
+        var superseded = client.QueryAsync(options, TestContext.Current.CancellationToken);
         Assert.Equal(1, handler.Calls);
         client.FindQuery("raced")!.Cancel();
 
-        var retried = client.QueryAsync(options);
+        var retried = client.QueryAsync(options, TestContext.Current.CancellationToken);
         Assert.Equal(1, handler.Calls);
 
         eviction.Evict(ValueTuple.Create("raced"));
         AssertEveryWorkerHasItsState(client);
 
         handler.Release(0, "stale");
-        await handler.Started(1).WaitAsync(HangGuard);
+        await handler.Started(1).WaitAsync(TestContext.Current.CancellationToken);
         AssertEveryWorkerHasItsState(client);
         Assert.NotNull(client.FindQuery("raced"));
 
         handler.Release(1, "from-network");
-        Assert.Equal("from-network", await retried.WaitAsync(HangGuard));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => superseded.WaitAsync(HangGuard));
+        Assert.Equal("from-network", await retried.WaitAsync(TestContext.Current.CancellationToken));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => superseded.WaitAsync(TestContext.Current.CancellationToken));
 
         AssertEveryWorkerHasItsState(client);
         Assert.Equal("from-network", client.FindQuery<string>("raced")!.Data);
@@ -48,7 +48,7 @@ public class EvictionRaceTests
         Assert.Equal(0, WorkerCount(client));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Subscriber_After_An_Eviction_Mid_Fetch_Gets_A_Driven_State()
     {
         var eviction = new ManualEviction();
@@ -57,7 +57,7 @@ public class EvictionRaceTests
         var handler = new GatedHandler<string>();
         var options = QueryOptions.Create("raced", handler.Handle).Build();
 
-        var fetch = client.QueryAsync(options);
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
         Assert.Equal(1, handler.Calls);
 
         eviction.Evict(ValueTuple.Create("raced"));
@@ -68,7 +68,7 @@ public class EvictionRaceTests
         Assert.True(observer.Query.IsFetching);
         AssertEveryWorkerHasItsState(client);
 
-        var resolved = Signals.UntilAsync(observer.Query, q => q.IsResolved);
+        var resolved = Signals.UntilAsync(observer.Query, q => q.IsResolved, TestContext.Current.CancellationToken);
         handler.ReleaseAll("from-network");
         await resolved;
 
@@ -88,7 +88,7 @@ public class EvictionRaceStressTests
 {
     private const int StormRounds = 300;
 
-    [Fact]
+    [Fact(Explicit = true, Timeout = HangGuardMilliseconds)]
     public async Task An_Eviction_Between_Run_Attempts_Never_Strands_A_Worker_On_A_Stateless_Node()
     {
         var eviction = new EvictOnRelease();
@@ -115,7 +115,7 @@ public class EvictionRaceStressTests
                     if (result is not null) Assert.Equal("from-network", result);
                 }
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         try
         {
@@ -125,7 +125,7 @@ public class EvictionRaceStressTests
 
                 try
                 {
-                    await Signals.UntilAsync(observer.Query, q => q.Data is not null);
+                    await Signals.UntilAsync(observer.Query, q => q.Data is not null, TestContext.Current.CancellationToken);
                     Assert.Equal("from-network", observer.Query.Data);
                     AssertEveryWorkerHasItsState(client);
                 }
@@ -138,7 +138,7 @@ public class EvictionRaceStressTests
         finally
         {
             Volatile.Write(ref rounds, StormRounds);
-            await storm.WaitAsync(HangGuard);
+            await storm.WaitAsync(TestContext.Current.CancellationToken);
         }
     }
 

@@ -14,7 +14,7 @@ internal sealed class PersistentStateHarness : IDisposable
 {
     private readonly ComponentStatePersistenceManager _manager;
     private readonly FailureLog _log;
-    private readonly TestContext _context = new();
+    private readonly Bunit.TestContext _context = new();
 
     private PersistentStateHarness(ComponentStatePersistenceManager manager, FailureLog log)
     {

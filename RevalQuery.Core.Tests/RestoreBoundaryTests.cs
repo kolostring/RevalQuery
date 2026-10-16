@@ -47,7 +47,7 @@ public class RestoreBoundaryTests
     private RevalClient NewClient(IQueryPersistence? persistence = null) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Query_With_Nothing_Stored_Never_Reports_A_Moment_With_No_Work_In_Progress()
     {
         using var persistence = new GatedPersistence();
@@ -56,19 +56,19 @@ public class RestoreBoundaryTests
         var options = QueryOptions.Create("empty", handler.Handle).Build();
 
         var (state, watcher) = Watch(client, options);
-        await persistence.LoadStarted.WaitAsync(HangGuard);
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsRestoring && state.IsLoading);
         Assert.Equal(0, handler.Calls);
 
         persistence.ReleaseLoad();
-        await watcher.FirstFrameAfterRestore.Task.WaitAsync(HangGuard);
-        await handler.Started(0).WaitAsync(HangGuard);
+        await watcher.FirstFrameAfterRestore.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsFetching);
 
         handler.Release(0, "from-network");
-        await Signals.UntilAsync(state, s => s.IsResolved && s.IsIdle);
+        await Signals.UntilAsync(state, s => s.IsResolved && s.IsIdle, TestContext.Current.CancellationToken);
 
         var frames = watcher.Snapshot();
         Assert.DoesNotContain(frames, f => f.IsPending && !f.IsLoading);
@@ -76,7 +76,7 @@ public class RestoreBoundaryTests
         Assert.Equal("from-network", state.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Restore_Is_Not_Over_Until_The_Fetch_That_Follows_It_Has_Started()
     {
         using var persistence = new GatedPersistence();
@@ -90,7 +90,7 @@ public class RestoreBoundaryTests
         Assert.Equal(0, handler.Calls);
 
         persistence.ReleaseLoad();
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsFetching);
         Assert.False(state.IsRestoring);
@@ -98,12 +98,12 @@ public class RestoreBoundaryTests
         Assert.Contains(watcher.Snapshot(), f => f.IsFetching && f.IsRestoring);
 
         handler.Release(0, "from-network");
-        await Signals.UntilAsync(state, s => s.IsResolved && s.IsIdle);
+        await Signals.UntilAsync(state, s => s.IsResolved && s.IsIdle, TestContext.Current.CancellationToken);
 
         Assert.Equal("from-network", state.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Stored_Data_That_Is_Still_Fresh_Ends_The_Restore_With_No_Fetch_At_All()
     {
         using var persistence = new GatedPersistence();
@@ -118,21 +118,21 @@ public class RestoreBoundaryTests
             .Build();
 
         var (state, watcher) = Watch(client, options);
-        await persistence.LoadStarted.WaitAsync(HangGuard);
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, calls.Value);
         Assert.Equal("from-disk", state.Data);
         Assert.False(state.IsRestoring);
 
-        await watcher.FirstFrameAfterRestore.Task.WaitAsync(HangGuard);
+        await watcher.FirstFrameAfterRestore.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(watcher.Snapshot(), f => f.IsPending && !f.IsLoading);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Subscriber_Arriving_After_The_Restore_Ended_Still_Fetches()
     {
         using var persistence = new GatedPersistence();
@@ -146,7 +146,7 @@ public class RestoreBoundaryTests
 
         var state = client.GetOrCreateQuery(options);
         persistence.ReleaseLoad();
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.False(state.IsRestoring);
 
@@ -156,7 +156,7 @@ public class RestoreBoundaryTests
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Restore_That_Is_Already_Ending_Refuses_To_Take_Over_A_Decision()
     {
         var state = new QueryState<ValueTuple<string>, string>(
@@ -179,7 +179,7 @@ public class RestoreBoundaryTests
         Assert.False(state.IsRestoring);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Query_With_No_Persistence_Is_Never_Restoring()
     {
         using var client = NewClient();

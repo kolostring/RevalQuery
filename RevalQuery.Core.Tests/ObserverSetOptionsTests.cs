@@ -49,7 +49,7 @@ public class ObserverSetOptionsTests
     private static QueryState<(string, int), string> StateOf(QueryObserver<(string, int), string> observer) =>
         (QueryState<(string, int), string>)observer.Query;
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void The_Same_Key_Reapplies_Options_Without_Refetching()
     {
         var calls = new Counter();
@@ -74,7 +74,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Switching_To_A_Key_Held_Only_By_Disabled_Observers_Starts_Polling()
     {
         var key1Calls = new Counter();
@@ -108,7 +108,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(1, key1Calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void The_Same_Key_Enabling_A_Disabled_Observer_Fetches()
     {
         var calls = new Counter();
@@ -124,7 +124,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_New_Key_Moves_The_Observer_To_That_Query_And_Fetches_It()
     {
         var eviction = new RecordingEviction();
@@ -157,7 +157,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(seen + 1, changes.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_New_Key_That_Is_Disabled_Does_Not_Fetch()
     {
         var fetched = new List<int>();
@@ -184,7 +184,7 @@ public class ObserverSetOptionsTests
         Assert.Equal([1, 2], fetched);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Switching_Back_Within_GcTime_Reuses_The_Cached_Query()
     {
         var calls = new Counter();
@@ -208,7 +208,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Switching_While_The_Old_Fetch_Runs_Neither_Cancels_It_Nor_Hears_From_It()
     {
         var old = new GatedHandler<string>();
@@ -218,7 +218,7 @@ public class ObserverSetOptionsTests
         using var observer = client.Subscribe(
             QueryOptions.Create<(string, int), string>(Key1, old.Handle).Build(),
             () => changes.Increment());
-        await old.Started(0).WaitAsync(HangGuard);
+        await old.Started(0).WaitAsync(TestContext.Current.CancellationToken);
         var first = StateOf(observer);
         Assert.True(first.IsFetching);
 
@@ -232,7 +232,7 @@ public class ObserverSetOptionsTests
 
         var heard = changes.Value;
 
-        var settled = Signals.UntilAsync(first, s => s.IsResolved && s.IsIdle);
+        var settled = Signals.UntilAsync(first, s => s.IsResolved && s.IsIdle, TestContext.Current.CancellationToken);
         Assert.False(settled.IsCompleted);
         old.Release(0, "data-1");
         await settled;
@@ -242,7 +242,7 @@ public class ObserverSetOptionsTests
         Assert.Same(second, observer.Query);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Result_Type_Mismatch_Throws_Before_The_Observer_Moves()
     {
         var eviction = new RecordingEviction();
@@ -253,7 +253,7 @@ public class ObserverSetOptionsTests
         Assert.True(observer.Query.IsResolved);
         var first = StateOf(observer);
 
-        await client.QueryAsync(QueryOptions.Create<(string, int), int>(Key2, static _ => Task.FromResult(7)).Build());
+        await client.QueryAsync(QueryOptions.Create<(string, int), int>(Key2, static _ => Task.FromResult(7)).Build(), TestContext.Current.CancellationToken);
         eviction.Registered.Clear();
 
         var ex = Assert.Throws<InvalidOperationException>(() => observer.SetOptions(Item(2)));
@@ -269,7 +269,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(seen + 1, changes.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Disposing_After_A_Switch_Releases_The_New_Query_And_Is_Idempotent()
     {
         var eviction = new RecordingEviction();
@@ -292,7 +292,7 @@ public class ObserverSetOptionsTests
         Assert.False(client.FindQuery(Key1)!.HasObservers);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SetOptions_After_The_Observer_Is_Disposed_Throws()
     {
         using var client = NewClient();
@@ -304,7 +304,7 @@ public class ObserverSetOptionsTests
         Assert.Throws<ObjectDisposedException>(() => observer.SetOptions(Item(2)));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SetOptions_After_The_Client_Is_Disposed_Throws()
     {
         var client = NewClient();
@@ -318,7 +318,7 @@ public class ObserverSetOptionsTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Switching_Back_To_An_Evicted_Key_Creates_A_Fresh_Query()
     {
         var calls = new Counter();
@@ -345,7 +345,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(3, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Observe_Creates_On_The_First_Call_Then_Reapplies_And_Switches()
     {
         using var client = NewClient();
@@ -404,7 +404,7 @@ public class ObserverSetOptionsRaceTests
 {
     private const int Rounds = 2000;
 
-    [Fact]
+    [Fact(Explicit = true, Timeout = HangGuardMilliseconds)]
     public async Task Switching_Against_Eager_Eviction_Always_Lands_On_A_Registered_Query()
     {
         var eviction = new EvictOnRelease();
@@ -440,12 +440,12 @@ public class ObserverSetOptionsRaceTests
                     }
                 }
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         Exception? churnError;
         try
         {
-            await churning.Task.WaitAsync(HangGuard);
+            await churning.Task.WaitAsync(TestContext.Current.CancellationToken);
 
             for (var round = 0; round < Rounds; round++)
             {
@@ -459,7 +459,7 @@ public class ObserverSetOptionsRaceTests
         finally
         {
             stop.Cancel();
-            churnError = await Record.ExceptionAsync(() => churn.WaitAsync(HangGuard));
+            churnError = await Record.ExceptionAsync(() => churn.WaitAsync(TestContext.Current.CancellationToken));
             slot!.Dispose();
         }
 

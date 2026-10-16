@@ -21,7 +21,7 @@ public class IssueReproductionTests
     private static Task<string> Handler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
         => Task.FromResult("result");
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Issue1_EvictionPolicy_Is_Scoped_Alongside_RevalClient()
     {
         var sp = new ServiceCollection().AddRevalQuery().BuildServiceProvider();
@@ -42,7 +42,7 @@ public class IssueReproductionTests
             d => Assert.Equal(ServiceLifetime.Scoped, d.Lifetime));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue1_Eviction_In_One_Scope_Leaves_Another_Scope_Alone()
     {
         var sp = new ServiceCollection()
@@ -71,7 +71,7 @@ public class IssueReproductionTests
         Assert.NotNull(c2.FindQuery("shared-key"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue1_Disposing_A_Scope_Detaches_Its_Client_From_The_Eviction_Policy()
     {
         var sp = new ServiceCollection()
@@ -96,7 +96,7 @@ public class IssueReproductionTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Issue2_BackgroundEviction_Runs_Without_A_Manual_Start()
     {
         var time = new FakeTimeProvider();
@@ -124,7 +124,7 @@ public class IssueReproductionTests
         Assert.Null(client.FindQuery("gc-key"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Released_Query_Survives_Until_The_Clock_Passes_GcTime_And_The_Next_Sweep()
     {
         var time = new FakeTimeProvider();
@@ -151,7 +151,7 @@ public class IssueReproductionTests
         Assert.Null(client.FindQuery("gc-key"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Issue2_EvictionPolicy_Needs_No_Host_To_Start()
     {
         var services = new ServiceCollection().AddRevalQuery();
@@ -160,16 +160,16 @@ public class IssueReproductionTests
         Assert.Null(typeof(ICacheEvictionPolicy).GetMethod("StartAsync"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue3_A_Discarded_QueryAsync_Releases_Its_Worker_When_The_Fetch_Settles()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new RevalClient(sp, new RevalQueryOptions());
 
-        var fetch = client.QueryAsync(QueryOptions.Create("prefetched", Handler).Build());
+        var fetch = client.QueryAsync(QueryOptions.Create("prefetched", Handler).Build(), TestContext.Current.CancellationToken);
         Discard(fetch);
         Assert.True(client.FindQuery("prefetched")!.IsResolved);
-        await fetch.WaitAsync(HangGuard);
+        await fetch.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, WorkerCount(client));
 
@@ -181,19 +181,19 @@ public class IssueReproductionTests
         Assert.Equal(0, WorkerCount(client));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue3_An_Awaited_QueryAsync_Releases_Its_Worker_Too()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         using var client = new RevalClient(sp, new RevalQueryOptions());
 
-        await client.QueryAsync(QueryOptions.Create("fetched", Handler).Build());
+        await client.QueryAsync(QueryOptions.Create("fetched", Handler).Build(), TestContext.Current.CancellationToken);
 
         Assert.Equal(0, WorkerCount(client));
         Assert.NotNull(client.FindQuery("fetched"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue3_Subscribe_Path_Still_Cleans_Up()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -208,7 +208,7 @@ public class IssueReproductionTests
         Assert.Equal(0, WorkerCount(client));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue4_Concurrent_Callers_Share_One_Fetch_Instead_Of_Stampeding()
     {
         const int callers = 16;
@@ -229,54 +229,54 @@ public class IssueReproductionTests
             if (joined.Increment() == callers) allJoined.Open();
         }, TaskCreationOptions.LongRunning)).ToArray();
 
-        await allJoined.Task.WaitAsync(HangGuard);
-        await Task.WhenAll(threads).WaitAsync(HangGuard);
+        await allJoined.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await Task.WhenAll(threads).WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal(1, handler.Calls);
 
         handler.ReleaseAll("slow");
-        var results = await Task.WhenAll(fetches).WaitAsync(HangGuard);
+        var results = await Task.WhenAll(fetches).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.All(results, r => Assert.Equal("slow", r));
         Assert.Equal(1, handler.Calls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue5_OnSettled_Receives_Its_Own_Params_And_Data()
     {
         var run = new MutationRun();
 
         run.Start("SLOW");
-        await run.Started("SLOW").WaitAsync(HangGuard);
+        await run.Started("SLOW").WaitAsync(TestContext.Current.CancellationToken);
         run.Start("FAST");
-        await run.Started("FAST").WaitAsync(HangGuard);
+        await run.Started("FAST").WaitAsync(TestContext.Current.CancellationToken);
 
         run.Release("FAST");
-        await run.Settled("FAST").WaitAsync(HangGuard);
+        await run.Settled("FAST").WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal([("FAST", "FAST")], run.Observed());
 
         run.Release("SLOW");
-        await run.Settled("SLOW").WaitAsync(HangGuard);
+        await run.Settled("SLOW").WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("SLOW", run.Observed().Single(x => x.Param == "SLOW").Data);
         Assert.Equal("FAST", run.Observed().Single(x => x.Param == "FAST").Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue5_OnSettled_Receives_Its_Own_Params_And_Data_When_The_First_Call_Settles_First()
     {
         var run = new MutationRun();
 
         run.Start("SLOW");
-        await run.Started("SLOW").WaitAsync(HangGuard);
+        await run.Started("SLOW").WaitAsync(TestContext.Current.CancellationToken);
         run.Start("FAST");
-        await run.Started("FAST").WaitAsync(HangGuard);
+        await run.Started("FAST").WaitAsync(TestContext.Current.CancellationToken);
 
         run.Release("SLOW");
-        await run.Settled("SLOW").WaitAsync(HangGuard);
+        await run.Settled("SLOW").WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal([("SLOW", "SLOW")], run.Observed());
 
         run.Release("FAST");
-        await run.Settled("FAST").WaitAsync(HangGuard);
+        await run.Settled("FAST").WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("SLOW", run.Observed().Single(x => x.Param == "SLOW").Data);
         Assert.Equal("FAST", run.Observed().Single(x => x.Param == "FAST").Data);
@@ -349,7 +349,7 @@ public class IssueReproductionTests
 
     private sealed record Box(string Name);
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Issue6_FindQuery_Returns_Null_For_A_Mismatched_Result_Type()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -362,7 +362,7 @@ public class IssueReproductionTests
         Assert.NotNull(client.FindQuery<string>("typed"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Issue7_Colliding_Hashes_Stay_Two_Distinct_Queries()
     {
         var (a, b) = FindCollidingKeys();
@@ -383,7 +383,7 @@ public class IssueReproductionTests
         Assert.Equal(b, ((RevalQuery.Core.Query.QueryState<ValueTuple<string>, string>)second.Query).Key.Item1);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Issue7_Segments_Of_Different_Types_Are_Different_Queries()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -428,7 +428,7 @@ public class IssueReproductionTests
 public class IssueReproductionStressTests
 {
     // Probabilistic regression net: can find a registry race, cannot prove its absence.
-    [Fact]
+    [Fact(Explicit = true, Timeout = HangGuardMilliseconds)]
     public async Task Issue4_Concurrent_QueryAsync_Keeps_The_Registry_Intact()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -448,7 +448,7 @@ public class IssueReproductionStressTests
                 try { await client.QueryAsync(opts); }
                 catch (Exception ex) { failures.Add($"{ex.GetType().Name}: {ex.Message}"); }
             }, TaskCreationOptions.LongRunning).Unwrap()).ToArray();
-            await Task.WhenAll(tasks).WaitAsync(HangGuard);
+            await Task.WhenAll(tasks).WaitAsync(TestContext.Current.CancellationToken);
 
             if (client.FindQuery(key) is null) Interlocked.Increment(ref lostEntries);
         }

@@ -14,7 +14,7 @@ public class HeldWorkerTests
     private static RevalClient NewClient(ManualEviction eviction) =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task An_Eviction_During_The_Fetch_Neither_Cancels_It_Nor_Loses_The_Data()
     {
         var eviction = new ManualEviction();
@@ -22,8 +22,8 @@ public class HeldWorkerTests
         var handler = new GatedHandler<string>();
         var options = QueryOptions.Create<string>("held", handler.Handle).Build();
 
-        var fetch = client.QueryAsync(options);
-        await handler.Started(0).WaitAsync(HangGuard);
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         eviction.Evict(options.Key);
 
@@ -31,11 +31,11 @@ public class HeldWorkerTests
 
         handler.Release(0, "data");
 
-        Assert.Equal("data", await fetch.WaitAsync(HangGuard));
+        Assert.Equal("data", await fetch.WaitAsync(TestContext.Current.CancellationToken));
         Assert.Equal(1, handler.Calls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task An_Eviction_Refused_During_The_Fetch_Registers_The_Query_Again_When_It_Ends()
     {
         var eviction = new ManualEviction();
@@ -43,19 +43,19 @@ public class HeldWorkerTests
         var handler = new GatedHandler<string>();
         var options = QueryOptions.Create<string>("held", handler.Handle).Build();
 
-        var fetch = client.QueryAsync(options);
-        await handler.Started(0).WaitAsync(HangGuard);
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
         eviction.Evict(options.Key);
         var before = eviction.Registered.Count;
 
         handler.Release(0, "data");
-        await fetch.WaitAsync(HangGuard);
+        await fetch.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(eviction.Registered.Count > before);
         Assert.Contains(eviction.Registered, key => key.Equals(options.Key));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Claimed_Worker_Refuses_Release_Until_The_Claim_Becomes_A_Run_That_Ends()
     {
         var handler = new GatedHandler<string>();
@@ -68,16 +68,16 @@ public class HeldWorkerTests
         Assert.False(worker.TryRelease());
 
         var run = worker.RunClaimedAsync();
-        await handler.Started(0).WaitAsync(HangGuard);
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
         handler.Release(0, "data");
 
-        Assert.Equal(FetchOutcome.Settled, await run.WaitAsync(HangGuard));
+        Assert.Equal(FetchOutcome.Settled, await run.WaitAsync(TestContext.Current.CancellationToken));
         Assert.Equal("data", state.Data);
         Assert.Equal(1, handler.Calls);
         Assert.Equal(1, released.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Dropped_Claim_Lets_A_Refused_Release_Through()
     {
         var (worker, _) = NewWorker(new GatedHandler<string>());
@@ -94,7 +94,7 @@ public class HeldWorkerTests
         Assert.True(worker.TryRelease());
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Two_Claims_Keep_The_Worker_Until_Both_Are_Gone()
     {
         var (worker, _) = NewWorker(new GatedHandler<string>());

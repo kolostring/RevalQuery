@@ -7,7 +7,7 @@ namespace RevalQuery.Core.Tests;
 
 public class ReviewOf45161b7Tests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Static_QueryAsync_Does_Not_Freeze_The_Key_For_Later_Subscribers()
     {
         var calls = new Counter();
@@ -30,7 +30,7 @@ public class ReviewOf45161b7Tests
             return builder.Build();
         }
 
-        await client.QueryAsync(Build(() => calls.Increment(), neverStale: true));
+        await client.QueryAsync(Build(() => calls.Increment(), neverStale: true), TestContext.Current.CancellationToken);
         Assert.Equal(1, calls.Value);
 
         using var observer = client.Subscribe(Build(() => calls.Increment(), neverStale: false), () => { });
@@ -41,7 +41,7 @@ public class ReviewOf45161b7Tests
         Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Invalidating_A_Static_Query_That_Never_Produced_Data_Refetches()
     {
         var calls = new Counter();
@@ -70,7 +70,7 @@ public class ReviewOf45161b7Tests
         Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Cache_Hit_Still_Honours_A_Cancelled_Token()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -80,7 +80,7 @@ public class ReviewOf45161b7Tests
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(10)))
             .Build();
 
-        Assert.Equal("data", await client.QueryAsync(options));
+        Assert.Equal("data", await client.QueryAsync(options, TestContext.Current.CancellationToken));
 
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();

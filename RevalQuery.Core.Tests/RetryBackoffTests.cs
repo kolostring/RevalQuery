@@ -16,37 +16,36 @@ public class RetryBackoffTests
 
     public RetryBackoffTests()
     {
-        SynchronizationContext.SetSynchronizationContext(null);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task The_Default_Schedule_Retries_After_Two_Four_And_Eight_Seconds()
     {
         using var client = NewClient();
-        var fetch = client.QueryAsync(FailingQuery(r => r.Retry(3)));
+        var fetch = client.QueryAsync(FailingQuery(r => r.Retry(3)), TestContext.Current.CancellationToken);
 
         Assert.Equal(1, _calls.Value);
         AssertRetriesOnlyAt(TimeSpan.FromSeconds(2), expectedCalls: 2);
         AssertRetriesOnlyAt(TimeSpan.FromSeconds(4), expectedCalls: 3);
         AssertRetriesOnlyAt(TimeSpan.FromSeconds(8), expectedCalls: 4);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fetch).WaitAsync(HangGuard);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fetch).WaitAsync(TestContext.Current.CancellationToken);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Custom_Delay_Sets_The_Wait_Before_Each_Retry()
     {
         using var client = NewClient();
-        var fetch = client.QueryAsync(FailingQuery(r => r.Retry(2, attempt => TimeSpan.FromSeconds(10 * attempt))));
+        var fetch = client.QueryAsync(FailingQuery(r => r.Retry(2, attempt => TimeSpan.FromSeconds(10 * attempt))), TestContext.Current.CancellationToken);
 
         Assert.Equal(1, _calls.Value);
         AssertRetriesOnlyAt(TimeSpan.FromSeconds(10), expectedCalls: 2);
         AssertRetriesOnlyAt(TimeSpan.FromSeconds(20), expectedCalls: 3);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fetch).WaitAsync(HangGuard);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fetch).WaitAsync(TestContext.Current.CancellationToken);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Cancelling_During_A_Backoff_Wait_Stops_Retrying_At_Once()
     {
         var policy = new ExponentialBackoffRetryPolicy(_clock);
@@ -64,7 +63,7 @@ public class RetryBackoffTests
         Assert.Equal(1, _calls.Value);
         await cts.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run).WaitAsync(HangGuard);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run).WaitAsync(TestContext.Current.CancellationToken);
         _clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(1, _calls.Value);
     }

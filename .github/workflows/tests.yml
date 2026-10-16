@@ -34,3 +34,7 @@ jobs:
       # Every target framework the library ships is executed, not just compiled.
       - name: Test
         run: dotnet test -c Release --no-build --verbosity normal
+
+      # The probabilistic stress nets are Explicit: the step above skips them, this one runs only them.
+      - name: Stress
+        run: dotnet test -c Release --no-build --verbosity normal -- xUnit.Explicit=only

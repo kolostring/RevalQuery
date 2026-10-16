@@ -58,7 +58,7 @@ public class PrerenderTransferTests
     {
         var observer = client.Subscribe(options, () => { });
         var state = client.FindQuery<Widget>("widget")!;
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         return (observer, state);
     }
@@ -125,7 +125,7 @@ public class PrerenderTransferTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Prerendered_Query_Reaches_The_Client_Without_A_Second_Fetch()
     {
         var serverCalls = new Counter();
@@ -150,7 +150,7 @@ public class PrerenderTransferTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task An_Invalidation_From_The_Prerender_Crosses_To_The_Client()
     {
         var clientCalls = new Counter();
@@ -171,7 +171,7 @@ public class PrerenderTransferTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Corrupt_Outer_Payload_Counts_As_Nothing_Arrived()
     {
         var clientCalls = new Counter();
@@ -184,14 +184,14 @@ public class PrerenderTransferTests
         using var clientState = await PersistentStateHarness.CreateFromAsync(corrupt);
         using var clientHost = Host(clientState.State);
 
-        var loaded = await clientHost.Transfer.LoadAsync<Widget>(ValueTuple.Create("widget"));
+        var loaded = await clientHost.Transfer.LoadAsync<Widget>(ValueTuple.Create("widget"), TestContext.Current.CancellationToken);
 
         Assert.Null(loaded);
 
         var (observer, state) = await SubscribeRestored(
             clientHost.Client, ClientQuery("widget", clientCalls));
 
-        await RevalQuery.TestKit.Signals.UntilAsync(observer.Query, s => s.IsIdle && s.Data is not null);
+        await RevalQuery.TestKit.Signals.UntilAsync(observer.Query, s => s.IsIdle && s.Data is not null, TestContext.Current.CancellationToken);
 
         Assert.Equal(new Widget(9, "from client"), state.Data);
         Assert.Equal(1, clientCalls.Value);
@@ -199,7 +199,7 @@ public class PrerenderTransferTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Stale_Transferred_Data_Is_Shown_And_Then_Refetched()
     {
         var written = await Prerendered(server => server.QueryAsync(ServerQuery("widget", new Counter())));
@@ -221,7 +221,7 @@ public class PrerenderTransferTests
         Assert.True(state.IsFetching);
         Assert.Equal(1, handler.Calls);
 
-        var refetched = Signals.UntilAsync(state, s => s.IsIdle && s.Data == new Widget(9, "from client"));
+        var refetched = Signals.UntilAsync(state, s => s.IsIdle && s.Data == new Widget(9, "from client"), TestContext.Current.CancellationToken);
         handler.Release(0, new Widget(9, "from client"));
         await refetched;
 
@@ -230,7 +230,7 @@ public class PrerenderTransferTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Failed_Query_Is_Not_Transferred()
     {
         var clientCalls = new Counter();
@@ -242,7 +242,7 @@ public class PrerenderTransferTests
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => server.QueryAsync(
                 QueryOptions.Create("widget", _ => Task.FromException<Widget>(new InvalidOperationException("boom")))
                     .ConfigureRetry(r => r.Retry(0))
-                    .Build()));
+                    .Build(), TestContext.Current.CancellationToken));
 
             Assert.Contains("boom", error.Message);
         });
@@ -262,7 +262,7 @@ public class PrerenderTransferTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Keys_That_Differ_Only_By_Segment_Type_Or_Punctuation_Do_Not_Collide()
     {
         var refetches = new Counter();
@@ -303,14 +303,14 @@ public class PrerenderTransferTests
             .Build();
 
         var observer = client.Subscribe(options, () => { });
-        await client.FindQuery<Widget, TKey>(key)!.RestoreCompleted.WaitAsync(HangGuard);
+        await client.FindQuery<Widget, TKey>(key)!.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
         var name = observer.Query.Data?.Name;
         observer.Dispose();
 
         return name;
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Registration_Without_A_TypeInfoResolver_Fails_Loud()
     {
         var services = new ServiceCollection();
@@ -321,7 +321,7 @@ public class PrerenderTransferTests
         Assert.Contains("TypeInfoResolver", error.Message);
     }
 
-    [Theory]
+    [Theory(Timeout = HangGuardMilliseconds)]
     [InlineData(false)]
     [InlineData(true)]
     public async Task The_Transfer_Joins_A_Persistence_Store_Rather_Than_Replacing_It(bool storeFirst)
@@ -341,7 +341,7 @@ public class PrerenderTransferTests
         // Registration order sets precedence: a store registered first is asked first, and misses.
         Assert.Equal(storeFirst ? 1 : 0, store.Loads);
 
-        await host.Client.QueryAsync(ServerQuery("other", new Counter()));
+        await host.Client.QueryAsync(ServerQuery("other", new Counter()), TestContext.Current.CancellationToken);
 
         Assert.Equal(1, store.Saves);
 

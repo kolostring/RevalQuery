@@ -19,7 +19,7 @@ public class MutationStateInterfaceTests
             _ => "unknown"
         };
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Mutation_Can_Be_Watched_And_Reset_Through_The_Interface_Alone()
     {
         var gate = new Gate();
@@ -35,13 +35,13 @@ public class MutationStateInterfaceTests
 
         Assert.Equal("idle", Describe(mutation));
 
-        var run = observer.State.ExecuteAsync(new Req("a"));
+        var run = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
         Assert.Equal("fetching", Describe(mutation));
         gate.Open();
-        await run.WaitAsync(HangGuard);
+        await run.WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal("resolved:a", Describe(mutation));
 
-        await observer.State.ExecuteAsync(new Req("fail")).WaitAsync(HangGuard);
+        await observer.State.ExecuteAsync(new Req("fail"), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal("exception:boom", Describe(mutation));
         Assert.Null(mutation.Data);
 

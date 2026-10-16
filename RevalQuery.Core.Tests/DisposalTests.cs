@@ -13,7 +13,7 @@ public class DisposalTests
     private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Subscribe_After_Disposal_Throws()
     {
         var client = NewClient();
@@ -22,16 +22,16 @@ public class DisposalTests
         Assert.Throws<ObjectDisposedException>(() => client.Subscribe(Options("a").Build(), () => { }));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task QueryAsync_After_Disposal_Throws()
     {
         var client = NewClient();
         client.Dispose();
 
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.QueryAsync(Options("c").Build()));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.QueryAsync(Options("c").Build(), TestContext.Current.CancellationToken));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void GetOrCreateQuery_After_Disposal_Throws()
     {
         var client = NewClient();
@@ -40,7 +40,7 @@ public class DisposalTests
         Assert.Throws<ObjectDisposedException>(() => client.GetOrCreateQuery(Options("d").Build()));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Refused_Subscribe_Leaves_Nothing_Behind()
     {
         var client = NewClient();
@@ -51,7 +51,7 @@ public class DisposalTests
         Assert.Null(client.FindQuery("e"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Teardown_After_Disposal_Is_Silent()
     {
         var client = NewClient();
@@ -66,7 +66,7 @@ public class DisposalTests
         client.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Teardown_After_Disposal_With_A_Fetch_In_Flight_Is_Silent()
     {
         var handler = new GatedHandler<string>();
@@ -75,10 +75,10 @@ public class DisposalTests
         Assert.Equal(1, handler.Calls);
 
         client.Dispose();
-        await handler.Cancelled(0).WaitAsync(HangGuard);
+        await handler.Cancelled(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.Dispose();
-        await client.CancelAsync("g").WaitAsync(HangGuard);
+        await client.CancelAsync("g").WaitAsync(TestContext.Current.CancellationToken);
         client.Invalidate("g");
         client.Dispose();
 

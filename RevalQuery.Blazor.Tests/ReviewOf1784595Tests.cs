@@ -21,7 +21,7 @@ public class ReviewOf1784595Tests
     private static readonly JsonSerializerOptions Serializer =
         new() { TypeInfoResolver = WidgetContext.Default };
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Persisting_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
         using var harness = await PersistentStateHarness.CreateEmptyAsync();
@@ -37,10 +37,10 @@ public class ReviewOf1784595Tests
         var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
         await client.QueryAsync(
-            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
+            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build(), TestContext.Current.CancellationToken);
 
         await client.QueryAsync(
-            QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build());
+            QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build(), TestContext.Current.CancellationToken);
 
         var written = await harness.PersistAsync();
 
@@ -51,7 +51,7 @@ public class ReviewOf1784595Tests
         Assert.DoesNotContain("uncovered", payload);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Loading_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
         using var serverState = await PersistentStateHarness.CreateEmptyAsync();
@@ -67,7 +67,7 @@ public class ReviewOf1784595Tests
         serverScope.ServiceProvider.GetRequiredService<PrerenderTransfer>();
 
         await serverScope.ServiceProvider.GetRequiredService<RevalClient>().QueryAsync(
-            QueryOptions.Create("gizmo", static _ => Task.FromResult(new Gizmo(2))).Build());
+            QueryOptions.Create("gizmo", static _ => Task.FromResult(new Gizmo(2))).Build(), TestContext.Current.CancellationToken);
 
         var written = await serverState.PersistAsync();
 
@@ -77,14 +77,14 @@ public class ReviewOf1784595Tests
             clientState.State, emptyProvider, new JsonSerializerOptions { TypeInfoResolver = GizmoContext.Default });
         var blind = new PrerenderTransfer(clientState.State, emptyProvider, Serializer);
 
-        var loadedWithTheResolver = await covering.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
-        var loadedWithoutIt = await blind.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
+        var loadedWithTheResolver = await covering.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"), TestContext.Current.CancellationToken);
+        var loadedWithoutIt = await blind.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"), TestContext.Current.CancellationToken);
 
         Assert.Equal(new Gizmo(2), loadedWithTheResolver?.Data);
         Assert.Null(loadedWithoutIt);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Disposing_The_Scope_Unsubscribes_The_Transfer_Although_It_Is_Disposed_Twice()
     {
         // The transfer is registered under two service types, so the container disposes it twice.
@@ -105,7 +105,7 @@ public class ReviewOf1784595Tests
             scope.ServiceProvider.GetRequiredService<IQueryPersistence>());
 
         await scope.ServiceProvider.GetRequiredService<RevalClient>().QueryAsync(
-            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
+            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build(), TestContext.Current.CancellationToken);
 
         scope.Dispose();
 

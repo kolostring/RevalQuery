@@ -47,21 +47,21 @@ public class SignalsTests
         return state.Value;
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Condition_That_Already_Holds_Completes_The_Wait()
     {
         var state = new FakeState { Value = true };
 
-        await Signals.UntilAsync(state, Holds);
+        await Signals.UntilAsync(state, Holds, TestContext.Current.CancellationToken);
 
         Assert.Equal(0, state.Handlers);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task The_Wait_Rechecks_On_Every_Change_Until_The_Condition_Holds()
     {
         var state = new FakeState();
-        var wait = Signals.UntilAsync(state, Holds);
+        var wait = Signals.UntilAsync(state, Holds, TestContext.Current.CancellationToken);
 
         state.Raise();
         Assert.False(wait.IsCompleted);
@@ -75,19 +75,19 @@ public class SignalsTests
         Assert.Equal(0, state.Handlers);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Change_Raised_Between_Subscribing_And_Checking_Is_Not_Missed()
     {
         var state = new FakeState { ChangeWhileSubscribing = true };
 
-        await Signals.UntilAsync(state, Holds);
+        await Signals.UntilAsync(state, Holds, TestContext.Current.CancellationToken);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task The_Wait_Never_Resumes_Inside_The_Change_Notification()
     {
         var state = new FakeState();
-        var wait = Signals.UntilAsync(state, Holds);
+        var wait = Signals.UntilAsync(state, Holds, TestContext.Current.CancellationToken);
         var resumedInline = wait.ContinueWith(_ => Inline.Inside, TaskContinuationOptions.ExecuteSynchronously);
 
         Inline.Run(() =>
@@ -96,14 +96,14 @@ public class SignalsTests
             state.Raise();
         });
 
-        Assert.False(await resumedInline.WaitAsync(HangGuard));
+        Assert.False(await resumedInline.WaitAsync(TestContext.Current.CancellationToken));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Condition_That_Throws_Fails_The_Wait()
     {
         var state = new FakeState();
-        var wait = Signals.UntilAsync(state, s => s.Value ? throw new InvalidOperationException("boom") : false);
+        var wait = Signals.UntilAsync(state, s => s.Value ? throw new InvalidOperationException("boom") : false, TestContext.Current.CancellationToken);
 
         state.Value = true;
         state.Raise();
@@ -112,25 +112,27 @@ public class SignalsTests
         Assert.Equal(0, state.Handlers);
     }
 
-    [Fact]
-    public async Task A_Wait_That_Outlasts_Its_Guard_Fails_Rather_Than_Passing()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Wait_Whose_Token_Is_Cancelled_Fails_Rather_Than_Passing()
     {
         var state = new FakeState();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
 
-        await Assert.ThrowsAsync<TimeoutException>(() => Signals.UntilAsync(state, Holds, TimeSpan.Zero));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Signals.UntilAsync(state, Holds, cancelled.Token));
         Assert.Equal(0, state.Handlers);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Query_Wait_Ends_When_The_Query_Reaches_The_Condition()
     {
         var handler = new GatedHandler<string>();
         using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), new ManualEviction());
         client.Subscribe(QueryOptions.Create("a", handler.Handle).Build(), () => { });
         var state = client.FindQuery<string>("a")!;
-        await handler.Started(0).WaitAsync(HangGuard);
+        await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
-        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
+        var resolved = Signals.UntilAsync(state, s => s.IsResolved, TestContext.Current.CancellationToken);
         Assert.False(resolved.IsCompleted);
         handler.Release(0, "data");
 
@@ -138,7 +140,7 @@ public class SignalsTests
         Assert.Equal("data", state.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Mutation_Wait_Ends_When_The_Mutation_Reaches_The_Condition()
     {
         var gate = new Gate();
@@ -149,14 +151,14 @@ public class SignalsTests
             return "done";
         }).Build(), () => { });
         IMutationState<string> state = observer.State;
-        var execution = observer.State.ExecuteAsync("params");
+        var execution = observer.State.ExecuteAsync("params", TestContext.Current.CancellationToken);
 
-        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
+        var resolved = Signals.UntilAsync(state, s => s.IsResolved, TestContext.Current.CancellationToken);
         Assert.False(resolved.IsCompleted);
         gate.Open();
 
         await resolved;
         Assert.Equal("done", state.Data);
-        await execution.WaitAsync(HangGuard);
+        await execution.WaitAsync(TestContext.Current.CancellationToken);
     }
 }

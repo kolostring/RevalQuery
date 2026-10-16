@@ -22,15 +22,15 @@ public class QueryAsyncIntegrationTests : IDisposable
     /// Any refetch the subscription starts is parked at the handler's gate, so the data seen
     /// straight after subscribing can only have come from the cache.
     /// </remarks>
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task SubscribeAfterDiscardedQueryAsync_UsesCachedData()
     {
         var handler = new GatedHandler<string>();
         var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
-        Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions, TestContext.Current.CancellationToken));
         var state = _client.FindQuery<string>(Key)!;
-        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
+        var resolved = Signals.UntilAsync(state, s => s.IsResolved, TestContext.Current.CancellationToken);
         handler.Release(0, "cached");
         await resolved;
 
@@ -43,15 +43,15 @@ public class QueryAsyncIntegrationTests : IDisposable
     /// <remarks>
     /// As <see cref="SubscribeAfterDiscardedQueryAsync_UsesCachedData"/>, with the call awaited.
     /// </remarks>
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task SubscribeAfterQueryAsync_UsesCachedData()
     {
         var handler = new GatedHandler<string>();
         var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
-        var fetch = _client.QueryAsync(queryOptions);
+        var fetch = _client.QueryAsync(queryOptions, TestContext.Current.CancellationToken);
         handler.Release(0, "fetched");
-        await fetch.WaitAsync(HangGuard);
+        await fetch.WaitAsync(TestContext.Current.CancellationToken);
 
         var observer = _client.Subscribe(queryOptions, () => { });
 
@@ -65,7 +65,7 @@ public class QueryAsyncIntegrationTests : IDisposable
     /// that run instead of starting the second fetch this test counts. The call's own task
     /// completes only once the run is over.
     /// </remarks>
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task InvalidateAfterQueryAsync_TriggersRefetch()
     {
         var handler = new GatedHandler<string>();
@@ -73,9 +73,9 @@ public class QueryAsyncIntegrationTests : IDisposable
             .ConfigureFetch(b => b.StaleTime(TimeSpan.FromSeconds(30)))
             .Build();
 
-        var first = _client.QueryAsync(queryOptions);
+        var first = _client.QueryAsync(queryOptions, TestContext.Current.CancellationToken);
         handler.Release(0, "v1");
-        await first.WaitAsync(HangGuard);
+        await first.WaitAsync(TestContext.Current.CancellationToken);
 
         var observer = _client.Subscribe(queryOptions, () => { });
         Assert.Equal(1, handler.Calls);
@@ -86,14 +86,14 @@ public class QueryAsyncIntegrationTests : IDisposable
         Assert.Equal(2, handler.Calls);
         Assert.True(observer.Query.IsFetching);
 
-        var idle = Signals.UntilAsync(observer.Query, q => q.IsIdle);
+        var idle = Signals.UntilAsync(observer.Query, q => q.IsIdle, TestContext.Current.CancellationToken);
         handler.Release(1, "v2");
         await idle;
 
         Assert.Equal("v2", observer.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void QueryAsync_WithEnabledFalse_StillFetches()
     {
         var counter = new Counter();
@@ -101,7 +101,7 @@ public class QueryAsyncIntegrationTests : IDisposable
             .Enabled(false)
             .Build();
 
-        Discard(_client.QueryAsync(queryOptions));
+        Discard(_client.QueryAsync(queryOptions, TestContext.Current.CancellationToken));
 
         Assert.Equal(1, counter.Value);
         Assert.True(_client.FindQuery(Key)!.IsResolved);
