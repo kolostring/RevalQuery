@@ -1,3 +1,5 @@
+﻿using Microsoft.Extensions.Time.Testing;
+using static RevalQuery.TestKit.Kit;
 using RevalQuery.Core.Caching.Eviction;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
@@ -8,15 +10,36 @@ namespace RevalQuery.Core.Tests;
 public class ReviewOf1784595Tests
 {
     [Fact]
-    public async Task Stopping_The_Collector_After_Disposing_It_Is_Harmless()
+    public async Task Stopping_The_Collector_After_Disposing_It_Waits_For_The_Running_Sweep()
     {
-        var collector = new TtlQueryGarbageCollector(new RevalQueryOptions());
-
+        var time = new FakeTimeProvider();
+        var collector = new TtlQueryGarbageCollector(new RevalQueryOptions
+        {
+            TimeProvider = time,
+            CacheOptions = new CoreCacheOptions(GcTime: TimeSpan.Zero, GcInterval: TimeSpan.FromSeconds(1))
+        });
+        var sweepStarted = new Gate();
+        var releaseSweep = new Gate();
+        collector.OnEvictionRequired += _ =>
+        {
+            sweepStarted.Open();
+            releaseSweep.Task.Wait(HangGuard);
+        };
         collector.RegisterForEviction(ValueTuple.Create("gc"), null);
 
-        collector.Dispose();
-        collector.Dispose();
+        var sweep = Task.Run(() => time.Advance(TimeSpan.FromSeconds(1)));
+        await sweepStarted.Task.WaitAsync(HangGuard);
 
+        collector.Dispose();
+        var stop = collector.StopAsync();
+
+        Assert.False(stop.IsCompleted);
+
+        releaseSweep.Open();
+        await stop.WaitAsync(HangGuard);
+        await sweep.WaitAsync(HangGuard);
+
+        collector.Dispose();
         await collector.StopAsync();
         await collector.DisposeAsync();
     }
