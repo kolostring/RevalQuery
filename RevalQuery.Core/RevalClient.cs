@@ -107,7 +107,8 @@ public sealed class RevalClient : IDisposable
             queryOptions.Handler,
             queryOptions.FetchOptions,
             queryOptions.RetryOptions,
-            queryOptions.CacheOptions
+            queryOptions.CacheOptions,
+            _defaultOptions.TimeProvider
         );
 
         node.State = newState;

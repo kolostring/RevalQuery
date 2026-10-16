@@ -1,12 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
-using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Core.Tests;
 
-public class QueryAsyncIntegrationTests
+public class QueryAsyncIntegrationTests : IDisposable
 {
     private const string Key = "prefetch";
 
@@ -17,13 +16,23 @@ public class QueryAsyncIntegrationTests
         _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
 
+    public void Dispose() => _client.Dispose();
+
+    /// <remarks>
+    /// Any refetch the subscription starts is parked at the handler's gate, so the data seen
+    /// straight after subscribing can only have come from the cache.
+    /// </remarks>
     [Fact]
     public async Task SubscribeAfterDiscardedQueryAsync_UsesCachedData()
     {
-        var queryOptions = QueryOptions.Create(Key, CachedHandler).Build();
+        var handler = new GatedHandler<string>();
+        var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
         Discard(_client.QueryAsync(queryOptions));
-        await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
+        var state = _client.FindQuery<string>(Key)!;
+        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
+        handler.Release(0, "cached");
+        await resolved;
 
         var observer = _client.Subscribe(queryOptions, () => { });
 
@@ -31,14 +40,20 @@ public class QueryAsyncIntegrationTests
         Assert.True(observer.Query.IsResolved);
     }
 
+    /// <remarks>
+    /// As <see cref="SubscribeAfterDiscardedQueryAsync_UsesCachedData"/>, with the call awaited.
+    /// </remarks>
     [Fact]
     public async Task SubscribeAfterQueryAsync_UsesCachedData()
     {
-        var queryOptions = QueryOptions.Create(Key, FetchedHandler).Build();
+        var handler = new GatedHandler<string>();
+        var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
-        await _client.QueryAsync(queryOptions);
+        var fetch = _client.QueryAsync(queryOptions);
+        handler.Release(0, "fetched");
+        await fetch.WaitAsync(HangGuard);
+
         var observer = _client.Subscribe(queryOptions, () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
 
         Assert.Equal("fetched", observer.Query.Data);
         Assert.True(observer.Query.IsResolved);
@@ -47,48 +62,44 @@ public class QueryAsyncIntegrationTests
     [Fact]
     public async Task InvalidateAfterQueryAsync_TriggersRefetch()
     {
-        var queryOptions = QueryOptions.Create(Key, StaticDataHandler)
+        var handler = new GatedHandler<string>();
+        var queryOptions = QueryOptions.Create(Key, handler.Handle)
             .ConfigureFetch(b => b.StaleTime(TimeSpan.FromSeconds(30)))
             .Build();
 
         Discard(_client.QueryAsync(queryOptions));
-        await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
+        var state = _client.FindQuery<string>(Key)!;
+        var resolved = Signals.UntilAsync(state, s => s.IsResolved);
+        handler.Release(0, "v1");
+        await resolved;
 
         var observer = _client.Subscribe(queryOptions, () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
-        var initialData = observer.Query.Data;
-        Assert.NotNull(initialData);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("v1", observer.Query.Data);
 
         _client.Invalidate(Key);
-        await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
 
-        Assert.NotSame(initialData, observer.Query.Data);
+        Assert.Equal(2, handler.Calls);
+        Assert.True(observer.Query.IsFetching);
+
+        var idle = Signals.UntilAsync(observer.Query, q => q.IsIdle);
+        handler.Release(1, "v2");
+        await idle;
+
+        Assert.Equal("v2", observer.Query.Data);
     }
 
     [Fact]
-    public async Task QueryAsync_WithEnabledFalse_StillFetches()
+    public void QueryAsync_WithEnabledFalse_StillFetches()
     {
-        var queryOptions = QueryOptions.Create(Key, DataHandler)
+        var counter = new Counter();
+        var queryOptions = QueryOptions.Create(Key, _ => Task.FromResult($"data{counter.Increment()}"))
             .Enabled(false)
             .Build();
 
         Discard(_client.QueryAsync(queryOptions));
-        await TestUtils.WaitForStateAsync(_client.FindQuery(Key)!, s => s.IsResolved);
 
-        var state = _client.FindQuery(Key);
-        Assert.NotNull(state);
-        Assert.True(state.IsResolved);
+        Assert.Equal(1, counter.Value);
+        Assert.True(_client.FindQuery(Key)!.IsResolved);
     }
-
-    private static Task<string> StaticDataHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult($"v{DateTime.UtcNow.Ticks}");
-
-    private static Task<string> CachedHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult("cached");
-
-    private static Task<string> FetchedHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult("fetched");
-
-    private static Task<string> DataHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult("data");
 }
