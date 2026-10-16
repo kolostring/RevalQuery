@@ -13,24 +13,18 @@ public class RevalHooksTests
 {
     private sealed record Req(string Name);
 
-    private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
     private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
-    private static QueryOptions<ValueTuple<string>, string> Opts(string key, Action? onCall = null) =>
+    private static QueryOptions<ValueTuple<string>, string> Opts(string key, Counter? calls = null) =>
         QueryOptions.Create<string>(key, _ =>
         {
-            onCall?.Invoke();
+            calls?.Increment();
             return Task.FromResult(key);
         }).Build();
 
-    private static QueryOptions<ValueTuple<string>, string> Gated(string key, TaskCompletionSource gate) =>
-        QueryOptions.Create<string>(key, async _ =>
-        {
-            await gate.Task;
-            return key;
-        }).Build();
+    private static QueryOptions<ValueTuple<string>, string> Gated(string key, GatedHandler<string> handler) =>
+        QueryOptions.Create<string>(key, handler.Handle).Build();
 
     private static bool Observed(RevalClient client, string key) =>
         client.FindQuery(key)?.HasObservers == true;
@@ -147,13 +141,13 @@ public class RevalHooksTests
         using var client = NewClient();
         var hooks = client.CreateHooks();
         var handle = hooks.Attach(() => { });
-        var calls = 0;
+        var calls = new Counter();
 
-        var first = hooks.Query(Opts("shared", () => calls++));
-        var second = hooks.Query(Opts("shared", () => calls++));
+        var first = hooks.Query(Opts("shared", calls));
+        var second = hooks.Query(Opts("shared", calls));
 
         Assert.Same(first, second);
-        Assert.Equal(1, calls);
+        Assert.Equal(1, calls.Value);
 
         handle.Dispose();
 
@@ -165,14 +159,14 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var calls = 0;
+        var calls = new Counter();
 
-        var one = hooks.Query(("site", 1), Opts("both", () => calls++));
-        var two = hooks.Query(("site", 2), Opts("both", () => calls++));
+        var one = hooks.Query(("site", 1), Opts("both", calls));
+        var two = hooks.Query(("site", 2), Opts("both", calls));
         hooks.RenderCompleted();
 
         Assert.Same(one, two);
-        Assert.Equal(1, calls);
+        Assert.Equal(1, calls.Value);
 
         hooks.Query(("site", 1), Opts("other"));
         hooks.Query(("site", 2), Opts("both"));
@@ -252,27 +246,27 @@ public class RevalHooksTests
     }
 
     [Fact]
-    public async Task A_Repeat_Read_Applies_The_Options_Of_That_Render()
+    public void A_Repeat_Read_Applies_The_Options_Of_That_Render()
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var calls = 0;
+        var calls = new Counter();
 
         hooks.Query("slot", QueryOptions.Create<string>("toggle", _ =>
         {
-            calls++;
+            calls.Increment();
             return Task.FromResult("d");
         }).Enabled(false));
-        Assert.Equal(0, calls);
+        Assert.Equal(0, calls.Value);
 
         var state = hooks.Query("slot", QueryOptions.Create<string>("toggle", _ =>
         {
-            calls++;
+            calls.Increment();
             return Task.FromResult("d");
         }).Enabled(true));
 
-        await TestUtils.WaitForStateAsync(state, s => s.IsResolved);
-        Assert.Equal(1, calls);
+        Assert.True(state.IsResolved);
+        Assert.Equal(1, calls.Value);
     }
 
     [Fact]
@@ -325,31 +319,24 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var changed = 0;
-        using var handle = hooks.Attach(() => Interlocked.Increment(ref changed));
-        var started = Signal();
-        var release = Signal();
+        var changed = new Counter();
+        using var handle = hooks.Attach(() => changed.Increment());
+        var h = new GatedHandler<string>();
 
-        var state = hooks.Mutation("run", MutationOptions.Create<Req, string>(async _ =>
-        {
-            started.SetResult();
-            await release.Task;
-            return "done";
-        }).Build());
+        var state = hooks.Mutation("run", MutationOptions.Create<Req, string>(h.Handle).Build());
 
         var run = state.ExecuteAsync(new Req("a"));
-        await started.Task;
+        await h.Started(0).WaitAsync(HangGuard);
 
         hooks.RenderCompleted();
         hooks.RenderCompleted();
         Assert.True(state.IsFetching);
-        Assert.True(Volatile.Read(ref changed) > 0);
+        Assert.Equal(1, changed.Value);
 
-        var before = Volatile.Read(ref changed);
-        release.SetResult();
-        await run;
+        h.Release(0, "done");
+        await run.WaitAsync(HangGuard);
 
-        Assert.True(Volatile.Read(ref changed) > before);
+        Assert.Equal(2, changed.Value);
         Assert.Equal("done", hooks.Mutation("run", MutationOptions.Create<Req, string>(_ => Task.FromResult("x")).Build()).Data);
     }
 
@@ -358,17 +345,17 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var gate = Signal();
-        var changed = Signal();
-        using var handle = hooks.Attach(() => changed.TrySetResult());
+        var h = new GatedHandler<string>();
+        var first = new Gate();
+        var second = new Gate();
+        using var handle = hooks.Attach(() => (first.Task.IsCompleted ? second : first).Open());
 
-        var state = hooks.Query(Gated("slow", gate));
+        var state = hooks.Query(Gated("slow", h));
 
-        Assert.True(changed.Task.IsCompleted);
-        changed = Signal();
+        Assert.True(first.Task.IsCompleted);
 
-        gate.SetResult();
-        await changed.Task;
+        h.Release(0, "slow");
+        await second.Task.WaitAsync(HangGuard);
 
         Assert.True(state.IsResolved);
     }
@@ -378,17 +365,16 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var changed = 0;
-        using var handle = hooks.Attach(() => Interlocked.Increment(ref changed));
+        var changed = new Counter();
+        using var handle = hooks.Attach(() => changed.Increment());
 
         var state = hooks.Query(Opts("sync"));
 
         Assert.True(state.IsResolved);
-        Assert.True(changed > 0);
+        Assert.Equal(2, changed.Value);
 
-        var settled = changed;
         hooks.Query(Opts("sync"));
-        Assert.Equal(settled, changed);
+        Assert.Equal(2, changed.Value);
     }
 
     [Fact]
@@ -400,10 +386,10 @@ public class RevalHooksTests
 
         await state.ExecuteAsync(new Req("a"));
 
-        var changed = 0;
-        using var handle = hooks.Attach(() => changed++);
+        var changed = new Counter();
+        using var handle = hooks.Attach(() => changed.Increment());
 
-        Assert.Equal(1, changed);
+        Assert.Equal(1, changed.Value);
     }
 
     [Fact]
@@ -411,11 +397,11 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var changed = 0;
+        var changed = new Counter();
 
-        using var handle = hooks.Attach(() => changed++);
+        using var handle = hooks.Attach(() => changed.Increment());
 
-        Assert.Equal(0, changed);
+        Assert.Equal(0, changed.Value);
     }
 
     [Fact]
@@ -434,18 +420,23 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var gate = Signal();
-        var changed = 0;
+        var h = new GatedHandler<string>();
+        var changed = new Counter();
 
-        var handle = hooks.Attach(() => changed++);
-        var state = hooks.Query(Gated("late", gate));
+        var handle = hooks.Attach(() => changed.Increment());
+        var state = hooks.Query(Gated("late", h));
         handle.Dispose();
-        changed = 0;
+        var baseline = changed.Value;
 
-        gate.SetResult();
-        await TestUtils.WaitForStateAsync(state, s => s.IsResolved);
+        // Created before the release: it can only complete inside the final notification, and
+        // every handler subscribed earlier has run by then.
+        var settled = Signals.UntilAsync(state, s => s.IsResolved && s.IsIdle);
+        Assert.False(settled.IsCompleted);
+        h.Release(0, "late");
+        await settled;
 
-        Assert.Equal(0, changed);
+        Assert.Equal(baseline, changed.Value);
+        Assert.Equal("late", state.Data);
     }
 
     [Fact]
@@ -500,20 +491,23 @@ public class RevalHooksTests
     {
         using var client = NewClient();
         var hooks = client.CreateHooks();
-        var gate = Signal();
-        var changed = 0;
-        var handle = hooks.Attach(() => changed++);
+        var h = new GatedHandler<string>();
+        var changed = new Counter();
+        var handle = hooks.Attach(() => changed.Increment());
 
-        var state = hooks.Query(Gated("gone", gate));
+        var state = hooks.Query(Gated("gone", h));
         handle.Dispose();
-        changed = 0;
+        var baseline = changed.Value;
 
         hooks.RenderCompleted();
 
-        gate.SetResult();
-        await TestUtils.WaitForStateAsync(state, s => s.IsResolved);
+        var settled = Signals.UntilAsync(state, s => s.IsResolved && s.IsIdle);
+        Assert.False(settled.IsCompleted);
+        h.Release(0, "gone");
+        await settled;
 
-        Assert.Equal(0, changed);
+        Assert.Equal(baseline, changed.Value);
+        Assert.Equal("gone", state.Data);
     }
 
     [Fact]

@@ -8,24 +8,28 @@ using RevalQuery.Core.Hooks;
 
 namespace RevalQuery.Core.Tests;
 
+/// <remarks>
+/// Without persistence or a refetch interval nothing is deferred: enabling, invalidating and
+/// re-rendering decide whether to fetch before they return, so every assertion follows the call
+/// straight away. Each negative is paired with a positive on the same synchronous path.
+/// </remarks>
 public class EnabledToggleTests
 {
-    private static int _calls;
+    private static Func<QueryHandlerExecutionContext<ValueTuple<string>>, Task<string>> Counting(Counter calls) =>
+        _ =>
+        {
+            calls.Increment();
+            return Task.FromResult("data");
+        };
 
-    private static Task<string> CountingHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-    {
-        Interlocked.Increment(ref _calls);
-        return Task.FromResult("data");
-    }
-
-    private sealed class Probe(RevalClient client) : IDisposable
+    private sealed class Probe(RevalClient client, Counter calls) : IDisposable
     {
         private readonly RevalHooks _hooks = client.CreateHooks();
         private IDisposable? _handle;
 
         public IQueryState<string> Run(bool enabled, TimeSpan? staleTime = null)
         {
-            var options = QueryOptions.Create(ValueTuple.Create("toggle"), CountingHandler).Enabled(enabled);
+            var options = QueryOptions.Create(ValueTuple.Create("toggle"), Counting(calls)).Enabled(enabled);
             if (staleTime is not null) options.ConfigureFetch(f => f.StaleTime(staleTime.Value));
             _handle ??= _hooks.Attach(() => { });
             return _hooks.Query(options);
@@ -34,77 +38,68 @@ public class EnabledToggleTests
         public void Dispose() => _handle?.Dispose();
     }
 
-    [Fact]
-    public async Task Flipping_Enabled_On_Rerender_Enables_The_Query_And_Fetches()
-    {
-        _calls = 0;
-        var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new RevalClient(sp, new RevalQueryOptions());
+    private static RevalClient NewClient() =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
-        using var probe = new Probe(client);
+    [Fact]
+    public void Flipping_Enabled_On_Rerender_Enables_The_Query_And_Fetches()
+    {
+        var calls = new Counter();
+        using var client = NewClient();
+        using var probe = new Probe(client, calls);
 
         var first = probe.Run(enabled: false);
-        await Task.Delay(100);
         Assert.False(first.IsEnabled);
-        Assert.Equal(0, _calls);
+        Assert.Equal(0, calls.Value);
 
         var second = probe.Run(enabled: true);
-        await Task.Delay(200);
-
         Assert.Same(first, second);
         Assert.True(second.IsEnabled);
-        Assert.Equal(1, _calls);
+        Assert.Equal(1, calls.Value);
         Assert.Equal("data", second.Data);
     }
 
     [Fact]
-    public async Task Flipping_Enabled_Back_Off_Stops_The_Query_Fetching_Again()
+    public void Flipping_Enabled_Back_Off_Stops_The_Query_Fetching_Again()
     {
-        _calls = 0;
-        var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new RevalClient(sp, new RevalQueryOptions());
-
-        using var probe = new Probe(client);
+        var calls = new Counter();
+        using var client = NewClient();
+        using var probe = new Probe(client, calls);
 
         probe.Run(enabled: true);
-        await Task.Delay(200);
-        Assert.Equal(1, _calls);
+        Assert.Equal(1, calls.Value);
 
         var disabled = probe.Run(enabled: false);
-        await Task.Delay(50);
         Assert.False(disabled.IsEnabled);
 
         client.Invalidate(ValueTuple.Create("toggle"));
-        await Task.Delay(200);
-        Assert.Equal(1, _calls);
+        Assert.Equal(1, calls.Value);
     }
 
     [Fact]
-    public async Task A_Rerender_Applies_A_Rebuilt_StaleTime()
+    public void A_Rerender_Applies_A_Rebuilt_StaleTime()
     {
-        _calls = 0;
-        var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new RevalClient(sp, new RevalQueryOptions());
-
-        using var probe = new Probe(client);
+        var calls = new Counter();
+        using var client = NewClient();
+        using var probe = new Probe(client, calls);
 
         probe.Run(enabled: false, staleTime: TimeSpan.FromHours(1));
-        await Task.Delay(50);
-        Assert.Equal(0, _calls);
+        Assert.Equal(0, calls.Value);
 
         probe.Run(enabled: true, staleTime: TimeSpan.FromHours(1));
-        await Task.Delay(200);
-        Assert.Equal(1, _calls);
+        Assert.Equal(1, calls.Value);
 
-        using var other = new Probe(client);
+        using var other = new Probe(client, calls);
         other.Run(enabled: true, staleTime: TimeSpan.FromHours(1));
-        await Task.Delay(200);
-        Assert.Equal(1, _calls);
+        Assert.Equal(1, calls.Value);
 
         probe.Run(enabled: true, staleTime: TimeSpan.Zero);
-        using var third = new Probe(client);
+        Assert.Equal(1, calls.Value);
+
+        // Relies on the clock having ticked since the fetch: StaleTime zero counts an age of
+        // exactly zero as fresh (L1). Under a fake clock this needs an Advance first.
+        using var third = new Probe(client, calls);
         third.Run(enabled: true, staleTime: TimeSpan.Zero);
-        await Task.Delay(200);
-        Assert.Equal(2, _calls);
+        Assert.Equal(2, calls.Value);
     }
 }
