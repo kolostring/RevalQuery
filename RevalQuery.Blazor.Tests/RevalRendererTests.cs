@@ -11,9 +11,20 @@ public class RevalRendererTests : TestContext
 {
     private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private readonly List<Fx> _fixtures = [];
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            foreach (var fx in _fixtures) fx.Dispose();
+
+        base.Dispose(disposing);
+    }
+
     private Fx NewFx()
     {
         var fx = new Fx(Services);
+        _fixtures.Add(fx);
         Services.AddSingleton(fx);
         Services.AddSingleton(fx.Client);
         Services.AddTransient(_ => fx.Client.CreateHooks());
