@@ -2,7 +2,7 @@ using System.Collections;
 using System.Reflection;
 using Microsoft.AspNetCore.Components;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Blazor.Tests;
 
 internal static class PersistentStateHarness
 {

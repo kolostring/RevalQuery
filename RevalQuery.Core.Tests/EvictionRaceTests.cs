@@ -8,7 +8,7 @@ using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 [CollectionDefinition("stress", DisableParallelization = true)]
 public sealed class StressCollection;

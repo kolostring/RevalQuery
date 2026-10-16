@@ -7,7 +7,7 @@ using RevalQuery.Core.Plugin;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class RevalClientTests
 {

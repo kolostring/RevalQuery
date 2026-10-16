@@ -3,7 +3,7 @@ using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class ReviewOf45161b7Tests
 {

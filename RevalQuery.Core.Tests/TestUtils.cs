@@ -1,6 +1,6 @@
 ﻿using RevalQuery.Core.Abstractions.Query;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public static class TestUtils
 {

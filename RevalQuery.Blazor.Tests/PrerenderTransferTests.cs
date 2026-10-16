@@ -8,7 +8,7 @@ using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Blazor.Tests;
 
 public sealed record Widget(int Id, string Name);
 
@@ -112,7 +112,7 @@ public class PrerenderTransferTests
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
 
-        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
+        await TestUtils.UntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
 
         Assert.Equal(1, _clientCalls);
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
@@ -169,7 +169,7 @@ public class PrerenderTransferTests
 
         var observer = client.Subscribe(ClientQuery("widget", TimeSpan.FromMinutes(5)), () => { });
 
-        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
+        await TestUtils.UntilAsync(() => Volatile.Read(ref _clientCalls) > 0);
 
         Assert.Equal(1, _clientCalls);
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
@@ -200,7 +200,7 @@ public class PrerenderTransferTests
 
         var observer = client.Subscribe(ClientQuery("widget"), () => { });
 
-        await TestUtils.WaitUntilAsync(() => observer.Query.Data is not null, timeoutMs: 15_000);
+        await TestUtils.UntilAsync(() => observer.Query.Data is not null, timeoutMs: 15_000);
 
         Assert.Equal(1, _clientCalls);
         Assert.Equal(new Widget(9, "from client"), observer.Query.Data);

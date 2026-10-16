@@ -7,7 +7,7 @@ using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Hooks;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class RevalHooksTests
 {

@@ -5,7 +5,7 @@ using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class ReviewOfA700df3Tests
 {

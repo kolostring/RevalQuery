@@ -4,7 +4,7 @@ using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class StaticQueryTests
 {

@@ -5,7 +5,7 @@ using RevalQuery.Core.Mutation;
 using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class HandlerCancellationTests
 {

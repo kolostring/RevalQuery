@@ -5,7 +5,7 @@ using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class QueryAsyncDiscardedTests
 {

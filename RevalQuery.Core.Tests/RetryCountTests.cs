@@ -1,7 +1,7 @@
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Execution;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class RetryCountTests
 {

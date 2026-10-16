@@ -9,7 +9,7 @@ using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
 
-namespace RevalQuery.Tests;
+namespace RevalQuery.Core.Tests;
 
 public class PersistenceTests
 {

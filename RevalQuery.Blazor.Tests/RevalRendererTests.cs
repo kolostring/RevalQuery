@@ -382,9 +382,9 @@ public class RevalRendererTests : TestContext
 
 internal static class TestUtils
 {
-    public static async Task UntilAsync(Func<bool> condition)
+    public static async Task UntilAsync(Func<bool> condition, int timeoutMs = 10_000)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
         while (!condition())
         {
             cts.Token.ThrowIfCancellationRequested();

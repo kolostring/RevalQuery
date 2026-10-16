@@ -24,7 +24,7 @@ no longer names it.
 
 Today that cannot happen, because `CanFetch` is true throughout the restore: the
 invalidation fetches immediately and `TryRestore` then declines on `_hasSettled`.
-`RevalQuery.Tests/InvalidateDuringRestoreTests.cs` pins exactly this. If you are here
+`RevalQuery.Core.Tests/InvalidateDuringRestoreTests.cs` pins exactly this. If you are here
 because that test failed, something started reporting `Fetching` during a restore.
 
 ## Considered options
