@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Mutation.Execution;
+using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 
@@ -155,4 +157,36 @@ public class GatedHandlerTests
         handler.Release(0, "late");
         Assert.Equal("late", await call.WaitAsync(HangGuard));
     }
+
+    [Fact]
+    public async Task A_Mutation_Call_Is_Gated_Like_A_Query_Call()
+    {
+        var handler = new GatedHandler<string>();
+        using var client = new RevalClient(Services, new RevalQueryOptions(), new ManualEviction());
+        var observer = client.CreateMutation(MutationOptions.Create<Req, string>(handler.Handle).Build(), () => { });
+
+        var run = observer.State.ExecuteAsync(new Req("a"));
+
+        await handler.Started(0).WaitAsync(HangGuard);
+        Assert.False(run.IsCompleted);
+
+        handler.Release(0, "done");
+        await run.WaitAsync(HangGuard);
+        Assert.Equal("done", observer.State.Data);
+    }
+
+    [Fact]
+    public async Task A_Mutation_Call_Exposes_The_Token_Its_Context_Carries()
+    {
+        var handler = new GatedHandler<string>();
+        using var cts = new CancellationTokenSource();
+
+        _ = handler.Handle(new MutationHandlerExecutionContext<Req>
+            { Params = new Req("a"), ServiceProvider = Services, CancellationToken = cts.Token });
+
+        await handler.Started(0).WaitAsync(HangGuard);
+        Assert.Equal(cts.Token, handler.Token(0));
+    }
+
+    private sealed record Req(string Name);
 }

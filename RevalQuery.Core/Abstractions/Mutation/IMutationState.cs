@@ -2,12 +2,12 @@ namespace RevalQuery.Core.Abstractions.Mutation;
 
 /// <summary>
 /// Interface for mutation state management.
-/// Parallels IQueryState but for mutation (write) operations.
+/// Parallels IQueryState but for mutation (write) operations, with the same member names.
 /// </summary>
 public interface IMutationState
 {
     /// <summary>
-    /// Raised when mutation state changes.
+    /// Raised when mutation status changes.
     /// </summary>
     event Action? OnChanged;
 
@@ -22,17 +22,18 @@ public interface IMutationState
     bool IsFetching { get; }
 
     /// <summary>
-    /// True when mutation failed (MutationStatus.Exception).
+    /// True when mutation completed successfully.
     /// </summary>
-    bool IsError { get; }
+    bool IsResolved { get; }
 
     /// <summary>
-    /// True when mutation completed successfully (MutationStatus.Resolved).
+    /// True when mutation failed.
     /// </summary>
-    bool IsSuccess { get; }
+    bool IsException { get; }
 
     /// <summary>
-    /// Resets the mutation state to Idle, clearing data and errors.
+    /// Resets the mutation state to Idle.
+    /// Cancels any running mutations, clears Data and Exception.
     /// Useful for "reset and retry" scenarios.
     /// </summary>
     void Reset();
@@ -52,5 +53,5 @@ public interface IMutationState<out TResponse> : IMutationState
     /// <summary>
     /// The exception if the mutation failed.
     /// </summary>
-    Exception? Error { get; }
+    Exception? Exception { get; }
 }

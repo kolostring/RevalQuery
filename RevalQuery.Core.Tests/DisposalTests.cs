@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Query.Options;
@@ -56,7 +56,7 @@ public class DisposalTests
     {
         var client = NewClient();
         var observer = client.Subscribe(Options("f").Build(), () => { });
-        await Task.Delay(100);
+        Assert.True(observer.Query.IsResolved);
 
         client.Dispose();
 
@@ -64,5 +64,25 @@ public class DisposalTests
         await client.CancelAsync("f");
         client.Invalidate("f");
         client.Dispose();
+    }
+
+    [Fact]
+    public async Task Teardown_After_Disposal_With_A_Fetch_In_Flight_Is_Silent()
+    {
+        var handler = new GatedHandler<string>();
+        var client = NewClient();
+        var observer = client.Subscribe(QueryOptions.Create("g", handler.Handle).Build(), () => { });
+        Assert.Equal(1, handler.Calls);
+
+        client.Dispose();
+        await handler.Cancelled(0).WaitAsync(HangGuard);
+
+        observer.Dispose();
+        await client.CancelAsync("g").WaitAsync(HangGuard);
+        client.Invalidate("g");
+        client.Dispose();
+
+        Assert.True(observer.Query.IsPending);
+        Assert.Equal(1, handler.Calls);
     }
 }

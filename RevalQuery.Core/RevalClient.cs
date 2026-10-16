@@ -25,7 +25,6 @@ namespace RevalQuery.Core;
 /// </remarks>
 public sealed class RevalClient : IDisposable
 {
-    private const int MaxRunAttempts = 3;
 
     private readonly object _gate = new();
     private readonly QueryRegistry _registry = new();
@@ -229,21 +228,21 @@ public sealed class RevalClient : IDisposable
     {
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        var (state, _) = PrepareRun(options);
+        var (state, worker) = ClaimWorker(options);
 
         if (cancellationToken.IsCancellationRequested)
         {
-            ReleaseIfUnobserved(state);
+            DropClaim(state, worker);
             cancellationToken.ThrowIfCancellationRequested();
         }
 
         if (!state.IsStale(_defaultOptions.FetchOptions.Apply(options.FetchOptions)))
         {
-            ReleaseIfUnobserved(state);
+            DropClaim(state, worker);
             return state.Data!;
         }
 
-        var (ran, outcome) = await RunAndReleaseAsync(options).WaitAsync(cancellationToken);
+        var (ran, outcome) = await RunClaimedAndReleaseAsync(state, worker).WaitAsync(cancellationToken);
 
         if (outcome == FetchOutcome.Cancelled)
         {
@@ -546,40 +545,47 @@ public sealed class RevalClient : IDisposable
         ObjectDisposedException.ThrowIf(_isDisposed, this);
     }
 
-    private (QueryState<TKey, TRes> State, QueryWorker<TKey, TRes> Worker) PrepareRun<TKey, TRes>(
+    private (QueryState<TKey, TRes> State, QueryWorker<TKey, TRes> Worker) ClaimWorker<TKey, TRes>(
         QueryOptions<TKey, TRes> options) where TKey : ITuple
     {
         lock (_gate)
         {
             var state = GetOrCreateQueryLocked(options);
-            return (state, GetOrCreateWorker(state));
+            var worker = GetOrCreateWorker(state);
+
+            worker.Claim();
+
+            return (state, worker);
         }
     }
 
-    private async Task<(QueryState<TKey, TRes> State, FetchOutcome Outcome)> RunAndReleaseAsync<TKey, TRes>(
-        QueryOptions<TKey, TRes> options) where TKey : ITuple
+    private void DropClaim<TKey, TRes>(QueryState<TKey, TRes> state, QueryWorker<TKey, TRes> worker)
+        where TKey : ITuple
     {
-        for (var attempt = 0; attempt < MaxRunAttempts; attempt++)
+        worker.Unclaim();
+        ReleaseIfUnobserved(state);
+    }
+
+    private async Task<(QueryState<TKey, TRes> State, FetchOutcome Outcome)> RunClaimedAndReleaseAsync<TKey, TRes>(
+        QueryState<TKey, TRes> state,
+        QueryWorker<TKey, TRes> worker) where TKey : ITuple
+    {
+        FetchOutcome outcome;
+
+        try
         {
-            var (state, worker) = PrepareRun(options);
-
-            var outcome = FetchOutcome.NotRun;
-
-            try
-            {
-                outcome = await worker.RunAsync();
-            }
-            finally
-            {
-                ReleaseIfUnobserved(state);
-            }
-
-            if (outcome != FetchOutcome.NotRun) return (state, outcome);
+            outcome = await worker.RunClaimedAsync();
+        }
+        finally
+        {
+            ReleaseIfUnobserved(state);
         }
 
-        throw new InvalidOperationException(
-            $"Query {DescribeKey(options.Key)} could not be run: its worker was released " +
-            $"{MaxRunAttempts} times while the fetch was starting.");
+        // A claimed worker is never released, so a run that did not happen means the client
+        // was disposed under it.
+        if (outcome == FetchOutcome.NotRun) throw new ObjectDisposedException(GetType().FullName);
+
+        return (state, outcome);
     }
 
     private QueryWorker<TKey, TRes> GetOrCreateWorker<TKey, TRes>(QueryState<TKey, TRes> state)
@@ -594,7 +600,10 @@ public sealed class RevalClient : IDisposable
         var worker = new QueryWorker<TKey, TRes>(
             _defaultOptions, _serviceProvider, state, _persistence);
 
-        worker.OnReleaseDue += () => DisposeWorker(state.Key);
+        worker.OnReleaseDue += () =>
+        {
+            if (DisposeWorker(state.Key)) _evictionPolicy.RegisterForEviction(state.Key, state.CacheOptions);
+        };
         node.Worker = worker;
 
         return worker;
@@ -618,24 +627,26 @@ public sealed class RevalClient : IDisposable
         _evictionPolicy.RegisterForEviction(state.Key, state.CacheOptions);
     }
 
-    private void DisposeWorker(ITuple key)
+    /// <returns>True when a worker was released, false when there was none or it is held.</returns>
+    private bool DisposeWorker(ITuple key)
     {
         IQueryWorker? worker;
 
         lock (_gate)
         {
             var node = _registry.PeekNode(key);
-            if (node is null || node.State?.HasObservers == true) return;
+            if (node is null || node.State?.HasObservers == true) return false;
 
             worker = node.Worker;
-            if (worker is null) return;
+            if (worker is null) return false;
 
-            if (!worker.TryRelease()) return;
+            if (!worker.TryRelease()) return false;
 
             node.Worker = null;
         }
 
         worker.Dispose();
+        return true;
     }
 
     private void HandleEviction(ITuple key)
@@ -648,12 +659,16 @@ public sealed class RevalClient : IDisposable
             if (node?.State is null || node.State.HasObservers) return;
 
             worker = node.Worker;
+
+            // A held worker is not ours to take. TryRelease remembers the refusal, and the
+            // worker announces it when the hold ends, which registers the query again.
+            if (worker is not null && !worker.TryRelease()) return;
+
             node.Worker = null;
             node.State = null;
             _registry.PruneNode(key);
         }
 
-        worker?.CancelCurrentFetch();
         worker?.Dispose();
     }
 
