@@ -77,7 +77,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         _persistence = persistence;
 
         Query = query;
-        _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
+        _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy(revalQueryOptions.TimeProvider);
 
         Query.OnFirstSubscriberAdded += StartPolling;
         Query.OnLastSubscriberRemoved += PausePolling;
