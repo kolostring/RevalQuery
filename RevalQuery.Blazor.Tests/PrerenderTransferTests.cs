@@ -172,6 +172,34 @@ public class PrerenderTransferTests
     }
 
     [Fact]
+    public async Task A_Corrupt_Outer_Payload_Counts_As_Nothing_Arrived()
+    {
+        _clientCalls = 0;
+
+        var corrupt = new Dictionary<string, byte[]>
+        {
+            [TransferStateKey()] = System.Text.Encoding.UTF8.GetBytes("{ this is not json"),
+        };
+
+        using var clientState = await PersistentStateHarness.CreateFromAsync(corrupt);
+        using var clientHost = Host(clientState.State);
+
+        var loaded = await clientHost.Transfer.LoadAsync<Widget>(ValueTuple.Create("widget"));
+
+        Assert.Null(loaded);
+
+        var observer = clientHost.Client.Subscribe(ClientQuery("widget"), () => { });
+        await clientHost.Client.FindQuery<Widget, ValueTuple<string>>(ValueTuple.Create("widget"))!.RestoreCompleted.WaitAsync(TimeSpan.FromSeconds(30));
+
+        await RevalQuery.TestKit.Signals.UntilAsync(observer.Query, s => s.IsIdle && s.Data is not null);
+
+        Assert.Equal(new Widget(9, "from client"), observer.Query.Data);
+        Assert.Equal(1, _clientCalls);
+
+        observer.Dispose();
+    }
+
+    [Fact]
     public async Task Stale_Transferred_Data_Is_Shown_And_Then_Refetched()
     {
         _serverCalls = 0;
