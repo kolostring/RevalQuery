@@ -120,12 +120,15 @@ public class RestoreBoundaryTests
         var (state, watcher) = Watch(client, options);
         await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
+        Assert.Equal(0, calls.Value);
+
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
         await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, calls.Value);
         Assert.Equal("from-disk", state.Data);
         Assert.False(state.IsRestoring);
+        Assert.True(state.IsIdle);
 
         await watcher.FirstFrameAfterRestore.Task.WaitAsync(TestContext.Current.CancellationToken);
 
