@@ -7,7 +7,7 @@ namespace RevalQuery.Core.Tests;
 
 public class OrphanedFetchTests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task CancelAsync_Reaches_A_Fetch_Left_Running_By_A_Released_Worker()
     {
         using var client = NewClient();
@@ -24,7 +24,7 @@ public class OrphanedFetchTests
             Assert.False(cancelling.IsCompleted);
 
             handler.Release(0, "from-network");
-            await cancelling.WaitAsync(HangGuard);
+            await cancelling.WaitAsync(TestContext.Current.CancellationToken);
 
             Assert.Null(client.FindQuery<string>("orphan")!.Data);
         }
@@ -39,7 +39,7 @@ public class OrphanedFetchTests
     /// through the released worker or a new one, would show in <c>Calls</c> before
     /// <c>QueryAsync</c> returns. If the handler call ever moves behind a yield, revisit this test.
     /// </remarks>
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Released_Worker_Does_Not_Let_A_Second_Fetch_Run_Alongside_Its_Own()
     {
         using var client = NewClient();
@@ -51,12 +51,12 @@ public class OrphanedFetchTests
 
         observer.Dispose();
 
-        var fetch = client.QueryAsync(options);
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
         Assert.Equal(1, handler.Calls);
         Assert.False(fetch.IsCompleted);
 
         handler.Release(0, "from-network");
-        await fetch.WaitAsync(HangGuard);
+        await fetch.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, handler.Calls);
     }

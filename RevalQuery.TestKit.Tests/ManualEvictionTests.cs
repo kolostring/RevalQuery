@@ -10,7 +10,7 @@ public class ManualEvictionTests
     private static QueryOptions<ValueTuple<string>, string> Item(string key) =>
         QueryOptions.Create(key, _ => Task.FromResult("data"));
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Losing_The_Last_Observer_Registers_The_Key()
     {
         var eviction = new ManualEviction();
@@ -23,7 +23,7 @@ public class ManualEvictionTests
         Assert.Equal([ValueTuple.Create("a")], eviction.Registered);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Gaining_An_Observer_Cancels_The_Key()
     {
         var eviction = new ManualEviction();
@@ -35,7 +35,7 @@ public class ManualEvictionTests
         Assert.Contains(ValueTuple.Create("a"), eviction.Cancelled);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Evicting_Removes_The_Query_Before_It_Returns()
     {
         var eviction = new ManualEviction();
@@ -48,7 +48,7 @@ public class ManualEvictionTests
         Assert.Null(client.FindQuery("a"));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Evicting_Raises_The_Event_On_The_Calling_Thread()
     {
         var eviction = new ManualEviction();

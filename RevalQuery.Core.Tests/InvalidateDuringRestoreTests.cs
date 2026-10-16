@@ -15,7 +15,7 @@ public class InvalidateDuringRestoreTests
     private PersistedQuery<string> Fresh => new("from-disk", new QueryFreshness(_clock.GetUtcNow()));
 
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task An_Invalidation_During_A_Restore_Survives_When_Nothing_Can_Fetch_Yet()
     {
         var calls = new Counter();
@@ -33,12 +33,12 @@ public class InvalidateDuringRestoreTests
         client.GetOrCreateQuery(options);
         var state = client.FindQuery<string>("unobserved")!;
 
-        await persistence.LoadStarted.WaitAsync(HangGuard);
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         client.Invalidate("unobserved");
 
         persistence.ReleaseLoad(Fresh);
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(0, calls.Value);
         Assert.True(state.IsInvalidated);
@@ -49,7 +49,7 @@ public class InvalidateDuringRestoreTests
         Assert.Equal("from-network", observer.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Invalidating_While_A_Restore_Is_In_Flight_Still_Refetches()
     {
         var calls = new Counter();
@@ -67,7 +67,7 @@ public class InvalidateDuringRestoreTests
         using var observer = client.Subscribe(options, () => { });
         var state = client.FindQuery<string>("gated")!;
 
-        await persistence.LoadStarted.WaitAsync(HangGuard);
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         client.Invalidate("gated");
 
@@ -76,7 +76,7 @@ public class InvalidateDuringRestoreTests
         Assert.Equal("from-network", state.Data);
 
         persistence.ReleaseLoad(Fresh);
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("from-network", state.Data);
         Assert.Equal(1, calls.Value);

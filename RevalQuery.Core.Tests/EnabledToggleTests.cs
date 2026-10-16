@@ -44,7 +44,7 @@ public class EnabledToggleTests
     private RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock });
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Flipping_Enabled_On_Rerender_Enables_The_Query_And_Fetches()
     {
         var calls = new Counter();
@@ -62,7 +62,7 @@ public class EnabledToggleTests
         Assert.Equal("data", second.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Flipping_Enabled_Back_Off_Stops_The_Query_Fetching_Again()
     {
         var calls = new Counter();
@@ -79,7 +79,7 @@ public class EnabledToggleTests
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Rerender_Applies_A_Rebuilt_StaleTime()
     {
         var calls = new Counter();

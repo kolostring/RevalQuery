@@ -11,8 +11,9 @@ namespace RevalQuery.TestKit;
 /// <para>A wait subscribes to <c>OnChanged</c> first, then checks its condition, then checks again
 /// on every change, so it cannot miss a change raised between subscribing and checking. It
 /// resumes on the thread pool, never inside the notification that satisfied it, and it fails
-/// with a <see cref="TimeoutException"/> at <see cref="Kit.HangGuard"/> rather than returning
-/// as though the condition held.</para>
+/// with an <see cref="OperationCanceledException"/> when the token it is given is cancelled,
+/// rather than returning as though the condition held. Pass the test's
+/// <c>TestContext.Current.CancellationToken</c>, so a test-level timeout ends the wait.</para>
 /// <para><c>OnChanged</c> handlers run in the order they subscribed. Create the wait
 /// <b>before</b> releasing the gate that leads to the change: a wait created afterwards may
 /// subscribe too late to see a state the query passes through, and its first check sees only
@@ -26,10 +27,11 @@ public static class Signals
     /// <typeparam name="TState">The query state's type.</typeparam>
     /// <param name="state">The query state to watch.</param>
     /// <param name="condition">What the test waits for. Checked on the thread raising each change.</param>
-    /// <exception cref="TimeoutException">The condition did not hold within the hang guard.</exception>
-    public static Task UntilAsync<TState>(TState state, Func<TState, bool> condition)
+    /// <param name="cancellationToken">Ends the wait; pass the test's cancellation token.</param>
+    /// <exception cref="OperationCanceledException">The token was cancelled before the condition held.</exception>
+    public static Task UntilAsync<TState>(TState state, Func<TState, bool> condition, CancellationToken cancellationToken = default)
         where TState : IObservableQueryState =>
-        UntilAsync(state, condition, Kit.HangGuard);
+        WaitAsync(h => state.OnChanged += h, h => state.OnChanged -= h, () => condition(state), cancellationToken);
 
     /// <summary>
     /// Completes once <paramref name="condition"/> holds for the mutation <paramref name="state"/>.
@@ -37,17 +39,15 @@ public static class Signals
     /// <typeparam name="TResponse">The mutation's response type.</typeparam>
     /// <param name="state">The mutation state to watch.</param>
     /// <param name="condition">What the test waits for. Checked on the thread raising each change.</param>
-    /// <exception cref="TimeoutException">The condition did not hold within the hang guard.</exception>
+    /// <param name="cancellationToken">Ends the wait; pass the test's cancellation token.</param>
+    /// <exception cref="OperationCanceledException">The token was cancelled before the condition held.</exception>
     public static Task UntilAsync<TResponse>(
         IMutationState<TResponse> state,
-        Func<IMutationState<TResponse>, bool> condition) =>
-        WaitAsync(h => state.OnChanged += h, h => state.OnChanged -= h, () => condition(state), Kit.HangGuard);
+        Func<IMutationState<TResponse>, bool> condition,
+        CancellationToken cancellationToken = default) =>
+        WaitAsync(h => state.OnChanged += h, h => state.OnChanged -= h, () => condition(state), cancellationToken);
 
-    internal static Task UntilAsync<TState>(TState state, Func<TState, bool> condition, TimeSpan guard)
-        where TState : IObservableQueryState =>
-        WaitAsync(h => state.OnChanged += h, h => state.OnChanged -= h, () => condition(state), guard);
-
-    private static async Task WaitAsync(Action<Action> subscribe, Action<Action> unsubscribe, Func<bool> condition, TimeSpan guard)
+    private static async Task WaitAsync(Action<Action> subscribe, Action<Action> unsubscribe, Func<bool> condition, CancellationToken cancellationToken)
     {
         var met = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Action check = () =>
@@ -66,11 +66,7 @@ public static class Signals
         try
         {
             check();
-            await met.Task.WaitAsync(guard);
-        }
-        catch (TimeoutException)
-        {
-            throw new TimeoutException($"The condition did not hold within the hang guard ({guard}).");
+            await met.Task.WaitAsync(cancellationToken);
         }
         finally
         {

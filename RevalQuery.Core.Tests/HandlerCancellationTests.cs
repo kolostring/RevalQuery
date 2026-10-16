@@ -14,7 +14,7 @@ public class HandlerCancellationTests
     private static RevalClient NewClient() =>
         new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Query_Handler_Throwing_TaskCanceledException_Is_An_Error()
     {
         using var client = NewClient();
@@ -26,7 +26,7 @@ public class HandlerCancellationTests
             return Task.FromException<string>(new TaskCanceledException("timed out"));
         }).ConfigureRetry(retry => retry.Retry(2, _ => TimeSpan.Zero)).Build();
 
-        await Assert.ThrowsAsync<TaskCanceledException>(() => client.QueryAsync(options));
+        await Assert.ThrowsAsync<TaskCanceledException>(() => client.QueryAsync(options, TestContext.Current.CancellationToken));
 
         var query = client.FindQuery<string>("timeout")!;
         Assert.True(query.IsException);
@@ -34,7 +34,7 @@ public class HandlerCancellationTests
         Assert.Equal(3, calls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Cancelled_Query_Is_Not_An_Error()
     {
         using var client = NewClient();
@@ -45,14 +45,14 @@ public class HandlerCancellationTests
         var observer = client.Subscribe(options, () => { });
         Assert.Equal(1, handler.Calls);
 
-        await client.CancelAsync("genuine").WaitAsync(HangGuard);
+        await client.CancelAsync("genuine").WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(observer.Query.IsIdle);
         Assert.False(observer.Query.IsException);
         Assert.Null(observer.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Mutation_Handler_Throwing_TaskCanceledException_Is_An_Error()
     {
         using var client = NewClient();
@@ -67,7 +67,7 @@ public class HandlerCancellationTests
                 .Build(),
             () => { });
 
-        await observer.State.ExecuteAsync(new Req("a"));
+        await observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
 
         Assert.Equal(MutationStatus.Exception, observer.State.Status);
         Assert.IsType<TaskCanceledException>(observer.State.Exception);
@@ -75,7 +75,7 @@ public class HandlerCancellationTests
         Assert.Equal(1, settled);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Mutation_Cancelled_By_The_Callers_Token_Restores_The_Status_And_Throws()
     {
         using var client = NewClient();
@@ -97,20 +97,20 @@ public class HandlerCancellationTests
 
         using var cts = new CancellationTokenSource();
         var run = observer.State.ExecuteAsync(new Req("a"), cts.Token);
-        await started.Task.WaitAsync(HangGuard);
+        await started.Task.WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal(MutationStatus.Fetching, observer.State.Status);
 
         var before = notifications;
         await cts.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(HangGuard));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(MutationStatus.Idle, observer.State.Status);
         Assert.Equal(0, settled);
         Assert.True(notifications > before);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Cancelling_The_Latest_Run_While_An_Older_One_Is_In_Flight_Does_Not_Stay_Fetching()
     {
         using var client = NewClient();
@@ -129,17 +129,17 @@ public class HandlerCancellationTests
                 .Build(),
             () => { });
 
-        var older = observer.State.ExecuteAsync(new Req("first"));
+        var older = observer.State.ExecuteAsync(new Req("first"), TestContext.Current.CancellationToken);
 
         using var cts = new CancellationTokenSource();
         var latest = observer.State.ExecuteAsync(new Req("second"), cts.Token);
-        await secondStarted.Task.WaitAsync(HangGuard);
+        await secondStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         await cts.CancelAsync();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => latest.WaitAsync(HangGuard));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => latest.WaitAsync(TestContext.Current.CancellationToken));
 
         first.SetResult("stale");
-        await older.WaitAsync(HangGuard);
+        await older.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEqual(MutationStatus.Fetching, observer.State.Status);
     }

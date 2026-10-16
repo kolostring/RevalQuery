@@ -2,13 +2,13 @@ namespace RevalQuery.TestKit.Tests;
 
 public class DiscardTests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Discarding_A_Faulted_Task_Does_Not_Throw()
     {
         Discard(Task.FromException<int>(new InvalidOperationException("boom")));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Discarding_A_Task_That_Faults_Later_Does_Not_Throw()
     {
         var gate = new Gate();
@@ -16,7 +16,7 @@ public class DiscardTests
         Discard(Faulting(gate));
         gate.Open();
 
-        await gate.Task.WaitAsync(HangGuard);
+        await gate.Task.WaitAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<int> Faulting(Gate gate)

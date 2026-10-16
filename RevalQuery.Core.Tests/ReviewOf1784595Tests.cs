@@ -9,7 +9,7 @@ namespace RevalQuery.Core.Tests;
 
 public class ReviewOf1784595Tests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Stopping_The_Collector_After_Disposing_It_Waits_For_The_Running_Sweep()
     {
         var time = new FakeTimeProvider();
@@ -23,12 +23,12 @@ public class ReviewOf1784595Tests
         collector.OnEvictionRequired += _ =>
         {
             sweepStarted.Open();
-            releaseSweep.Task.Wait(HangGuard);
+            releaseSweep.Task.Wait(TestContext.Current.CancellationToken);
         };
         collector.RegisterForEviction(ValueTuple.Create("gc"), null);
 
-        var sweep = Task.Run(() => time.Advance(TimeSpan.FromSeconds(1)));
-        await sweepStarted.Task.WaitAsync(HangGuard);
+        var sweep = Task.Run(() => time.Advance(TimeSpan.FromSeconds(1)), TestContext.Current.CancellationToken);
+        await sweepStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         collector.Dispose();
         var stop = collector.StopAsync();
@@ -36,15 +36,15 @@ public class ReviewOf1784595Tests
         Assert.False(stop.IsCompleted);
 
         releaseSweep.Open();
-        await stop.WaitAsync(HangGuard);
-        await sweep.WaitAsync(HangGuard);
+        await stop.WaitAsync(TestContext.Current.CancellationToken);
+        await sweep.WaitAsync(TestContext.Current.CancellationToken);
 
         collector.Dispose();
         await collector.StopAsync();
         await collector.DisposeAsync();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Disposing_The_Collector_Async_After_Disposing_It_Waits_For_The_Running_Sweep()
     {
         var time = new FakeTimeProvider();
@@ -58,12 +58,12 @@ public class ReviewOf1784595Tests
         collector.OnEvictionRequired += _ =>
         {
             sweepStarted.Open();
-            releaseSweep.Task.Wait(HangGuard);
+            releaseSweep.Task.Wait(TestContext.Current.CancellationToken);
         };
         collector.RegisterForEviction(ValueTuple.Create("gc"), null);
 
-        var sweep = Task.Run(() => time.Advance(TimeSpan.FromSeconds(1)));
-        await sweepStarted.Task.WaitAsync(HangGuard);
+        var sweep = Task.Run(() => time.Advance(TimeSpan.FromSeconds(1)), TestContext.Current.CancellationToken);
+        await sweepStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         collector.Dispose();
         var stop = collector.DisposeAsync().AsTask();
@@ -71,11 +71,11 @@ public class ReviewOf1784595Tests
         Assert.False(stop.IsCompleted);
 
         releaseSweep.Open();
-        await stop.WaitAsync(HangGuard);
-        await sweep.WaitAsync(HangGuard);
+        await stop.WaitAsync(TestContext.Current.CancellationToken);
+        await sweep.WaitAsync(TestContext.Current.CancellationToken);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Negative_Retry_Delay_Does_Not_Replace_The_Handler_Failure()
     {
         var policy = new ExponentialBackoffRetryPolicy();
@@ -88,7 +88,7 @@ public class ReviewOf1784595Tests
                     Interlocked.Increment(ref calls);
                     throw new InvalidOperationException("the real failure");
                 },
-                new CoreRetryOptions(2, _ => TimeSpan.FromSeconds(-1))));
+                new CoreRetryOptions(2, _ => TimeSpan.FromSeconds(-1)), TestContext.Current.CancellationToken));
 
         Assert.Equal("the real failure", thrown.Message);
         Assert.Equal(3, calls);

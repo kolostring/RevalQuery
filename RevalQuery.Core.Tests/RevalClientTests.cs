@@ -31,7 +31,7 @@ public class RevalClientTests : IDisposable
 
     public void Dispose() => _client.Dispose();
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Subscribe_TriggersHandler_And_ResolvesData()
     {
         var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
@@ -40,7 +40,7 @@ public class RevalClientTests : IDisposable
         Assert.True(observer.Query.IsIdle);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Invalidate_Triggers_Refetch()
     {
         var calls = new Counter();
@@ -54,7 +54,7 @@ public class RevalClientTests : IDisposable
         Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Hierarchical_Invalidation_Works()
     {
         var users = new Counter();
@@ -81,7 +81,7 @@ public class RevalClientTests : IDisposable
         Assert.Equal([2, 3, 2, 1], new[] { users.Value, user1.Value, user2.Value, unrelated.Value });
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task GarbageCollection_Removes_State_After_TTL()
     {
         var options = new RevalQueryOptions();
@@ -99,7 +99,7 @@ public class RevalClientTests : IDisposable
         Assert.Null(client.FindQuery(Key));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Resubscribe_Cancels_Eviction()
     {
         var options = new RevalQueryOptions();
@@ -121,7 +121,7 @@ public class RevalClientTests : IDisposable
         Assert.NotNull(client.FindQuery(Key));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task RevalClient_Cancel_AbortsFetch()
     {
         var handler = new GatedHandler<string>();
@@ -131,7 +131,7 @@ public class RevalClientTests : IDisposable
         Assert.Equal(1, handler.Calls);
         Assert.True(observer.Query.IsFetching);
 
-        await _client.CancelAsync(Key).WaitAsync(HangGuard);
+        await _client.CancelAsync(Key).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(handler.Cancelled(0).IsCompleted);
         Assert.True(observer.Query.IsIdle);
@@ -141,7 +141,7 @@ public class RevalClientTests : IDisposable
         Assert.Equal(1, handler.Calls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Plugin_Throws_On_NonStatic_Handler()
     {
         _options.QueryPluginsPipeline.Add(new QueryPluginHandlersStatelessValidation());
@@ -150,7 +150,7 @@ public class RevalClientTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => _client.Subscribe(queryOptions, () => { }));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Plugin_Allows_Static_Handler()
     {
         _options.QueryPluginsPipeline.Add(new QueryPluginHandlersStatelessValidation());
@@ -159,7 +159,7 @@ public class RevalClientTests : IDisposable
         Assert.NotNull(observer);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void QueryOptions_Create_With_String_Key_Succeeds()
     {
         var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();

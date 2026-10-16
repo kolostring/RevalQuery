@@ -27,7 +27,7 @@ public class StaticQueryTests
             })
             .Build();
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Static_Query_With_No_Data_Still_Fetches()
     {
         var calls = new Counter();
@@ -40,7 +40,7 @@ public class StaticQueryTests
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Static_Query_Is_Not_Refetched_By_A_Later_Subscriber()
     {
         var calls = new Counter();
@@ -57,7 +57,7 @@ public class StaticQueryTests
         Assert.Equal("call-1", second.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Non_Static_Query_Is_Refetched_By_A_Later_Subscriber()
     {
         var calls = new Counter();
@@ -74,7 +74,7 @@ public class StaticQueryTests
         Assert.Equal("call-2", second.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Invalidating_A_Static_Query_Does_Not_Refetch_It()
     {
         var calls = new Counter();
@@ -89,7 +89,7 @@ public class StaticQueryTests
         Assert.Equal("call-1", observer.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void An_Invalidated_Static_Query_Still_Reports_Itself_Invalidated()
     {
         var calls = new Counter();
@@ -105,7 +105,7 @@ public class StaticQueryTests
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Invalidating_A_Non_Static_Query_Refetches_It()
     {
         var calls = new Counter();
@@ -120,7 +120,7 @@ public class StaticQueryTests
         Assert.Equal("call-2", observer.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Invalidation_Leaves_LastUpdatedAt_Alone()
     {
         var calls = new Counter();

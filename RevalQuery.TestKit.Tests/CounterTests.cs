@@ -2,13 +2,13 @@ namespace RevalQuery.TestKit.Tests;
 
 public class CounterTests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_New_Counter_Starts_At_Zero()
     {
         Assert.Equal(0, new Counter().Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Incrementing_Returns_The_New_Value()
     {
         var counter = new Counter();
@@ -18,7 +18,7 @@ public class CounterTests
         Assert.Equal(2, counter.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Concurrent_Increments_Are_All_Counted()
     {
         var counter = new Counter();

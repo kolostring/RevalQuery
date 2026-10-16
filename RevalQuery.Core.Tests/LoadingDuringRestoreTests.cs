@@ -14,7 +14,7 @@ public class LoadingDuringRestoreTests
 {
     private readonly FakeTimeProvider _clock = new();
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Query_Waiting_On_A_Restore_Is_Loading_But_Not_Fetching()
     {
         using var persistence = new GatedPersistence();
@@ -28,7 +28,7 @@ public class LoadingDuringRestoreTests
         var observer = client.Subscribe(options, () => { });
         var state = client.FindQuery<string>("restoring")!;
 
-        await persistence.LoadStarted.WaitAsync(HangGuard);
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsRestoring);
         Assert.True(state.IsLoading);
@@ -38,7 +38,7 @@ public class LoadingDuringRestoreTests
         Assert.True(state.CanFetch);
 
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
-        await state.RestoreCompleted.WaitAsync(HangGuard);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.False(state.IsRestoring);
         Assert.False(state.IsLoading);
@@ -48,7 +48,7 @@ public class LoadingDuringRestoreTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Restore_That_Finds_Nothing_Stops_Loading_And_Notifies()
     {
         using var persistence = new GatedPersistence();
@@ -69,11 +69,11 @@ public class LoadingDuringRestoreTests
             notified.Open();
         });
 
-        await persistence.LoadStarted.WaitAsync(HangGuard);
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
         Assert.True(state.IsLoading);
 
         persistence.ReleaseLoad();
-        await notified.Task.WaitAsync(HangGuard);
+        await notified.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal((false, false, true), seen);
         Assert.False(state.IsLoading);
@@ -82,7 +82,7 @@ public class LoadingDuringRestoreTests
         observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Query_Without_Persistence_Is_Never_Restoring()
     {
         using var client = NewClient(persistence: null);

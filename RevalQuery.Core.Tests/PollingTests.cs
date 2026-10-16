@@ -25,7 +25,7 @@ public class PollingTests : IDisposable
 
     public void Dispose() => _client.Dispose();
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SubscribeWithRefetchInterval_Refetches()
     {
         var calls = new Counter();
@@ -42,16 +42,16 @@ public class PollingTests : IDisposable
         Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task DiscardedQueryAsyncThenSubscribe_InitialDataFromCache()
     {
         var handler = new GatedHandler<string>();
         handler.Release(0, "cached");
         var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
-        var fetch = _client.QueryAsync(queryOptions);
+        var fetch = _client.QueryAsync(queryOptions, TestContext.Current.CancellationToken);
         Discard(fetch);
-        await fetch.WaitAsync(HangGuard);
+        await fetch.WaitAsync(TestContext.Current.CancellationToken);
 
         using var observer = _client.Subscribe(queryOptions, () => { });
 
@@ -59,12 +59,12 @@ public class PollingTests : IDisposable
         Assert.True(observer.Query.IsFetching);
         Assert.Equal(2, handler.Calls);
 
-        var refreshed = Signals.UntilAsync(observer.Query, q => q.Data == "fresh");
+        var refreshed = Signals.UntilAsync(observer.Query, q => q.Data == "fresh", TestContext.Current.CancellationToken);
         handler.Release(1, "fresh");
         await refreshed;
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SubscribeThenDispose_PollingStops()
     {
         var calls = new Counter();
@@ -83,7 +83,7 @@ public class PollingTests : IDisposable
         Assert.Equal(0, WorkerCount(_client));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task AQueryNobodyObservesDoesNotPoll()
     {
         var calls = new Counter();
@@ -91,14 +91,14 @@ public class PollingTests : IDisposable
             .ConfigureFetch(b => b.RefetchInterval(Interval))
             .Build();
 
-        var fetch = _client.QueryAsync(queryOptions);
-        Assert.Equal("data-1", await fetch.WaitAsync(HangGuard));
+        var fetch = _client.QueryAsync(queryOptions, TestContext.Current.CancellationToken);
+        Assert.Equal("data-1", await fetch.WaitAsync(TestContext.Current.CancellationToken));
         _clock.Advance(Interval * 3);
 
         Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SubscribingEnabledToAQueryOnlyDisabledObserversHold_StartsPolling()
     {
         var calls = new Counter();

@@ -17,58 +17,57 @@ public class StalenessOnTheClockTests
 
     public StalenessOnTheClockTests()
     {
-        SynchronizationContext.SetSynchronizationContext(null);
         _clock = new FakeTimeProvider();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Data_Is_Fresh_Just_Before_Its_StaleTime()
     {
         using var client = NewClient();
 
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
         _clock.Advance(StaleTime - TimeSpan.FromTicks(1));
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Data_Is_Stale_When_Its_Age_Equals_Its_StaleTime()
     {
         using var client = NewClient();
 
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
         _clock.Advance(StaleTime);
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Data_Is_Stale_After_Its_StaleTime()
     {
         using var client = NewClient();
 
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
         _clock.Advance(StaleTime + TimeSpan.FromTicks(1));
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Zero_StaleTime_Is_Stale_With_The_Clock_Frozen()
     {
         using var client = NewClient();
 
-        await client.QueryAsync(Options(TimeSpan.Zero)).WaitAsync(HangGuard);
-        await client.QueryAsync(Options(TimeSpan.Zero)).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(TimeSpan.Zero), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
+        await client.QueryAsync(Options(TimeSpan.Zero), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Fetch_Is_Saved_With_The_Time_On_The_Clock()
     {
         using var persistence = new GatedPersistence();
@@ -76,13 +75,13 @@ public class StalenessOnTheClockTests
         persistence.ReleaseLoad();
         var fetchedAt = _clock.GetUtcNow();
 
-        await client.QueryAsync(Options(StaleTime)).WaitAsync(HangGuard);
-        var save = await persistence.Saved(0).WaitAsync(HangGuard);
+        await client.QueryAsync(Options(StaleTime), TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
+        var save = await persistence.Saved(0).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(fetchedAt, ((PersistedQuery<string>)save.Entry).Freshness.LastUpdatedAt);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Restored_Data_Younger_Than_Its_StaleTime_On_The_Clock_Is_Not_Refetched()
     {
         using var persistence = new GatedPersistence();
@@ -91,14 +90,14 @@ public class StalenessOnTheClockTests
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(fetchedAt)));
 
         var observer = client.Subscribe(Options(StaleTime), () => { });
-        await Signals.UntilAsync(observer.Query, q => !q.IsRestoring).WaitAsync(HangGuard);
+        await Signals.UntilAsync(observer.Query, q => !q.IsRestoring, TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("from-disk", observer.Query.Data);
         Assert.False(observer.Query.IsFetching);
         Assert.Equal(0, _calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Restored_Data_As_Old_As_Its_StaleTime_On_The_Clock_Is_Refetched()
     {
         using var persistence = new GatedPersistence();
@@ -107,7 +106,7 @@ public class StalenessOnTheClockTests
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(fetchedAt)));
 
         var observer = client.Subscribe(Options(StaleTime), () => { });
-        await Signals.UntilAsync(observer.Query, q => q.Data == "data").WaitAsync(HangGuard);
+        await Signals.UntilAsync(observer.Query, q => q.Data == "data", TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, _calls.Value);
     }
