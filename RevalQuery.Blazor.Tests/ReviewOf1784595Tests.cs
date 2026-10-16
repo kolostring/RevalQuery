@@ -47,7 +47,7 @@ public class ReviewOf1784595Tests
         Assert.True(written.ContainsKey(PrerenderTransferStateKey));
 
         var payload = JsonSerializer.Deserialize<string>(written[PrerenderTransferStateKey])!;
-        Assert.Contains("covered", payload);
+        Assert.Contains("System.String:covered", payload);
         Assert.DoesNotContain("uncovered", payload);
     }
 
@@ -73,16 +73,23 @@ public class ReviewOf1784595Tests
 
         using var clientState = await PersistentStateHarness.CreateFromAsync(written);
         using var emptyProvider = new ServiceCollection().BuildServiceProvider();
-        var transfer = new PrerenderTransfer(clientState.State, emptyProvider, Serializer);
+        var covering = new PrerenderTransfer(
+            clientState.State, emptyProvider, new JsonSerializerOptions { TypeInfoResolver = GizmoContext.Default });
+        var blind = new PrerenderTransfer(clientState.State, emptyProvider, Serializer);
 
-        var loaded = await transfer.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
+        var loadedWithTheResolver = await covering.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
+        var loadedWithoutIt = await blind.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
 
-        Assert.Null(loaded);
+        Assert.Equal(new Gizmo(2), loadedWithTheResolver?.Data);
+        Assert.Null(loadedWithoutIt);
     }
 
     [Fact]
-    public async Task Disposing_The_Prerender_Transfer_Twice_Is_Harmless()
+    public async Task Disposing_The_Scope_Unsubscribes_The_Transfer_Although_It_Is_Disposed_Twice()
     {
+        // The transfer is registered under two service types, so the container disposes it twice.
+        // Surviving that is not observable from outside: the framework's own unsubscribe is
+        // idempotent. What is observable is that the subscription is gone afterwards.
         using var harness = await PersistentStateHarness.CreateEmptyAsync();
 
         var services = new ServiceCollection();
@@ -97,7 +104,13 @@ public class ReviewOf1784595Tests
             scope.ServiceProvider.GetRequiredService<PrerenderTransfer>(),
             scope.ServiceProvider.GetRequiredService<IQueryPersistence>());
 
+        await scope.ServiceProvider.GetRequiredService<RevalClient>().QueryAsync(
+            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
+
         scope.Dispose();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.PersistAsync());
+        Assert.Contains("Nothing was registered", error.Message);
     }
 
     private const string PrerenderTransferStateKey = "RevalQuery.PrerenderTransfer";

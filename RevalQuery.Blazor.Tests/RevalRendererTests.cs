@@ -9,8 +9,6 @@ namespace RevalQuery.Blazor.Tests;
 
 public class RevalRendererTests : TestContext
 {
-    private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
     private readonly List<Fx> _fixtures = [];
 
     protected override void Dispose(bool disposing)
@@ -47,7 +45,7 @@ public class RevalRendererTests : TestContext
 
         Assert.Equal("loading", cut.Find("#out").TextContent);
 
-        gate.SetResult();
+        gate.Open();
         cut.WaitForAssertion(() => Assert.Equal("item1", cut.Find("#out").TextContent));
 
         Assert.Equal(1, fx.CallsFor(1));
@@ -62,7 +60,7 @@ public class RevalRendererTests : TestContext
 
         Assert.Equal("item1", cut.Find("#out").TextContent);
         var renders = cut.Instance.Renders;
-        Assert.InRange(renders, 1, 2);
+        Assert.Equal(2, renders);
 
         await Flush(cut);
         await Flush(cut);
@@ -178,14 +176,14 @@ public class RevalRendererTests : TestContext
         Assert.Equal(3, WithData(cut));
         Assert.Equal(4, fx.TotalCalls);
 
-        var gate = Gate();
+        var gate = new Gate();
         for (var tick = 1; tick <= 3; tick++)
             cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick).Add(c => c.Gate, gate.Task));
 
         Assert.Empty(Items(cut));
         Assert.All(new[] { 1, 2, 3 }, id => Assert.True(fx.Observed(id)));
 
-        gate.SetResult();
+        gate.Open();
         cut.WaitForAssertion(() => Assert.Equal(3, WithData(cut)));
         await Flush(cut);
 
@@ -216,7 +214,7 @@ public class RevalRendererTests : TestContext
     public async Task A_Running_Mutation_Survives_Renders_And_Its_State_Reaches_The_Page()
     {
         NewFx();
-        var gate = Gate();
+        var gate = new Gate();
         var cut = RenderComponent<Saver>(p => p.Add(c => c.Gate, gate.Task));
         var state = cut.Instance.Last!;
         Assert.Equal("Idle", cut.Find(".status").TextContent);
@@ -227,8 +225,8 @@ public class RevalRendererTests : TestContext
         cut.SetParametersAndRender(p => p.Add(c => c.Show, false));
         for (var tick = 1; tick <= 3; tick++) cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick));
 
-        gate.SetResult();
-        await TestUtils.UntilAsync(() => state.IsResolved);
+        gate.Open();
+        await Signals.UntilAsync(state, s => s.IsResolved);
         cut.SetParametersAndRender(p => p.Add(c => c.Show, true));
 
         Assert.Same(state, cut.Instance.Last);
@@ -286,7 +284,7 @@ public class RevalRendererTests : TestContext
 
         Assert.Equal("loading", cut.Find("#out").TextContent);
 
-        gate.SetResult();
+        gate.Open();
         cut.WaitForAssertion(() => Assert.Equal("item1", cut.Find("#out").TextContent));
         await Flush(cut);
 
@@ -350,9 +348,11 @@ public class RevalRendererTests : TestContext
         cut.WaitForState(() => cut.Instance.Events > 0);
         var events = cut.Instance.Events;
 
-        gate.SetResult();
+        gate.Open();
 
         cut.WaitForState(() => cut.Instance.Events > events);
+        Assert.True(fx.State(1)!.IsResolved);
+        Assert.Equal("item1", fx.State(1)!.Data);
     }
 
     private sealed class HandOwner : IComponent, IHandleEvent
@@ -388,18 +388,5 @@ public class RevalRendererTests : TestContext
             builder.AddComponentParameter(2, nameof(RevalRenderer.Hooks), Hooks);
             builder.CloseComponent();
         });
-    }
-}
-
-internal static class TestUtils
-{
-    public static async Task UntilAsync(Func<bool> condition, int timeoutMs = 10_000)
-    {
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
-        while (!condition())
-        {
-            cts.Token.ThrowIfCancellationRequested();
-            await Task.Yield();
-        }
     }
 }
