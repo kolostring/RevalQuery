@@ -6,7 +6,7 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Core.Tests;
 
-public class QueryAsyncTests
+public class QueryAsyncTests : IDisposable
 {
     private const string Key = "fetch";
 
@@ -16,6 +16,8 @@ public class QueryAsyncTests
     {
         _client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
     }
+
+    public void Dispose() => _client.Dispose();
 
     [Fact]
     public async Task QueryAsync_ReturnsData()
@@ -30,24 +32,37 @@ public class QueryAsyncTests
     [Fact]
     public async Task QueryAsync_ThrowsOnHandlerException()
     {
-        var queryOptions = QueryOptions.Create(Key, ThrowingHandler).Build();
+        var counter = new Counter();
+        var queryOptions = QueryOptions.Create<string>(Key, _ =>
+            {
+                counter.Increment();
+                throw new InvalidOperationException("handler-fail");
+            })
+            .ConfigureRetry(r => r.Retry(3, _ => TimeSpan.Zero))
+            .Build();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => _client.QueryAsync(queryOptions));
+
+        Assert.Equal(4, counter.Value);
     }
 
     [Fact]
     public async Task QueryAsync_ConcurrentCalls_SameKey()
     {
-        var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
+        var handler = new GatedHandler<object>();
+        var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
-        var results = await Task.WhenAll(
-            _client.QueryAsync(queryOptions),
-            _client.QueryAsync(queryOptions),
-            _client.QueryAsync(queryOptions)
-        );
+        var t1 = _client.QueryAsync(queryOptions);
+        var t2 = _client.QueryAsync(queryOptions);
+        var t3 = _client.QueryAsync(queryOptions);
+        Assert.Equal(1, handler.Calls);
 
-        Assert.True(ReferenceEquals(results[0], results[1]));
-        Assert.True(ReferenceEquals(results[1], results[2]));
+        var value = new object();
+        handler.Release(0, value);
+        var results = await Task.WhenAll(t1, t2, t3).WaitAsync(HangGuard);
+
+        Assert.All(results, r => Assert.Same(value, r));
+        Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
@@ -165,7 +180,4 @@ public class QueryAsyncTests
 
     private static Task<string> StaticHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
         => Task.FromResult("data");
-
-    private static Task<string> ThrowingHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => throw new InvalidOperationException("handler-fail");
 }
