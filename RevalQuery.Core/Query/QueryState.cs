@@ -44,7 +44,8 @@ public sealed class QueryState<TKey, TResponse>(
     Func<QueryHandlerExecutionContext<TKey>, Task<TResponse>> handler,
     FetchOptions? fetchOptions,
     RetryOptions? retryOptions,
-    CacheOptions? cacheOptions
+    CacheOptions? cacheOptions,
+    TimeProvider? timeProvider = null
 )
     : IQueryState<TResponse> where TKey : ITuple
 {
@@ -97,6 +98,7 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly List<IQueryObserver> _observers = [];
     private readonly object _observersGate = new();
     private readonly object _dataGate = new();
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
     private bool _isInvalidated;
@@ -276,7 +278,9 @@ public sealed class QueryState<TKey, TResponse>(
     /// <see cref="NotifyInvalidated"/> cannot drag it into a refetch. This is the whole
     /// difference between static and a very long <see cref="CoreFetchOptions.StaleTime"/>.</item>
     /// <item>An invalidated query is stale whatever the clock says.</item>
-    /// <item>Otherwise the age of the data is compared against StaleTime.</item>
+    /// <item>Otherwise the data is stale once its age reaches StaleTime, by the clock this
+    /// query was created with. Reaching counts, as in TanStack's <c>isStaleByTime</c>, so a
+    /// zero StaleTime is stale even when the clock has not moved.</item>
     /// </list>
     /// <para>Taken under the one lock, so the timestamp and the invalidation flag read here
     /// belong to the same moment rather than to two that a fetch landed between.</para>
@@ -290,7 +294,7 @@ public sealed class QueryState<TKey, TResponse>(
             if (fetchOptions.Static) return false;
             if (_isInvalidated) return true;
 
-            return DateTimeOffset.UtcNow - _lastUpdatedAt > fetchOptions.StaleTime;
+            return _timeProvider.GetUtcNow() - _lastUpdatedAt >= fetchOptions.StaleTime;
         }
     }
 
@@ -306,7 +310,7 @@ public sealed class QueryState<TKey, TResponse>(
             Data = data;
             Exception = null;
             Status = QueryStatus.Resolved;
-            _lastUpdatedAt = DateTimeOffset.UtcNow;
+            _lastUpdatedAt = _timeProvider.GetUtcNow();
             _hasSettled = true;
 
             _isInvalidated = false;
