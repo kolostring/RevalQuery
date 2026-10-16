@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using RevalQuery.Core.Mutation.Execution;
 using RevalQuery.Core.Query.Execution;
 
 namespace RevalQuery.TestKit;
@@ -46,10 +47,22 @@ public sealed class GatedHandler<T>
     /// </summary>
     /// <typeparam name="TKey">The query key type.</typeparam>
     /// <param name="context">The context the library passes the handler.</param>
-    public async Task<T> Handle<TKey>(QueryHandlerExecutionContext<TKey> context) where TKey : ITuple
+    public Task<T> Handle<TKey>(QueryHandlerExecutionContext<TKey> context) where TKey : ITuple =>
+        Run(context.CancellationToken ?? CancellationToken.None);
+
+    /// <summary>
+    /// The handler, for a mutation. Pass it where the library takes a mutation handler, as
+    /// <c>MutationOptions.Create&lt;TParams, T&gt;(handler.Handle)</c>. Mutation and query calls
+    /// share one numbering.
+    /// </summary>
+    /// <typeparam name="TParams">The mutation's parameters type.</typeparam>
+    /// <param name="context">The context the library passes the handler.</param>
+    public Task<T> Handle<TParams>(MutationHandlerExecutionContext<TParams> context) =>
+        Run(context.CancellationToken);
+
+    private async Task<T> Run(CancellationToken token)
     {
         var call = At(Interlocked.Increment(ref _started) - 1);
-        var token = context.CancellationToken ?? CancellationToken.None;
         call.Token = token;
         lock (_gate)
             if (_releasedAll)
