@@ -45,6 +45,37 @@ public class ReviewOf1784595Tests
     }
 
     [Fact]
+    public async Task Disposing_The_Collector_Async_After_Disposing_It_Waits_For_The_Running_Sweep()
+    {
+        var time = new FakeTimeProvider();
+        var collector = new TtlQueryGarbageCollector(new RevalQueryOptions
+        {
+            TimeProvider = time,
+            CacheOptions = new CoreCacheOptions(GcTime: TimeSpan.Zero, GcInterval: TimeSpan.FromSeconds(1))
+        });
+        var sweepStarted = new Gate();
+        var releaseSweep = new Gate();
+        collector.OnEvictionRequired += _ =>
+        {
+            sweepStarted.Open();
+            releaseSweep.Task.Wait(HangGuard);
+        };
+        collector.RegisterForEviction(ValueTuple.Create("gc"), null);
+
+        var sweep = Task.Run(() => time.Advance(TimeSpan.FromSeconds(1)));
+        await sweepStarted.Task.WaitAsync(HangGuard);
+
+        collector.Dispose();
+        var stop = collector.DisposeAsync().AsTask();
+
+        Assert.False(stop.IsCompleted);
+
+        releaseSweep.Open();
+        await stop.WaitAsync(HangGuard);
+        await sweep.WaitAsync(HangGuard);
+    }
+
+    [Fact]
     public async Task A_Negative_Retry_Delay_Does_Not_Replace_The_Handler_Failure()
     {
         var policy = new ExponentialBackoffRetryPolicy();
