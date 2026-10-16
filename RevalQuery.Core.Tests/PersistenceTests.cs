@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -13,6 +14,8 @@ namespace RevalQuery.Core.Tests;
 
 public class PersistenceTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     [Fact]
     public async Task SuccessfulFetch_Is_Saved_With_Its_Timestamp()
     {
@@ -30,7 +33,7 @@ public class PersistenceTests
     [Fact]
     public async Task PersistedData_Is_Restored_Before_The_Fetch_Lands()
     {
-        var fetchedAt = DateTimeOffset.UtcNow.AddHours(-3);
+        var fetchedAt = _clock.GetUtcNow().AddHours(-3);
         using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
         var handler = new GatedHandler<string>();
@@ -70,7 +73,7 @@ public class PersistenceTests
 
         Assert.True(state.IsRestoring);
 
-        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow().AddHours(-3))));
         await state.RestoreCompleted.WaitAsync(HangGuard);
 
         Assert.Equal("from-network", state.Data);
@@ -117,8 +120,8 @@ public class PersistenceTests
         Assert.NotNull(persistence.Read<string>(ValueTuple.Create("wired")));
     }
 
-    private static RevalClient NewClient(IQueryPersistence persistence) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+    private RevalClient NewClient(IQueryPersistence persistence) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
     private static async Task<RevalQuery.Core.Query.QueryState<ValueTuple<string>, string>> ClientFetch(
         RevalClient client, string key, string result)
