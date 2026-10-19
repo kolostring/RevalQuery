@@ -260,7 +260,7 @@ and `Error` is now `Exception`. See the `mutation-state-implements-imutationstat
 
 | Before | After |
 |--------|-------|
-| `query.Data = x` on the result of `FindQuery` / `GetOrCreateQuery` | `Client.SetQueryData(options, x)`. The setters on `Data`, `Exception`, `Status`, `FetchStatus` and the option records are gone |
+| `query.Data = x` on the result of `FindQuery` / `GetOrCreateQuery` | `Client.SetQueryData(options, x)`, or `Client.SetQueryData(options, current => ...)` to derive it from the current data. The updater may run more than once when the data moves under it, so keep it pure: no I/O, nothing that cannot repeat. The setters on `Data`, `Exception`, `Status`, `FetchStatus` and the option records are gone |
 | `FindQuery` / `GetOrCreateQuery` return `QueryState<TKey, TRes>` | they return `IQueryState<TRes>` (`IQueryState` for the untyped `FindQuery`), which is read-only |
 | `.OnMutate(async TParams p => ...)` | `.OnMutate(async ctx => ...)`; `ctx.Params`, `ctx.Client` |
 | `.OnResolved((res, p) => ...)` | `.OnResolved(ctx => ...)`; `ctx.Result`, `ctx.Params`, `ctx.Client` |
@@ -333,6 +333,13 @@ public static class TodoMutations
 key and `Options()` returns its `QueryOptionsBuilder<ValueTuple<string>, List<Todo>>`.
 The options passed to `SetQueryData` apply only when the set creates the query. The updater
 returns `null` to set nothing.
+
+The updater may run more than once per call. It runs outside the query's lock, and when another
+write (a set, a fetch landing, a restore) lands on the key while it runs, the set discards that
+attempt and runs the updater again on the newer data. So an updater must be pure apart from
+capturing a value whose last write wins, as the recipe's `previous` does: the attempt that is
+applied is the last one to run, so `previous` ends up holding exactly the value the applied
+change replaced. It must not do I/O, start work, or do anything else that cannot safely repeat.
 
 In the component:
 

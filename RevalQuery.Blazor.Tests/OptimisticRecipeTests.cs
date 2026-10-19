@@ -68,4 +68,38 @@ public class OptimisticRecipeTests : Bunit.TestContext
         first.WaitForAssertion(() => Assert.Equal("a", Todos(first)));
         second.WaitForAssertion(() => Assert.Equal("a", Todos(second)));
     }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task The_Recipe_Rolls_Back_To_The_Value_The_Successful_Attempt_Replaced_When_Its_Updater_Reran()
+    {
+        var first = RenderComponent<TodoList>();
+        var second = RenderComponent<TodoList>();
+        _fetches.Release(0, ["a"]);
+        first.WaitForAssertion(() => Assert.Equal("a", Todos(first)));
+        second.WaitForAssertion(() => Assert.Equal("a", Todos(second)));
+
+        var attempts = 0;
+        var options = TodoRecipe.AddTodo(attempt =>
+        {
+            attempts = attempt;
+            // Another set lands while the first attempt runs, so the data moved under it.
+            if (attempt == 1) _client.SetQueryData(TodoRecipe.Todos().Build(), c => [.. c!, "other"]);
+        });
+
+        var run = _client.CreateMutation(options.Build(), () => { }).State
+            .ExecuteAsync("new", Xunit.TestContext.Current.CancellationToken);
+        await _adds.Started(0).WaitAsync(Xunit.TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, attempts);
+        first.WaitForAssertion(() => Assert.Equal("a,other,new", Todos(first)));
+        second.WaitForAssertion(() => Assert.Equal("a,other,new", Todos(second)));
+
+        _adds.Fail(0, new InvalidOperationException("server said no"));
+        await run;
+
+        // The refetch the invalidation starts stays held, so what shows is the rollback: the
+        // value the applied attempt replaced, which includes the other set.
+        first.WaitForAssertion(() => Assert.Equal("a,other", Todos(first)));
+        second.WaitForAssertion(() => Assert.Equal("a,other", Todos(second)));
+    }
 }

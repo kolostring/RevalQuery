@@ -15,16 +15,20 @@ public static class TodoRecipe
         QueryOptions.Create<List<string>>(Key, static ctx =>
             ctx.ServiceProvider.GetRequiredService<GatedHandler<List<string>>>().Handle(ctx));
 
-    public static MutationOptionsBuilder<string, string, List<string>> AddTodo() =>
+    // whileUpdating, for a test, runs inside every attempt of the optimistic updater, where
+    // the test can land another write on the key.
+    public static MutationOptionsBuilder<string, string, List<string>> AddTodo(Action<int>? whileUpdating = null) =>
         MutationOptions.Create<string, string>(static ctx =>
                 ctx.ServiceProvider.GetRequiredService<GatedHandler<string>>().Handle(ctx))
-            .OnMutate(static async ctx =>
+            .OnMutate(async ctx =>
             {
                 await ctx.Client.CancelAsync(Key);
 
                 List<string> previous = [];
+                var attempts = 0;
                 ctx.Client.SetQueryData(Todos().Build(), current =>
                 {
+                    whileUpdating?.Invoke(++attempts);
                     previous = current ?? [];
                     return [.. previous, ctx.Params];
                 });
