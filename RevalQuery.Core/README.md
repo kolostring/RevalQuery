@@ -197,7 +197,10 @@ finally
 
 `todoOptions` is the `QueryOptions<ValueTuple<string>, List<Todo>>` for the `"todos"` key, and
 applies only when the set creates the query. `SetQueryData` records the data as a fetch would,
-resolved and fresh as of now, and notifies every observer. For a mutation defined in a factory,
+resolved and fresh as of now, and notifies every observer. The updater may run more than once:
+it runs outside the query's lock, and when another write lands on the key meanwhile, the set
+runs it again on the newer data. Keep it pure apart from capturing a value whose last write
+wins (as `previous` above does), and do no I/O or anything else that cannot repeat. For a mutation defined in a factory,
 with the rollback kept per run, see the Blazor README's "Optimistic updates".
 
 `IQueryState.Cancel()` is the low-level trigger for one query. It returns immediately without
