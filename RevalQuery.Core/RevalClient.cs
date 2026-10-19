@@ -291,8 +291,11 @@ public sealed class RevalClient : IDisposable
     /// <para>A set never starts a fetch and never cancels one. Call
     /// <see cref="CancelAsync(ITuple)"/> first to stop an in-flight fetch from overwriting the
     /// set. A restore still reading the store is refused when it answers.</para>
-    /// <para>The updater runs outside the query's lock, so two concurrent sets of one key can
-    /// both read the same current data.</para>
+    /// <para>The updater runs outside the query's lock. If the data was written in the
+    /// meantime (another set, a fetch landing, a restore), the result is discarded and the
+    /// updater runs again on the newer data, so concurrent updaters of one key all take effect.
+    /// The updater may therefore run more than once per call and must be a pure function of its
+    /// input, without side effects.</para>
     /// </remarks>
     /// <typeparam name="TKey">The key type.</typeparam>
     /// <typeparam name="TRes">The response type.</typeparam>
@@ -310,22 +313,28 @@ public sealed class RevalClient : IDisposable
 
         var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
 
-        QueryState<TKey, TRes>? existing;
-        lock (_gate)
+        while (true)
         {
-            ThrowIfDisposedLocked();
-            existing = _registry.PeekNode(options.Key)?.State as QueryState<TKey, TRes>;
+            QueryState<TKey, TRes>? existing;
+            lock (_gate)
+            {
+                ThrowIfDisposedLocked();
+                existing = _registry.PeekNode(options.Key)?.State as QueryState<TKey, TRes>;
+            }
+
+            var (current, version) = existing is null ? (default, 0L) : existing.ReadData();
+
+            var next = updater(current);
+            if (next is null) return;
+
+            QueryState<TKey, TRes> state;
+            lock (_gate) state = GetOrCreateQueryLocked(options);
+
+            if (state.TryApplySet(next, updatedAt, version, SaveOf(state, next)) is null) continue;
+
+            AfterSet(state);
+            return;
         }
-
-        var next = updater(existing is null ? default : existing.ReadData());
-        if (next is null) return;
-
-        QueryState<TKey, TRes> state;
-        lock (_gate) state = GetOrCreateQueryLocked(options);
-
-        state.ApplySet(next, updatedAt, SaveOf(state, next));
-
-        AfterSet(state);
     }
 
     private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state)

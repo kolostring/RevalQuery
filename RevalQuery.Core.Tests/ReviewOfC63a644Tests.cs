@@ -1,4 +1,7 @@
+using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core.Abstractions.Query;
+using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Query;
 
 namespace RevalQuery.Core.Tests;
@@ -44,5 +47,29 @@ public class ReviewOfC63a644Tests
 
         Assert.Equal(["first", "second"], order);
         Assert.Equal("second", state.Data);
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void A_Set_Whose_Data_Moved_Under_Its_Updater_Reruns_The_Updater_On_The_Newer_Data()
+    {
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        var options = QueryOptions.Create("rerun", _ => Task.FromResult("fetched")).Build();
+        client.SetQueryData(options, "base");
+
+        var runs = 0;
+        client.SetQueryData(options, current =>
+        {
+            runs++;
+            if (runs == 1)
+            {
+                // A second set lands while this updater is running.
+                client.SetQueryData(options, c => c + "-two");
+            }
+
+            return current + "-one";
+        });
+
+        Assert.Equal(2, runs);
+        Assert.Equal("base-two-one", client.FindQuery<string>("rerun")!.Data);
     }
 }

@@ -100,6 +100,7 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly object _dataGate = new();
     private readonly object _saveGate = new();
     private Task _saveTail = Task.CompletedTask;
+    private long _dataVersion;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
@@ -320,6 +321,7 @@ public sealed class QueryState<TKey, TResponse>(
         Status = QueryStatus.Resolved;
         _lastUpdatedAt = updatedAt ?? _timeProvider.GetUtcNow();
         _hasSettled = true;
+        _dataVersion++;
 
         _isInvalidated = false;
     }
@@ -330,19 +332,23 @@ public sealed class QueryState<TKey, TResponse>(
     /// without waiting for it.
     /// </summary>
     /// <param name="save">The save. It must not throw.</param>
-    internal void EnqueueSave(Func<Task> save)
+    /// <returns>A task that completes when this save has run.</returns>
+    internal Task EnqueueSave(Func<Task> save)
     {
-        lock (_saveGate) _saveTail = _saveTail.ContinueWith(
-            _ => save(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+        lock (_saveGate)
+        {
+            return _saveTail = _saveTail.ContinueWith(
+                _ => save(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+        }
     }
 
     /// <summary>
     /// Reads the data under the same gate that writes it, so an updater sees a value that was
     /// whole at some moment rather than one a concurrent write is halfway through.
     /// </summary>
-    internal TResponse? ReadData()
+    internal (TResponse? Data, long Version) ReadData()
     {
-        lock (_dataGate) return Data;
+        lock (_dataGate) return (Data, _dataVersion);
     }
 
     /// <summary>
@@ -364,15 +370,45 @@ public sealed class QueryState<TKey, TResponse>(
         DateTimeOffset? updatedAt,
         Func<QueryFreshness, Func<Task>>? save = null)
     {
+        lock (_dataGate) return ApplySetLocked(data, updatedAt, save);
+    }
+
+    /// <summary>
+    /// Records data a user set only if the data is still the version the caller derived it
+    /// from. Every write to the data moves the version, so a false return means something
+    /// wrote between the read and now and the caller derives again from the newer data.
+    /// </summary>
+    /// <param name="data">The data to set.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <param name="expectedVersion">The version <see cref="ReadData"/> returned with the data
+    /// the caller derived <paramref name="data"/> from.</param>
+    /// <param name="save">As for <see cref="ApplySet"/>.</param>
+    /// <returns>The freshness the set recorded, or null when the data had moved.</returns>
+    internal QueryFreshness? TryApplySet(
+        TResponse data,
+        DateTimeOffset? updatedAt,
+        long expectedVersion,
+        Func<QueryFreshness, Func<Task>>? save = null)
+    {
         lock (_dataGate)
         {
-            ApplyResolvedLocked(data, updatedAt);
+            if (_dataVersion != expectedVersion) return null;
 
-            var freshness = new QueryFreshness(_lastUpdatedAt, _isInvalidated);
-            if (save is not null) EnqueueSave(save(freshness));
-
-            return freshness;
+            return ApplySetLocked(data, updatedAt, save);
         }
+    }
+
+    private QueryFreshness ApplySetLocked(
+        TResponse data,
+        DateTimeOffset? updatedAt,
+        Func<QueryFreshness, Func<Task>>? save)
+    {
+        ApplyResolvedLocked(data, updatedAt);
+
+        var freshness = new QueryFreshness(_lastUpdatedAt, _isInvalidated);
+        if (save is not null) EnqueueSave(save(freshness));
+
+        return freshness;
     }
 
     /// <summary>
@@ -417,6 +453,7 @@ public sealed class QueryState<TKey, TResponse>(
             Exception = null;
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = freshness.LastUpdatedAt;
+            _dataVersion++;
 
             _isInvalidated |= freshness.IsInvalidated;
 
