@@ -7,13 +7,22 @@ using RevalQuery.Core.Hooks;
 
 namespace RevalQuery.Blazor.Tests;
 
-public class RevalRendererTests : TestContext
+public class RevalRendererTests : Bunit.TestContext
 {
-    private static TaskCompletionSource Gate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<Fx> _fixtures = [];
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            foreach (var fx in _fixtures) fx.Dispose();
+
+        base.Dispose(disposing);
+    }
 
     private Fx NewFx()
     {
         var fx = new Fx(Services);
+        _fixtures.Add(fx);
         Services.AddSingleton(fx);
         Services.AddSingleton(fx.Client);
         Services.AddTransient(_ => fx.Client.CreateHooks());
@@ -27,7 +36,7 @@ public class RevalRendererTests : TestContext
 
     private static int WithData(IRenderedFragment cut) => Items(cut).Count(t => t.StartsWith("item"));
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Query_Goes_From_Loading_To_Data_Without_The_Page_Asking_To_Render()
     {
         var fx = NewFx();
@@ -36,13 +45,13 @@ public class RevalRendererTests : TestContext
 
         Assert.Equal("loading", cut.Find("#out").TextContent);
 
-        gate.SetResult();
+        gate.Open();
         cut.WaitForAssertion(() => Assert.Equal("item1", cut.Find("#out").TextContent));
 
         Assert.Equal(1, fx.CallsFor(1));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Query_That_Completes_During_The_Read_Costs_One_Extra_Render_That_Settles()
     {
         var fx = NewFx();
@@ -51,7 +60,7 @@ public class RevalRendererTests : TestContext
 
         Assert.Equal("item1", cut.Find("#out").TextContent);
         var renders = cut.Instance.Renders;
-        Assert.InRange(renders, 1, 2);
+        Assert.Equal(2, renders);
 
         await Flush(cut);
         await Flush(cut);
@@ -60,7 +69,7 @@ public class RevalRendererTests : TestContext
         Assert.Equal(1, fx.CallsFor(1));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Read_In_A_Later_Batch_That_Changes_State_Re_Renders_The_Page()
     {
         var fx = NewFx();
@@ -77,7 +86,7 @@ public class RevalRendererTests : TestContext
         Assert.Equal(1, fx.CallsFor(1));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Switching_Key_Releases_The_Old_Query_And_Keeps_The_New_One()
     {
         var fx = NewFx();
@@ -92,7 +101,7 @@ public class RevalRendererTests : TestContext
         Assert.Equal(0, fx.Eviction.RegisteredCount(2));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Loop_Releases_What_It_Dropped_And_Keeps_The_Rest_Unfetched_Again()
     {
         var fx = NewFx();
@@ -108,7 +117,7 @@ public class RevalRendererTests : TestContext
         Assert.All(new[] { 1, 2, 3, 4 }, id => Assert.Equal(1, fx.CallsFor(id)));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Helper_Called_Twice_And_Two_Reads_On_One_Line_Each_Keep_Their_Query()
     {
         var fx = NewFx();
@@ -123,7 +132,7 @@ public class RevalRendererTests : TestContext
         });
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Content_Rendered_In_A_Later_Batch_Is_Not_Released_And_Nothing_Refetches()
     {
         var fx = NewFx();
@@ -141,7 +150,7 @@ public class RevalRendererTests : TestContext
         Assert.Equal(4, fx.TotalCalls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Later_Batch_Content_Still_Releases_The_Keys_It_Stops_Reading()
     {
         var fx = NewFx();
@@ -158,7 +167,7 @@ public class RevalRendererTests : TestContext
         Assert.True(fx.Observed(3));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Content_A_Child_Hides_While_It_Loads_Is_Not_Released_And_Not_Refetched()
     {
         var fx = NewFx();
@@ -167,14 +176,14 @@ public class RevalRendererTests : TestContext
         Assert.Equal(3, WithData(cut));
         Assert.Equal(4, fx.TotalCalls);
 
-        var gate = Gate();
+        var gate = new Gate();
         for (var tick = 1; tick <= 3; tick++)
             cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick).Add(c => c.Gate, gate.Task));
 
         Assert.Empty(Items(cut));
         Assert.All(new[] { 1, 2, 3 }, id => Assert.True(fx.Observed(id)));
 
-        gate.SetResult();
+        gate.Open();
         cut.WaitForAssertion(() => Assert.Equal(3, WithData(cut)));
         await Flush(cut);
 
@@ -183,7 +192,7 @@ public class RevalRendererTests : TestContext
         Assert.All(new[] { 1, 2, 3 }, id => Assert.Equal(0, fx.Eviction.RegisteredCount(id)));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Hidden_Branch_Keeps_Its_Query_Until_It_Renders_Again()
     {
         var fx = NewFx();
@@ -201,11 +210,11 @@ public class RevalRendererTests : TestContext
         Assert.Equal(1, fx.CallsFor(1));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Running_Mutation_Survives_Renders_And_Its_State_Reaches_The_Page()
     {
         NewFx();
-        var gate = Gate();
+        var gate = new Gate();
         var cut = RenderComponent<Saver>(p => p.Add(c => c.Gate, gate.Task));
         var state = cut.Instance.Last!;
         Assert.Equal("Idle", cut.Find(".status").TextContent);
@@ -216,8 +225,8 @@ public class RevalRendererTests : TestContext
         cut.SetParametersAndRender(p => p.Add(c => c.Show, false));
         for (var tick = 1; tick <= 3; tick++) cut.SetParametersAndRender(p => p.Add(c => c.Tick, tick));
 
-        gate.SetResult();
-        await TestUtils.UntilAsync(() => state.IsResolved);
+        gate.Open();
+        await Signals.UntilAsync(state, s => s.IsResolved, Xunit.TestContext.Current.CancellationToken);
         cut.SetParametersAndRender(p => p.Add(c => c.Show, true));
 
         Assert.Same(state, cut.Instance.Last);
@@ -225,7 +234,7 @@ public class RevalRendererTests : TestContext
         Assert.Equal("saved", cut.Find(".data").TextContent);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Mutation_Runs_With_The_Options_Of_The_Latest_Render()
     {
         NewFx();
@@ -237,7 +246,7 @@ public class RevalRendererTests : TestContext
         cut.WaitForAssertion(() => Assert.Equal("second", cut.Find(".data").TextContent));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Disposing_The_Page_Releases_The_Hooks_And_Every_Query()
     {
         var fx = NewFx();
@@ -252,7 +261,7 @@ public class RevalRendererTests : TestContext
         });
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Swapping_The_Hooks_Releases_The_Old_Ones_And_Their_Queries()
     {
         var fx = NewFx();
@@ -266,7 +275,7 @@ public class RevalRendererTests : TestContext
         Assert.Equal(1, fx.Eviction.RegisteredCount(1));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Renderer_In_Always_Rendered_Child_Content_Still_Re_Renders_The_Owning_Component()
     {
         var fx = NewFx();
@@ -275,14 +284,14 @@ public class RevalRendererTests : TestContext
 
         Assert.Equal("loading", cut.Find("#out").TextContent);
 
-        gate.SetResult();
+        gate.Open();
         cut.WaitForAssertion(() => Assert.Equal("item1", cut.Find("#out").TextContent));
         await Flush(cut);
 
         Assert.Equal(1, fx.CallsFor(1));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Second_Renderer_On_The_Same_Hooks_Throws_On_Every_Parameter_Set()
     {
         var fx = NewFx();
@@ -306,7 +315,7 @@ public class RevalRendererTests : TestContext
         }
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Renderer_Without_A_Component_Says_So()
     {
         var fx = NewFx();
@@ -317,7 +326,7 @@ public class RevalRendererTests : TestContext
         Assert.Contains("requires a Component", error.ToString());
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void A_Renderer_Without_Hooks_Says_So()
     {
         NewFx();
@@ -328,7 +337,7 @@ public class RevalRendererTests : TestContext
         Assert.Contains("requires Hooks", error.ToString());
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void An_Owner_Without_ComponentBase_Is_Re_Rendered_Through_Its_Own_Handler()
     {
         var fx = NewFx();
@@ -339,9 +348,11 @@ public class RevalRendererTests : TestContext
         cut.WaitForState(() => cut.Instance.Events > 0);
         var events = cut.Instance.Events;
 
-        gate.SetResult();
+        gate.Open();
 
         cut.WaitForState(() => cut.Instance.Events > events);
+        Assert.True(fx.State(1)!.IsResolved);
+        Assert.Equal("item1", fx.State(1)!.Data);
     }
 
     private sealed class HandOwner : IComponent, IHandleEvent
@@ -377,18 +388,5 @@ public class RevalRendererTests : TestContext
             builder.AddComponentParameter(2, nameof(RevalRenderer.Hooks), Hooks);
             builder.CloseComponent();
         });
-    }
-}
-
-internal static class TestUtils
-{
-    public static async Task UntilAsync(Func<bool> condition, int timeoutMs = 10_000)
-    {
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMs));
-        while (!condition())
-        {
-            cts.Token.ThrowIfCancellationRequested();
-            await Task.Yield();
-        }
     }
 }

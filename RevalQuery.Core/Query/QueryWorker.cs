@@ -15,8 +15,8 @@ namespace RevalQuery.Core.Query;
 public enum FetchOutcome
 {
     /// <summary>
-    /// Nothing ran, because the worker was already released. The caller should take a fresh
-    /// worker and try again rather than treat the query's data as fetched.
+    /// Nothing ran, because the worker was disposed, which only happens when its client is.
+    /// The caller must not treat the query's data as fetched.
     /// </summary>
     NotRun,
 
@@ -46,11 +46,12 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
     private QueryState<TKey, TRes> Query { get; }
 
-    private CancellationTokenSource? _pollingCts;
+    private ITimer? _pollingTimer;
     private CancellationTokenSource? _currentFetchCts;
     private TaskCompletionSource<FetchOutcome>? _inFlight;
     private bool _isDisposed;
     private bool _releaseWhenSettled;
+    private int _claims;
 
     /// <inheritdoc />
     public event Action? OnReleaseDue;
@@ -76,7 +77,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         _persistence = persistence;
 
         Query = query;
-        _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy();
+        _retryPolicy = retryPolicy ?? new ExponentialBackoffRetryPolicy(revalQueryOptions.TimeProvider);
 
         Query.OnFirstSubscriberAdded += StartPolling;
         Query.OnLastSubscriberRemoved += PausePolling;
@@ -89,19 +90,26 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         }
     }
 
-    private void PausePolling(QueryState<TKey, TRes> state) => StopPolling();
+    /// <summary>
+    /// Ends polling because the last observer left, unless one has arrived since. The client
+    /// releases the worker before this runs, and a release refused by a hold leaves the worker
+    /// in place under a subscriber who may already have come back.
+    /// </summary>
+    private void PausePolling(QueryState<TKey, TRes> state) => StopPolling(onlyIfUnobserved: true);
 
-    private void StopPolling()
+    private void StopPolling(bool onlyIfUnobserved = false)
     {
-        CancellationTokenSource? cts;
+        ITimer? timer;
 
         lock (_gate)
         {
-            cts = _pollingCts;
-            _pollingCts = null;
+            if (onlyIfUnobserved && Query.HasObservers) return;
+
+            timer = _pollingTimer;
+            _pollingTimer = null;
         }
 
-        CancelSafely(cts);
+        timer?.Dispose();
     }
 
     /// <summary>
@@ -143,17 +151,63 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         if (!wasEnabled) RunIfStale();
     }
 
+    /// <summary>
+    /// Holds the worker for a run its caller is about to start, so that no release can take it
+    /// in between. The claim ends with <see cref="RunClaimedAsync"/> or <see cref="Unclaim"/>.
+    /// </summary>
+    /// <remarks>
+    /// The caller makes the claim under the client lock, in the same step that finds the worker.
+    /// </remarks>
+    public void Claim()
+    {
+        lock (_gate) _claims++;
+    }
+
+    /// <summary>
+    /// Drops a claim that is not going to become a run. A release that was refused while the
+    /// worker was held is announced once the last hold ends.
+    /// </summary>
+    public void Unclaim()
+    {
+        bool releaseDue;
+
+        lock (_gate)
+        {
+            _claims--;
+            releaseDue = TakeDueReleaseLocked();
+        }
+
+        if (releaseDue) OnReleaseDue?.Invoke();
+    }
+
+    /// <summary>
+    /// Runs the fetch a claim was made for, and spends the claim: it becomes the fetch in
+    /// flight, or a join of it.
+    /// </summary>
+    /// <returns>What the run did, as <see cref="RunAsync()"/>.</returns>
+    public Task<FetchOutcome> RunClaimedAsync() => RunAsync(claimed: true);
+
     /// <inheritdoc />
     public bool TryRelease()
     {
         lock (_gate)
         {
             if (_isDisposed) return true;
-            if (_inFlight is not { Task.IsCompleted: false }) return true;
+            if (!IsHeldLocked()) return true;
 
             _releaseWhenSettled = true;
             return false;
         }
+    }
+
+    private bool IsHeldLocked() => _claims > 0 || _inFlight is { Task.IsCompleted: false };
+
+    private bool TakeDueReleaseLocked()
+    {
+        if (!_releaseWhenSettled || IsHeldLocked()) return false;
+
+        _releaseWhenSettled = false;
+        return true;
     }
 
     /// <inheritdoc />
@@ -199,34 +253,14 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         var interval = EnsuredFetchOptions.RefetchInterval;
         if (interval <= TimeSpan.Zero) return;
 
-        CancellationTokenSource cts;
         lock (_gate)
         {
             if (_isDisposed) return;
-            if (_pollingCts is { IsCancellationRequested: false }) return;
+            if (_pollingTimer is not null) return;
 
-            cts = new CancellationTokenSource();
-            _pollingCts = cts;
+            _pollingTimer = _revalQueryOptions.TimeProvider.CreateTimer(
+                _ => RunIfAllowed(), null, interval, interval);
         }
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                while (!cts.IsCancellationRequested)
-                {
-                    await Task.Delay(interval, cts.Token);
-                    RunIfAllowed();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                cts.Dispose();
-            }
-        });
     }
 
     private void HandleInvalidation()
@@ -272,7 +306,9 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     /// <returns>
     /// What the run did. Use Query.Data to access the result of a settled one.
     /// </returns>
-    public Task<FetchOutcome> RunAsync()
+    public Task<FetchOutcome> RunAsync() => RunAsync(claimed: false);
+
+    private Task<FetchOutcome> RunAsync(bool claimed)
     {
         TaskCompletionSource<FetchOutcome> completion;
         CancellationTokenSource fetchCts;
@@ -280,6 +316,8 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
         lock (_gate)
         {
+            if (claimed) _claims--;
+
             if (_isDisposed) return Task.FromResult(FetchOutcome.NotRun);
 
             if (_inFlight is { Task.IsCompleted: false } running)
@@ -322,8 +360,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
                 completion.TrySetResult(outcome);
 
-                releaseDue = _releaseWhenSettled;
-                _releaseWhenSettled = false;
+                releaseDue = TakeDueReleaseLocked();
             }
 
             fetchCts.Dispose();
@@ -429,13 +466,14 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
     /// </remarks>
     public void Dispose()
     {
-        CancellationTokenSource? pollingCts;
+        ITimer? pollingTimer;
 
         lock (_gate)
         {
             if (_isDisposed) return;
             _isDisposed = true;
-            pollingCts = _pollingCts;
+            pollingTimer = _pollingTimer;
+            _pollingTimer = null;
         }
 
         Query.OnFirstSubscriberAdded -= StartPolling;
@@ -443,6 +481,6 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         Query.OnInvalidated -= HandleInvalidation;
         Query.OnCancelRequested -= CancelCurrentFetch;
 
-        CancelSafely(pollingCts);
+        pollingTimer?.Dispose();
     }
 }

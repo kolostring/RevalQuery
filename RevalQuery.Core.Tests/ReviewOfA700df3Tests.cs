@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -9,31 +10,27 @@ namespace RevalQuery.Core.Tests;
 
 public class ReviewOfA700df3Tests
 {
-    [Fact]
+    private readonly FakeTimeProvider _clock = new();
+
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Cancelled_Fetch_Does_Not_Return_Data_It_Never_Fetched()
     {
         using var client = NewClient();
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("cancelled", handler.Handle).Build();
 
-        var started = new TaskCompletionSource();
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
 
-        var options = QueryOptions.Create("cancelled", async ctx =>
-        {
-            started.TrySetResult();
-            await Task.Delay(5000, ctx.CancellationToken ?? CancellationToken.None);
-            return "value";
-        }).Build();
+        await client.CancelAsync("cancelled").WaitAsync(TestContext.Current.CancellationToken);
 
-        var fetch = client.QueryAsync(options);
-        await started.Task;
-        await client.CancelAsync("cancelled");
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fetch.WaitAsync(TestContext.Current.CancellationToken));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Restore_Does_Not_Clear_A_Failed_Query()
     {
-        var persistence = new SlowPersistence("from-disk", loadDelayMs: 150);
+        using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
 
         var options = QueryOptions.Create<string>(
@@ -41,19 +38,22 @@ public class ReviewOfA700df3Tests
             .ConfigureRetry(r => r.Retry(0))
             .Build();
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options, TestContext.Current.CancellationToken));
 
         var state = client.FindQuery<string>("failed")!;
         Assert.True(state.IsException);
+        Assert.True(state.IsRestoring);
 
-        await Task.Delay(250);
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsException);
         Assert.NotNull(state.Exception);
         Assert.False(state.IsResolved);
+        Assert.Null(state.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Successful_Fetch_Clears_An_Earlier_Failure()
     {
         using var client = NewClient();
@@ -66,45 +66,40 @@ public class ReviewOfA700df3Tests
             .ConfigureRetry(r => r.Retry(0))
             .Build();
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options, TestContext.Current.CancellationToken));
 
         shouldFail = false;
-        Assert.Equal("value", await client.QueryAsync(options));
+        Assert.Equal("value", await client.QueryAsync(options, TestContext.Current.CancellationToken));
 
         var state = client.FindQuery<string>("recovering")!;
         Assert.True(state.IsResolved);
         Assert.Null(state.Exception);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Failed_Fetch_Still_Throws_When_A_Restore_Lands_During_It()
     {
-        var persistence = new SlowPersistence("from-disk", loadDelayMs: 30);
+        using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("racing", handler.Handle).ConfigureRetry(r => r.Retry(0)).Build();
 
-        var options = QueryOptions.Create<string>("racing", async _ =>
-        {
-            await Task.Delay(80);
-            throw new InvalidOperationException("boom");
-        }).ConfigureRetry(r => r.Retry(0)).Build();
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryAsync(options));
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
+        var state = client.FindQuery<string>("racing")!;
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(state.IsResolved);
+        Assert.Equal("from-disk", state.Data);
+
+        handler.Fail(0, new InvalidOperationException("boom"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fetch.WaitAsync(TestContext.Current.CancellationToken));
+        Assert.True(state.IsException);
     }
 
-    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
-
-    private sealed class SlowPersistence(string stored, int loadDelayMs) : IQueryPersistence
-    {
-        public async ValueTask<PersistedQuery<TRes>?> LoadAsync<TRes>(
-            System.Runtime.CompilerServices.ITuple key, CancellationToken ct = default)
-        {
-            await Task.Delay(loadDelayMs, ct);
-            return (PersistedQuery<TRes>?)(object)new PersistedQuery<string>(stored, new QueryFreshness(DateTimeOffset.UtcNow));
-        }
-
-        public ValueTask SaveAsync<TRes>(
-            System.Runtime.CompilerServices.ITuple key, PersistedQuery<TRes> entry, CancellationToken ct = default) =>
-            default;
-    }
+    private RevalClient NewClient(IQueryPersistence? persistence = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 }

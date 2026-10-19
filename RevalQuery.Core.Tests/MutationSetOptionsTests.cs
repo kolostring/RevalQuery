@@ -14,8 +14,6 @@ public class MutationSetOptionsTests
 {
     private sealed record Req(string Name);
 
-    private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
     private static RevalClient NewClient(IServiceProvider? sp = null) =>
         new(sp ?? new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
 
@@ -32,27 +30,21 @@ public class MutationSetOptionsTests
             .Build();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Options_Set_During_The_Handler_Fire_Their_Callbacks_And_The_Old_Ones_Do_Not()
     {
         var log = new ConcurrentQueue<string>();
-        var started = Signal();
-        var release = Signal();
+        var h = new GatedHandler<string>();
         using var client = NewClient();
 
-        var observer = client.CreateMutation(Logging("old", log, async ctx =>
-        {
-            started.SetResult();
-            await release.Task;
-            return ctx.Params.Name;
-        }), () => { });
+        var observer = client.CreateMutation(Logging("old", log, h.Handle), () => { });
 
-        var run = observer.State.ExecuteAsync(new Req("a"));
-        await started.Task;
+        var run = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(Logging("new", log, _ => Task.FromResult("unused")));
-        release.SetResult();
-        await run;
+        h.Release(0, "a");
+        await run.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(
             ["old:mutate:a", "new:resolved:a", "new:settled:a"],
@@ -60,128 +52,105 @@ public class MutationSetOptionsTests
         Assert.Equal("a", observer.State.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Options_Set_During_The_Handler_Also_Reroute_A_Failure()
     {
         var log = new ConcurrentQueue<string>();
-        var started = Signal();
-        var release = Signal();
+        var h = new GatedHandler<string>();
         using var client = NewClient();
 
-        var observer = client.CreateMutation(Logging("old", log, async _ =>
-        {
-            started.SetResult();
-            await release.Task;
-            throw new InvalidOperationException("boom");
-        }), () => { });
+        var observer = client.CreateMutation(
+            MutationOptions.Create<Req, string>(h.Handle)
+                .ConfigureRetry(r => r.Retry(0))
+                .OnMutate(p => { log.Enqueue($"old:mutate:{p.Name}"); return Task.CompletedTask; })
+                .OnException((_, p) => { log.Enqueue($"old:exception:{p.Name}"); return Task.CompletedTask; })
+                .Build(),
+            () => { });
 
-        var run = observer.State.ExecuteAsync(new Req("a"));
-        await started.Task;
+        var run = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(Logging("new", log, _ => Task.FromResult("unused")));
-        release.SetResult();
-        await run;
+        h.Fail(0, new InvalidOperationException("boom"));
+        await run.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(["old:mutate:a", "new:exception:a", "new:settled:a"], log.ToArray());
         Assert.True(observer.State.IsException);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Options_Set_Between_Retry_Attempts_Supply_The_Next_Handler_But_Not_The_Retry_Count()
     {
-        var started = Signal();
-        var release = Signal();
-        var newCalls = 0;
+        var h = new GatedHandler<string>();
+        var newCalls = new Counter();
         using var client = NewClient();
 
-        var original = MutationOptions.Create<Req, string>(async _ =>
-            {
-                started.SetResult();
-                await release.Task;
-                throw new InvalidOperationException("first attempt");
-            })
+        var original = MutationOptions.Create<Req, string>(h.Handle)
             .ConfigureRetry(r => r.Retry(2, _ => TimeSpan.Zero))
             .Build();
 
         var observer = client.CreateMutation(original, () => { });
-        var run = observer.State.ExecuteAsync(new Req("a"));
-        await started.Task;
+        var run = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(MutationOptions.Create<Req, string>(_ =>
             {
-                Interlocked.Increment(ref newCalls);
+                newCalls.Increment();
                 throw new InvalidOperationException("later attempt");
             })
             .ConfigureRetry(r => r.Retry(0))
             .Build());
 
-        release.SetResult();
-        await run;
+        h.Fail(0, new InvalidOperationException("first attempt"));
+        await run.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(2, newCalls);
+        Assert.Equal(2, newCalls.Value);
         Assert.True(observer.State.IsException);
         Assert.Equal("later attempt", observer.State.Exception!.Message);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Handler_Set_Between_Attempts_Can_Be_The_One_That_Succeeds()
     {
-        var started = Signal();
-        var release = Signal();
+        var h = new GatedHandler<string>();
         using var client = NewClient();
 
         var observer = client.CreateMutation(
-            MutationOptions.Create<Req, string>(async _ =>
-                {
-                    started.SetResult();
-                    await release.Task;
-                    throw new InvalidOperationException("first attempt");
-                })
+            MutationOptions.Create<Req, string>(h.Handle)
                 .ConfigureRetry(r => r.Retry(1, _ => TimeSpan.Zero))
                 .Build(),
             () => { });
 
-        var run = observer.State.ExecuteAsync(new Req("a"));
-        await started.Task;
+        var run = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(MutationOptions.Create<Req, string>(ctx => Task.FromResult($"fixed-{ctx.Params.Name}")).Build());
-        release.SetResult();
-        await run;
+        h.Fail(0, new InvalidOperationException("first attempt"));
+        await run.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(observer.State.IsResolved);
         Assert.Equal("fixed-a", observer.State.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Of_Two_Concurrent_Runs_Only_The_Latest_Reads_The_New_Options()
     {
         var log = new ConcurrentQueue<string>();
-        var startedA = Signal();
-        var startedB = Signal();
-        var gateA = Signal();
-        var gateB = Signal();
+        var h = new GatedHandler<string>();
         using var client = NewClient();
 
-        async Task<string> Handler(MutationHandlerExecutionContext<Req> ctx)
-        {
-            var (started, gate) = ctx.Params.Name == "a" ? (startedA, gateA) : (startedB, gateB);
-            started.SetResult();
-            await gate.Task;
-            return ctx.Params.Name;
-        }
+        var observer = client.CreateMutation(Logging("old", log, h.Handle), () => { });
 
-        var observer = client.CreateMutation(Logging("old", log, Handler), () => { });
+        var runA = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
+        var runB = observer.State.ExecuteAsync(new Req("b"), TestContext.Current.CancellationToken);
+        await h.Started(1).WaitAsync(TestContext.Current.CancellationToken);
 
-        var runA = observer.State.ExecuteAsync(new Req("a"));
-        await startedA.Task;
-        var runB = observer.State.ExecuteAsync(new Req("b"));
-        await startedB.Task;
+        observer.SetOptions(Logging("new", log, h.Handle));
 
-        observer.SetOptions(Logging("new", log, Handler));
-
-        gateA.SetResult();
-        gateB.SetResult();
-        await Task.WhenAll(runA, runB);
+        h.Release(0, "a");
+        h.Release(1, "b");
+        await Task.WhenAll(runA, runB).WaitAsync(TestContext.Current.CancellationToken);
 
         var fired = log.ToArray();
 
@@ -193,37 +162,32 @@ public class MutationSetOptionsTests
         Assert.DoesNotContain("old:resolved:b", fired);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Per_Call_Callbacks_Are_Not_Touched_By_New_Options()
     {
         var log = new ConcurrentQueue<string>();
-        var started = Signal();
-        var release = Signal();
+        var h = new GatedHandler<string>();
         using var client = NewClient();
 
-        var observer = client.CreateMutation(Logging("old", log, async ctx =>
-        {
-            started.SetResult();
-            await release.Task;
-            return ctx.Params.Name;
-        }), () => { });
+        var observer = client.CreateMutation(Logging("old", log, h.Handle), () => { });
 
         var run = observer.State.ExecuteAsync(
             new Req("a"),
             mutateOptions: new MutateOptions<Req, string>(
                 OnResolved: (_, p) => { log.Enqueue($"call:resolved:{p.Name}"); return Task.CompletedTask; },
-                OnSettled: (_, _, p) => { log.Enqueue($"call:settled:{p.Name}"); return Task.CompletedTask; }));
-        await started.Task;
+                OnSettled: (_, _, p) => { log.Enqueue($"call:settled:{p.Name}"); return Task.CompletedTask; }), ct: TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(Logging("new", log, _ => Task.FromResult("unused")));
-        release.SetResult();
-        await run;
+        h.Release(0, "a");
+        await run.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains("call:resolved:a", log);
-        Assert.Contains("call:settled:a", log);
+        Assert.Equal(
+            ["old:mutate:a", "new:resolved:a", "call:resolved:a", "new:settled:a", "call:settled:a"],
+            log.ToArray());
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Options_Set_While_Idle_Are_Used_By_The_Next_Run()
     {
         var log = new ConcurrentQueue<string>();
@@ -232,45 +196,39 @@ public class MutationSetOptionsTests
         var observer = client.CreateMutation(
             Logging("old", log, ctx => Task.FromResult($"old-{ctx.Params.Name}")), () => { });
 
-        await observer.State.ExecuteAsync(new Req("a"));
+        await observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
         log.Clear();
 
         observer.SetOptions(Logging("new", log, ctx => Task.FromResult($"new-{ctx.Params.Name}")));
-        await observer.State.ExecuteAsync(new Req("b"));
+        await observer.State.ExecuteAsync(new Req("b"), TestContext.Current.CancellationToken);
 
         Assert.Equal(["new:mutate:b", "new:resolved:b", "new:settled:b"], log.ToArray());
         Assert.Equal("new-b", observer.State.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Options_Set_After_A_Run_Settled_Do_Not_Reach_It_And_Reach_The_Next()
     {
         var log = new ConcurrentQueue<string>();
-        var started = Signal();
-        var release = Signal();
+        var h = new GatedHandler<string>();
         using var client = NewClient();
 
-        var observer = client.CreateMutation(Logging("v1", log, async ctx =>
-        {
-            started.SetResult();
-            await release.Task;
-            return ctx.Params.Name;
-        }), () => { });
+        var observer = client.CreateMutation(Logging("v1", log, h.Handle), () => { });
 
-        var first = observer.State.ExecuteAsync(new Req("a"));
-        await started.Task;
-        release.SetResult();
-        await first;
+        var first = observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
+        await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
+        h.Release(0, "a");
+        await first.WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(Logging("v2", log, ctx => Task.FromResult(ctx.Params.Name)));
-        await observer.State.ExecuteAsync(new Req("b"));
+        await observer.State.ExecuteAsync(new Req("b"), TestContext.Current.CancellationToken);
 
         Assert.Equal(
             ["v1:mutate:a", "v1:resolved:a", "v1:settled:a", "v2:mutate:b", "v2:resolved:b", "v2:settled:b"],
             log.ToArray());
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task CreateMutation_Gives_Handlers_The_Clients_Service_Provider()
     {
         var sp = new ServiceCollection().BuildServiceProvider();
@@ -285,12 +243,12 @@ public class MutationSetOptionsTests
             }).Build(),
             () => { });
 
-        await observer.State.ExecuteAsync(new Req("a"));
+        await observer.State.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
 
         Assert.Same(sp, seen);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void CreateMutation_After_The_Client_Is_Disposed_Throws()
     {
         var client = NewClient();
@@ -300,33 +258,35 @@ public class MutationSetOptionsTests
             MutationOptions.Create<Req, string>(_ => Task.FromResult("x")).Build(), () => { }));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Observe_Creates_On_The_First_Call_Then_Reapplies_Options()
     {
-        var changes = 0;
+        var changes = new Counter();
+        var ignored = new Counter();
         using var client = NewClient();
         MutationObserver<Req, string>? slot = null;
 
         var first = client.Observe(ref slot,
             MutationOptions.Create<Req, string>(_ => Task.FromResult("one")).Build(),
-            () => Interlocked.Increment(ref changes));
+            () => changes.Increment());
         var created = slot;
 
         var second = client.Observe(ref slot,
             MutationOptions.Create<Req, string>(_ => Task.FromResult("two")).Build(),
-            () => { });
+            () => ignored.Increment());
 
         Assert.Same(created, slot);
         Assert.Same(first, second);
 
-        await second.ExecuteAsync(new Req("a"));
+        await second.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
 
         Assert.Equal("two", second.Data);
 
-        Assert.True(Volatile.Read(ref changes) > 0);
+        Assert.Equal(2, changes.Value);
+        Assert.Equal(0, ignored.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Hooks_Apply_The_Options_Of_Every_Render()
     {
         using var client = NewClient();
@@ -339,7 +299,7 @@ public class MutationSetOptionsTests
 
         Assert.Same(first, second);
 
-        await second.ExecuteAsync(new Req("a"));
+        await second.ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
 
         Assert.Equal("render-2", second.Data);
     }

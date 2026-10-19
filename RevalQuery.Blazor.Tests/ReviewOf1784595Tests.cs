@@ -21,71 +21,79 @@ public class ReviewOf1784595Tests
     private static readonly JsonSerializerOptions Serializer =
         new() { TypeInfoResolver = WidgetContext.Default };
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Persisting_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
-        var state = PersistentStateHarness.CreateEmpty(out var written);
+        using var harness = await PersistentStateHarness.CreateEmptyAsync();
 
         var services = new ServiceCollection();
-        services.AddSingleton(state);
+        services.AddSingleton(harness.State);
         services.AddRevalQuery();
         services.AddRevalQueryPrerenderTransfer(Serializer);
 
         using var provider = services.BuildServiceProvider();
-        var scope = provider.CreateScope().ServiceProvider;
-        scope.GetRequiredService<PrerenderTransfer>();
-        var client = scope.GetRequiredService<RevalClient>();
+        using var scope = provider.CreateScope();
+        scope.ServiceProvider.GetRequiredService<PrerenderTransfer>();
+        var client = scope.ServiceProvider.GetRequiredService<RevalClient>();
 
         await client.QueryAsync(
-            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build());
+            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build(), TestContext.Current.CancellationToken);
 
         await client.QueryAsync(
-            QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build());
+            QueryOptions.Create("uncovered", static _ => Task.FromResult(new Gizmo(2))).Build(), TestContext.Current.CancellationToken);
 
-        await PersistentStateHarness.PersistAsync(state);
+        var written = await harness.PersistAsync();
 
         Assert.True(written.ContainsKey(PrerenderTransferStateKey));
 
         var payload = JsonSerializer.Deserialize<string>(written[PrerenderTransferStateKey])!;
-        Assert.Contains("covered", payload);
+        Assert.Contains("System.String:covered", payload);
         Assert.DoesNotContain("uncovered", payload);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Loading_Skips_A_Type_The_Resolver_Does_Not_Cover()
     {
-        var serverState = PersistentStateHarness.CreateEmpty(out var written);
+        using var serverState = await PersistentStateHarness.CreateEmptyAsync();
 
         var serverServices = new ServiceCollection();
-        serverServices.AddSingleton(serverState);
+        serverServices.AddSingleton(serverState.State);
         serverServices.AddRevalQuery();
         serverServices.AddRevalQueryPrerenderTransfer(
             new JsonSerializerOptions { TypeInfoResolver = GizmoContext.Default });
 
         using var serverProvider = serverServices.BuildServiceProvider();
-        var serverScope = serverProvider.CreateScope().ServiceProvider;
-        serverScope.GetRequiredService<PrerenderTransfer>();
+        using var serverScope = serverProvider.CreateScope();
+        serverScope.ServiceProvider.GetRequiredService<PrerenderTransfer>();
 
-        await serverScope.GetRequiredService<RevalClient>().QueryAsync(
-            QueryOptions.Create("gizmo", static _ => Task.FromResult(new Gizmo(2))).Build());
+        await serverScope.ServiceProvider.GetRequiredService<RevalClient>().QueryAsync(
+            QueryOptions.Create("gizmo", static _ => Task.FromResult(new Gizmo(2))).Build(), TestContext.Current.CancellationToken);
 
-        await PersistentStateHarness.PersistAsync(serverState);
+        var written = await serverState.PersistAsync();
 
-        var clientState = PersistentStateHarness.CreateFrom(written);
-        var transfer = new PrerenderTransfer(clientState, new ServiceCollection().BuildServiceProvider(), Serializer);
+        using var clientState = await PersistentStateHarness.CreateFromAsync(written);
+        using var emptyProvider = new ServiceCollection().BuildServiceProvider();
+        var covering = new PrerenderTransfer(
+            clientState.State, emptyProvider, new JsonSerializerOptions { TypeInfoResolver = GizmoContext.Default });
+        var blind = new PrerenderTransfer(clientState.State, emptyProvider, Serializer);
 
-        var loaded = await transfer.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"));
+        var loadedWithTheResolver = await covering.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"), TestContext.Current.CancellationToken);
+        var loadedWithoutIt = await blind.LoadAsync<Gizmo>(ValueTuple.Create("gizmo"), TestContext.Current.CancellationToken);
 
-        Assert.Null(loaded);
+        Assert.Equal(new Gizmo(2), loadedWithTheResolver?.Data);
+        Assert.Null(loadedWithoutIt);
     }
 
-    [Fact]
-    public void Disposing_The_Prerender_Transfer_Twice_Is_Harmless()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task Disposing_The_Scope_Unsubscribes_The_Transfer_Although_It_Is_Disposed_Twice()
     {
-        var state = PersistentStateHarness.CreateEmpty(out _);
+        // The transfer is registered under two service types, so the container disposes it twice.
+        // Surviving that is not observable from outside: the framework's own unsubscribe is
+        // idempotent. What is observable is that the subscription is gone afterwards.
+        using var harness = await PersistentStateHarness.CreateEmptyAsync();
 
         var services = new ServiceCollection();
-        services.AddSingleton(state);
+        services.AddSingleton(harness.State);
         services.AddRevalQuery();
         services.AddRevalQueryPrerenderTransfer(Serializer);
 
@@ -96,7 +104,13 @@ public class ReviewOf1784595Tests
             scope.ServiceProvider.GetRequiredService<PrerenderTransfer>(),
             scope.ServiceProvider.GetRequiredService<IQueryPersistence>());
 
+        await scope.ServiceProvider.GetRequiredService<RevalClient>().QueryAsync(
+            QueryOptions.Create("covered", static _ => Task.FromResult(new Widget(1, "kept"))).Build(), TestContext.Current.CancellationToken);
+
         scope.Dispose();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => harness.PersistAsync());
+        Assert.Contains("Nothing was registered", error.Message);
     }
 
     private const string PrerenderTransferStateKey = "RevalQuery.PrerenderTransfer";

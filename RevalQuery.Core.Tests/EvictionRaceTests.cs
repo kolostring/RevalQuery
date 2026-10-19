@@ -1,4 +1,3 @@
-﻿using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
@@ -6,19 +5,90 @@ using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query.Options;
-using RevalQuery.Core.Registry;
+using static RevalQuery.Core.Tests.RegistryProbe;
 
 namespace RevalQuery.Core.Tests;
 
 [CollectionDefinition("stress", DisableParallelization = true)]
 public sealed class StressCollection;
 
-[Collection("stress")]
 public class EvictionRaceTests
+{
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Retry_After_An_Eviction_Takes_A_Fresh_State_And_Worker()
+    {
+        var eviction = new ManualEviction();
+        using var client = new RevalClient(
+            new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
+        var handler = new GatedHandler<string>(honourToken: false);
+        var options = QueryOptions.Create("raced", handler.Handle).Build();
+
+        var superseded = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
+        client.FindQuery("raced")!.Cancel();
+
+        var retried = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
+
+        eviction.Evict(ValueTuple.Create("raced"));
+        AssertEveryWorkerHasItsState(client);
+
+        handler.Release(0, "stale");
+        await handler.Started(1).WaitAsync(TestContext.Current.CancellationToken);
+        AssertEveryWorkerHasItsState(client);
+        Assert.NotNull(client.FindQuery("raced"));
+
+        handler.Release(1, "from-network");
+        Assert.Equal("from-network", await retried.WaitAsync(TestContext.Current.CancellationToken));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => superseded.WaitAsync(TestContext.Current.CancellationToken));
+
+        AssertEveryWorkerHasItsState(client);
+        Assert.Equal("from-network", client.FindQuery<string>("raced")!.Data);
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal(0, WorkerCount(client));
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Subscriber_After_An_Eviction_Mid_Fetch_Gets_A_Driven_State()
+    {
+        var eviction = new ManualEviction();
+        using var client = new RevalClient(
+            new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("raced", handler.Handle).Build();
+
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
+
+        eviction.Evict(ValueTuple.Create("raced"));
+        AssertEveryWorkerHasItsState(client);
+
+        using var observer = client.Subscribe(options, () => { });
+        Assert.Same(observer.Query, client.FindQuery("raced"));
+        Assert.True(observer.Query.IsFetching);
+        AssertEveryWorkerHasItsState(client);
+
+        var resolved = Signals.UntilAsync(observer.Query, q => q.IsResolved, TestContext.Current.CancellationToken);
+        handler.ReleaseAll("from-network");
+        await resolved;
+
+        Assert.Equal("from-network", observer.Query.Data);
+        AssertEveryWorkerHasItsState(client);
+        Discard(fetch);
+    }
+}
+
+/// <summary>
+/// Probabilistic regression net for the eviction race the deterministic tests in
+/// <see cref="EvictionRaceTests"/> pin one interleaving at a time. A storm can find an
+/// interleaving nobody wrote down, but it cannot prove one is absent.
+/// </summary>
+[Collection("stress")]
+public class EvictionRaceStressTests
 {
     private const int StormRounds = 300;
 
-    [Fact]
+    [Fact(Explicit = true, Timeout = HangGuardMilliseconds)]
     public async Task An_Eviction_Between_Run_Attempts_Never_Strands_A_Worker_On_A_Stateless_Node()
     {
         var eviction = new EvictOnRelease();
@@ -27,7 +97,7 @@ public class EvictionRaceTests
 
         var options = QueryOptions.Create<string>("raced", async _ =>
         {
-            await Task.Delay(5);
+            await Task.Yield();
             return "from-network";
         }).Build();
 
@@ -45,7 +115,7 @@ public class EvictionRaceTests
                     if (result is not null) Assert.Equal("from-network", result);
                 }
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
         try
         {
@@ -55,7 +125,7 @@ public class EvictionRaceTests
 
                 try
                 {
-                    await TestUtils.WaitUntilAsync(() => observer.Query.Data is not null, timeoutMs: 1000);
+                    await Signals.UntilAsync(observer.Query, q => q.Data is not null, TestContext.Current.CancellationToken);
                     Assert.Equal("from-network", observer.Query.Data);
                     AssertEveryWorkerHasItsState(client);
                 }
@@ -68,7 +138,7 @@ public class EvictionRaceTests
         finally
         {
             Volatile.Write(ref rounds, StormRounds);
-            await storm;
+            await storm.WaitAsync(TestContext.Current.CancellationToken);
         }
     }
 
@@ -94,24 +164,5 @@ public class EvictionRaceTests
         public void CancelEviction(ITuple key) { }
 
         public Task StopAsync() => Task.CompletedTask;
-    }
-
-    private static void AssertEveryWorkerHasItsState(RevalClient client)
-    {
-        var registry = (QueryRegistry)typeof(RevalClient)
-            .GetField("_registry", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .GetValue(client)!;
-
-        Walk(registry.Root);
-
-        static void Walk(RegistryNode node)
-        {
-            Assert.False(
-                node.Worker is not null && node.State is null,
-                "a registry node holds a worker but no state, so the next subscriber to that " +
-                "key would get a state nothing is driving");
-
-            foreach (var child in node.Children.Values) Walk(child);
-        }
     }
 }

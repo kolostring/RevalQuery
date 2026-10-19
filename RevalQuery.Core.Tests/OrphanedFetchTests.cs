@@ -7,77 +7,58 @@ namespace RevalQuery.Core.Tests;
 
 public class OrphanedFetchTests
 {
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task CancelAsync_Reaches_A_Fetch_Left_Running_By_A_Released_Worker()
     {
         using var client = NewClient();
+        var handler = new GatedHandler<string>(honourToken: false);
 
-        var started = new TaskCompletionSource();
-        var release = new TaskCompletionSource();
-
-        var options = QueryOptions.Create<string>("orphan", async _ =>
+        try
         {
-            started.TrySetResult();
-            await release.Task;
-            return "from-network";
-        }).Build();
+            var observer = client.Subscribe(QueryOptions.Create("orphan", handler.Handle).Build(), () => { });
+            Assert.Equal(1, handler.Calls);
 
-        var observer = client.Subscribe(options, () => { });
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            observer.Dispose();
 
-        observer.Dispose();
+            var cancelling = client.CancelAsync("orphan");
+            Assert.False(cancelling.IsCompleted);
 
-        var cancelling = client.CancelAsync("orphan");
-        release.TrySetResult();
-        await cancelling.WaitAsync(TimeSpan.FromSeconds(5));
+            handler.Release(0, "from-network");
+            await cancelling.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Null(client.FindQuery<string>("orphan")!.Data);
+            Assert.Null(client.FindQuery<string>("orphan")!.Data);
+        }
+        finally
+        {
+            handler.ReleaseAll("released");
+        }
     }
 
-    [Fact]
+    /// <remarks>
+    /// The library calls the handler synchronously inside <c>QueryAsync</c>, so a second fetch,
+    /// through the released worker or a new one, would show in <c>Calls</c> before
+    /// <c>QueryAsync</c> returns. If the handler call ever moves behind a yield, revisit this test.
+    /// </remarks>
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Released_Worker_Does_Not_Let_A_Second_Fetch_Run_Alongside_Its_Own()
     {
         using var client = NewClient();
-
-        var started = new TaskCompletionSource();
-        var release = new TaskCompletionSource();
-        var concurrent = 0;
-        var peak = 0;
-
-        var options = QueryOptions.Create<string>("double", async _ =>
-        {
-            var now = Interlocked.Increment(ref concurrent);
-            InterlockedMax(ref peak, now);
-
-            started.TrySetResult();
-            await release.Task;
-
-            Interlocked.Decrement(ref concurrent);
-            return "from-network";
-        }).Build();
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("double", handler.Handle).Build();
 
         var observer = client.Subscribe(options, () => { });
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, handler.Calls);
 
         observer.Dispose();
 
-        var fetch = client.QueryAsync(options);
-        await Task.Delay(100);
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
+        Assert.False(fetch.IsCompleted);
 
-        release.TrySetResult();
-        await fetch.WaitAsync(TimeSpan.FromSeconds(5));
+        handler.Release(0, "from-network");
+        await fetch.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(1, peak);
-    }
-
-    private static void InterlockedMax(ref int target, int value)
-    {
-        int seen;
-        do
-        {
-            seen = Volatile.Read(ref target);
-            if (seen >= value) return;
-        } while (Interlocked.CompareExchange(ref target, value, seen) != seen);
+        Assert.Equal(1, handler.Calls);
     }
 
     private static RevalClient NewClient() =>

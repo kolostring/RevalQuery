@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Abstractions.Query;
@@ -12,6 +13,8 @@ namespace RevalQuery.Core.Tests;
 
 public class ObserverSetOptionsTests
 {
+    private readonly FakeTimeProvider _clock = new();
+
     private static readonly (string, int) Key1 = ("item", 1);
     private static readonly (string, int) Key2 = ("item", 2);
 
@@ -19,8 +22,8 @@ public class ObserverSetOptionsTests
         int id,
         Func<int, CancellationToken, Task<string>>? fetch = null,
         bool enabled = true,
-        TimeSpan? staleTime = null,
-        TimeSpan? refetchInterval = null)
+        TimeSpan? refetchInterval = null,
+        bool neverStale = false)
     {
         fetch ??= static (n, _) => Task.FromResult($"data-{n}");
 
@@ -28,35 +31,39 @@ public class ObserverSetOptionsTests
             .Create<(string, int), string>(("item", id), ctx => fetch(ctx.Key.Item2, ctx.CancellationToken ?? default))
             .Enabled(enabled);
 
-        if (staleTime is { } stale) builder.ConfigureFetch(f => f.StaleTime(stale));
         if (refetchInterval is { } interval) builder.ConfigureFetch(f => f.RefetchInterval(interval));
+        if (neverStale) builder.ConfigureFetch(f => f.NeverStale());
 
         return builder.Build();
     }
 
-    private static RevalClient NewClient(ICacheEvictionPolicy? eviction = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), eviction);
+    private static Func<int, CancellationToken, Task<string>> Counting(Counter calls) => (n, _) =>
+    {
+        calls.Increment();
+        return Task.FromResult($"data-{n}");
+    };
+
+    private RevalClient NewClient(ICacheEvictionPolicy? eviction = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, eviction);
 
     private static QueryState<(string, int), string> StateOf(QueryObserver<(string, int), string> observer) =>
         (QueryState<(string, int), string>)observer.Query;
 
-    [Fact]
-    public async Task The_Same_Key_Reapplies_Options_Without_Refetching()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void The_Same_Key_Reapplies_Options_Without_Refetching()
     {
-        var calls = 0;
+        var calls = new Counter();
         using var client = NewClient();
 
-        var options = Item(1, (n, _) =>
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult($"data-{n}");
-        });
+        var options = Item(1, Counting(calls));
 
         using var observer = client.Subscribe(options, () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => s.IsFetching == false && observer.Query.IsResolved);
+        Assert.True(observer.Query.IsResolved);
+        Assert.True(observer.Query.IsIdle);
         var before = observer.Query;
-        Assert.Equal(1, calls);
+        Assert.Equal(1, calls.Value);
 
+        _clock.Advance(TimeSpan.FromMinutes(1));
         var rebuilt = options with { FetchOptions = FetchOptions.Create().StaleTime(TimeSpan.FromHours(1)).Build() };
         observer.SetOptions(rebuilt);
 
@@ -64,67 +71,73 @@ public class ObserverSetOptionsTests
         Assert.Equal(TimeSpan.FromHours(1), StateOf(observer).FetchOptions!.StaleTime);
 
         Assert.True(observer.Query.IsIdle);
-        Assert.Equal(1, calls);
+        Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
-    public async Task Switching_To_A_Key_Held_Only_By_Disabled_Observers_Starts_Polling()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Switching_To_A_Key_Held_Only_By_Disabled_Observers_Starts_Polling()
     {
-        var calls = 0;
-        var interval = TimeSpan.FromMilliseconds(40);
+        var key1Calls = new Counter();
+        var key2Calls = new Counter();
+        var interval = TimeSpan.FromSeconds(10);
         using var client = NewClient();
 
         Task<string> Fetch(int n, CancellationToken _)
         {
-            if (n == 2) Interlocked.Increment(ref calls);
+            (n == 2 ? key2Calls : key1Calls).Increment();
             return Task.FromResult($"data-{n}");
         }
 
         using var disabled = client.Subscribe(Item(2, Fetch, enabled: false, refetchInterval: interval), () => { });
+        Assert.Equal(0, key2Calls.Value);
+
         using var switching = client.Subscribe(Item(1, Fetch, refetchInterval: interval), () => { });
+        Assert.Equal(1, key1Calls.Value);
 
         switching.SetOptions(Item(2, Fetch, refetchInterval: interval));
+        Assert.Equal(1, key2Calls.Value);
 
-        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref calls) >= 3, 2000);
+        _clock.Advance(interval - TimeSpan.FromTicks(1));
+        Assert.Equal(1, key2Calls.Value);
 
-        Assert.True(Volatile.Read(ref calls) >= 3);
+        _clock.Advance(TimeSpan.FromTicks(1));
+        Assert.Equal(2, key2Calls.Value);
+
+        _clock.Advance(interval);
+        Assert.Equal(3, key2Calls.Value);
+        Assert.Equal(1, key1Calls.Value);
     }
 
-    [Fact]
-    public async Task The_Same_Key_Enabling_A_Disabled_Observer_Fetches()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void The_Same_Key_Enabling_A_Disabled_Observer_Fetches()
     {
-        var calls = 0;
+        var calls = new Counter();
         using var client = NewClient();
 
-        Task<string> Fetch(int n, CancellationToken _)
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult($"data-{n}");
-        }
+        using var observer = client.Subscribe(Item(1, Counting(calls), enabled: false), () => { });
+        Assert.Equal(0, calls.Value);
 
-        using var observer = client.Subscribe(Item(1, Fetch, enabled: false), () => { });
-        Assert.Equal(0, calls);
+        observer.SetOptions(Item(1, Counting(calls), enabled: true));
 
-        observer.SetOptions(Item(1, Fetch, enabled: true));
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
-
-        Assert.Equal(1, calls);
+        Assert.True(observer.Query.IsResolved);
+        Assert.True(observer.Query.IsIdle);
+        Assert.Equal(1, calls.Value);
     }
 
-    [Fact]
-    public async Task A_New_Key_Moves_The_Observer_To_That_Query_And_Fetches_It()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void A_New_Key_Moves_The_Observer_To_That_Query_And_Fetches_It()
     {
         var eviction = new RecordingEviction();
         using var client = NewClient(eviction);
-        var changes = 0;
+        var changes = new Counter();
 
-        using var observer = client.Subscribe(Item(1), () => Interlocked.Increment(ref changes));
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        using var observer = client.Subscribe(Item(1), () => changes.Increment());
+        Assert.True(observer.Query.IsResolved);
         var first = StateOf(observer);
 
         observer.SetOptions(Item(2));
         var second = StateOf(observer);
-        await TestUtils.WaitForStateAsync(second, s => second.IsResolved);
+        Assert.True(second.IsResolved);
 
         Assert.NotSame(first, second);
         Assert.Equal(Key2, second.Key);
@@ -136,16 +149,16 @@ public class ObserverSetOptionsTests
         Assert.Contains(Key2, eviction.Cancelled);
 
         Assert.Same(first, client.FindQuery(Key1));
-        var seen = Volatile.Read(ref changes);
+        var seen = changes.Value;
         first.NotifyChanged();
-        Assert.Equal(seen, Volatile.Read(ref changes));
+        Assert.Equal(seen, changes.Value);
 
         second.NotifyChanged();
-        Assert.Equal(seen + 1, Volatile.Read(ref changes));
+        Assert.Equal(seen + 1, changes.Value);
     }
 
-    [Fact]
-    public async Task A_New_Key_That_Is_Disabled_Does_Not_Fetch()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void A_New_Key_That_Is_Disabled_Does_Not_Fetch()
     {
         var fetched = new List<int>();
         using var client = NewClient();
@@ -157,7 +170,7 @@ public class ObserverSetOptionsTests
         }
 
         using var observer = client.Subscribe(Item(1, Fetch), () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        Assert.True(observer.Query.IsResolved);
 
         observer.SetOptions(Item(2, Fetch, enabled: false));
 
@@ -166,99 +179,81 @@ public class ObserverSetOptionsTests
         Assert.Equal([1], fetched);
 
         observer.SetOptions(Item(2, Fetch, enabled: true));
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        Assert.True(observer.Query.IsResolved);
 
         Assert.Equal([1, 2], fetched);
     }
 
-    [Fact]
-    public async Task Switching_Back_Within_GcTime_Reuses_The_Cached_Query()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Switching_Back_Within_GcTime_Reuses_The_Cached_Query()
     {
-        var calls = 0;
+        var calls = new Counter();
         var eviction = new RecordingEviction();
         using var client = NewClient(eviction);
 
-        Task<string> Fetch(int n, CancellationToken _)
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult($"data-{n}");
-        }
-
-        var hour = TimeSpan.FromHours(1);
-
-        using var observer = client.Subscribe(Item(1, Fetch, staleTime: hour), () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        using var observer = client.Subscribe(Item(1, Counting(calls), neverStale: true), () => { });
+        Assert.True(observer.Query.IsResolved);
         var first = StateOf(observer);
 
-        observer.SetOptions(Item(2, Fetch, staleTime: hour));
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
-        Assert.Equal(2, calls);
+        observer.SetOptions(Item(2, Counting(calls), neverStale: true));
+        Assert.True(observer.Query.IsResolved);
+        Assert.Equal(2, calls.Value);
 
         eviction.Cancelled.Clear();
-        observer.SetOptions(Item(1, Fetch, staleTime: hour));
+        observer.SetOptions(Item(1, Counting(calls), neverStale: true));
 
         Assert.Same(first, observer.Query);
         Assert.Equal("data-1", observer.Query.Data);
         Assert.Contains(Key1, eviction.Cancelled);
-        Assert.Equal(2, calls);
+        Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Switching_While_The_Old_Fetch_Runs_Neither_Cancels_It_Nor_Hears_From_It()
     {
-        var oldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var oldToken = CancellationToken.None;
-        var changes = 0;
+        var old = new GatedHandler<string>();
+        var changes = new Counter();
         using var client = NewClient();
 
-        async Task<string> Fetch(int n, CancellationToken token)
-        {
-            if (n == 1)
-            {
-                oldToken = token;
-                oldStarted.SetResult();
-                await releaseOld.Task;
-            }
-
-            return $"data-{n}";
-        }
-
-        using var observer = client.Subscribe(Item(1, Fetch), () => Interlocked.Increment(ref changes));
-        await oldStarted.Task;
+        using var observer = client.Subscribe(
+            QueryOptions.Create<(string, int), string>(Key1, old.Handle).Build(),
+            () => changes.Increment());
+        await old.Started(0).WaitAsync(TestContext.Current.CancellationToken);
         var first = StateOf(observer);
         Assert.True(first.IsFetching);
 
-        observer.SetOptions(Item(2, Fetch));
+        observer.SetOptions(Item(2));
         var second = StateOf(observer);
-        await TestUtils.WaitForStateAsync(second, s => second.IsResolved);
 
-        Assert.True(first.IsFetching);
-        Assert.False(oldToken.IsCancellationRequested);
+        Assert.True(second.IsResolved);
         Assert.Equal("data-2", observer.Query.Data);
+        Assert.True(first.IsFetching);
+        Assert.False(old.Token(0).IsCancellationRequested);
 
-        var heard = Volatile.Read(ref changes);
+        var heard = changes.Value;
 
-        releaseOld.SetResult();
-        await TestUtils.WaitForStateAsync(first, s => first.IsResolved && first.IsIdle);
+        var settled = Signals.UntilAsync(first, s => s.IsResolved && s.IsIdle, TestContext.Current.CancellationToken);
+        Assert.False(settled.IsCompleted);
+        old.Release(0, "data-1");
+        await settled;
 
         Assert.Equal("data-1", first.Data);
-        Assert.Equal(heard, Volatile.Read(ref changes));
+        Assert.Equal(heard, changes.Value);
         Assert.Same(second, observer.Query);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Result_Type_Mismatch_Throws_Before_The_Observer_Moves()
     {
         var eviction = new RecordingEviction();
         using var client = NewClient(eviction);
-        var changes = 0;
+        var changes = new Counter();
 
-        using var observer = client.Subscribe(Item(1), () => Interlocked.Increment(ref changes));
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        using var observer = client.Subscribe(Item(1), () => changes.Increment());
+        Assert.True(observer.Query.IsResolved);
         var first = StateOf(observer);
 
-        await client.QueryAsync(QueryOptions.Create<(string, int), int>(Key2, static _ => Task.FromResult(7)).Build());
+        await client.QueryAsync(QueryOptions.Create<(string, int), int>(Key2, static _ => Task.FromResult(7)).Build(), TestContext.Current.CancellationToken);
         eviction.Registered.Clear();
 
         var ex = Assert.Throws<InvalidOperationException>(() => observer.SetOptions(Item(2)));
@@ -269,23 +264,23 @@ public class ObserverSetOptionsTests
         Assert.DoesNotContain(Key1, eviction.Registered);
         Assert.False(client.FindQuery(Key2)!.HasObservers);
 
-        var seen = Volatile.Read(ref changes);
+        var seen = changes.Value;
         first.NotifyChanged();
-        Assert.Equal(seen + 1, Volatile.Read(ref changes));
+        Assert.Equal(seen + 1, changes.Value);
     }
 
-    [Fact]
-    public async Task Disposing_After_A_Switch_Releases_The_New_Query_And_Is_Idempotent()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Disposing_After_A_Switch_Releases_The_New_Query_And_Is_Idempotent()
     {
         var eviction = new RecordingEviction();
         using var client = NewClient(eviction);
 
         var observer = client.Subscribe(Item(1), () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        Assert.True(observer.Query.IsResolved);
 
         observer.SetOptions(Item(2));
         var second = StateOf(observer);
-        await TestUtils.WaitForStateAsync(second, s => second.IsResolved);
+        Assert.True(second.IsResolved);
 
         eviction.Registered.Clear();
 
@@ -297,7 +292,7 @@ public class ObserverSetOptionsTests
         Assert.False(client.FindQuery(Key1)!.HasObservers);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SetOptions_After_The_Observer_Is_Disposed_Throws()
     {
         using var client = NewClient();
@@ -309,7 +304,7 @@ public class ObserverSetOptionsTests
         Assert.Throws<ObjectDisposedException>(() => observer.SetOptions(Item(2)));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void SetOptions_After_The_Client_Is_Disposed_Throws()
     {
         var client = NewClient();
@@ -323,41 +318,35 @@ public class ObserverSetOptionsTests
         observer.Dispose();
     }
 
-    [Fact]
-    public async Task Switching_Back_To_An_Evicted_Key_Creates_A_Fresh_Query()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Switching_Back_To_An_Evicted_Key_Creates_A_Fresh_Query()
     {
-        var calls = 0;
+        var calls = new Counter();
         var eviction = new RecordingEviction();
         using var client = NewClient(eviction);
 
-        Task<string> Fetch(int n, CancellationToken _)
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult($"data-{n}");
-        }
-
-        using var observer = client.Subscribe(Item(1, Fetch), () => { });
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        using var observer = client.Subscribe(Item(1, Counting(calls)), () => { });
+        Assert.True(observer.Query.IsResolved);
         var first = StateOf(observer);
 
-        observer.SetOptions(Item(2, Fetch));
-        await TestUtils.WaitForStateAsync(observer.Query, s => observer.Query.IsResolved);
+        observer.SetOptions(Item(2, Counting(calls)));
+        Assert.True(observer.Query.IsResolved);
 
         eviction.Evict(Key1);
         Assert.Null(client.FindQuery(Key1));
 
-        observer.SetOptions(Item(1, Fetch));
+        observer.SetOptions(Item(1, Counting(calls)));
         var again = StateOf(observer);
-        await TestUtils.WaitForStateAsync(again, s => again.IsResolved);
+        Assert.True(again.IsResolved);
 
         Assert.NotSame(first, again);
         Assert.Same(again, client.FindQuery(Key1));
         Assert.True(again.HasObservers);
-        Assert.Equal(3, calls);
+        Assert.Equal(3, calls.Value);
     }
 
-    [Fact]
-    public async Task Observe_Creates_On_The_First_Call_Then_Reapplies_And_Switches()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Observe_Creates_On_The_First_Call_Then_Reapplies_And_Switches()
     {
         using var client = NewClient();
         QueryObserver<(string, int), string>? slot = null;
@@ -377,7 +366,7 @@ public class ObserverSetOptionsTests
         Assert.Equal(Key2, ((QueryState<(string, int), string>)moved).Key);
         Assert.False(first.HasObservers);
 
-        await TestUtils.WaitForStateAsync(moved, s => moved.IsResolved);
+        Assert.True(moved.IsResolved);
         Assert.Equal("data-2", moved.Data);
 
         slot!.Dispose();
@@ -402,12 +391,20 @@ public class ObserverSetOptionsTests
     }
 }
 
+/// <summary>
+/// A probabilistic regression net, not a proof. The invariant it checks (a switch always lands
+/// on a registered query, even against eager eviction) holds by lock: the attach in
+/// <c>SetObserverOptions</c> and the observer check in <c>HandleEviction</c> run under the same
+/// client lock, so no gate can hold the window open and no deterministic interleaving test is
+/// possible. The net makes contention likely: it waits until the churn has completed a query
+/// before the rounds start. Every wait in it fails loudly at the hang guard.
+/// </summary>
 [Collection("stress")]
 public class ObserverSetOptionsRaceTests
 {
     private const int Rounds = 2000;
 
-    [Fact]
+    [Fact(Explicit = true, Timeout = HangGuardMilliseconds)]
     public async Task Switching_Against_Eager_Eviction_Always_Lands_On_A_Registered_Query()
     {
         var eviction = new EvictOnRelease();
@@ -420,6 +417,7 @@ public class ObserverSetOptionsRaceTests
         QueryObserver<(string, int), string>? slot = null;
         client.Observe(ref slot, Item(0), () => { });
 
+        var churning = new Gate();
         using var stop = new CancellationTokenSource();
         var churn = Task.Run(async () =>
         {
@@ -427,14 +425,21 @@ public class ObserverSetOptionsRaceTests
             {
                 foreach (var id in new[] { 0, 1 })
                 {
-                    try { await client.QueryAsync(Item(id)); }
+                    try
+                    {
+                        await client.QueryAsync(Item(id));
+                        churning.Open();
+                    }
                     catch (OperationCanceledException) { }
                 }
             }
-        });
+        }, TestContext.Current.CancellationToken);
 
+        Exception? churnError;
         try
         {
+            await churning.Task.WaitAsync(TestContext.Current.CancellationToken);
+
             for (var round = 0; round < Rounds; round++)
             {
                 var id = round % 2;
@@ -447,9 +452,11 @@ public class ObserverSetOptionsRaceTests
         finally
         {
             stop.Cancel();
-            await churn;
+            churnError = await Record.ExceptionAsync(() => churn.WaitAsync(TestContext.Current.CancellationToken));
             slot!.Dispose();
         }
+
+        Assert.Null(churnError);
     }
 
     private sealed class EvictOnRelease : ICacheEvictionPolicy

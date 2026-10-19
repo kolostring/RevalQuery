@@ -1,6 +1,6 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core;
-using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Caching.Eviction;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Plugin;
@@ -9,10 +9,13 @@ using RevalQuery.Core.Query.Options;
 
 namespace RevalQuery.Core.Tests;
 
-public class RevalClientTests
+/// <remarks>
+/// Without persistence, subscribing and invalidating fetch before they return, so the
+/// assertions follow the calls straight away.
+/// </remarks>
+public class RevalClientTests : IDisposable
 {
     private const string Key = "test";
-    private const string UsersKey = "users";
 
     private readonly IServiceProvider _serviceProvider;
     private readonly RevalQueryOptions _options;
@@ -26,92 +29,119 @@ public class RevalClientTests
         _client = new RevalClient(_serviceProvider, _options);
     }
 
-    [Fact]
-    public async Task Subscribe_TriggersHandler_And_ResolvesData()
+    public void Dispose() => _client.Dispose();
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Subscribe_TriggersHandler_And_ResolvesData()
     {
         var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
-        var observer = _client.Subscribe(queryOptions, () => { });
-        await WaitUntil(observer.Query, s => s.IsResolved);
+        using var observer = _client.Subscribe(queryOptions, () => { });
         Assert.Equal("result", observer.Query.Data);
         Assert.True(observer.Query.IsIdle);
     }
 
-    [Fact]
-    public async Task Invalidate_Triggers_Refetch()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Invalidate_Triggers_Refetch()
     {
-        var queryOptions = QueryOptions.Create(Key, UniqueResultHandler).Build();
-        var observer = _client.Subscribe(queryOptions, () => { });
-        await WaitUntil(observer.Query, s => s.IsResolved);
-        var initialData = observer.Query.Data;
+        var calls = new Counter();
+        var queryOptions = QueryOptions.Create(Key, _ => Task.FromResult($"res-{calls.Increment()}")).Build();
+        using var observer = _client.Subscribe(queryOptions, () => { });
+        Assert.Equal("res-1", observer.Query.Data);
+
         _client.Invalidate(Key);
-        await WaitUntil(observer.Query, s => s.IsResolved);
-        Assert.NotSame(initialData, observer.Query.Data);
+
+        Assert.Equal("res-2", observer.Query.Data);
+        Assert.Equal(2, calls.Value);
     }
 
-    [Fact]
-    public async Task Hierarchical_Invalidation_Works()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Hierarchical_Invalidation_Works()
     {
-        var obs1 = _client.Subscribe(QueryOptions.Create(UsersKey, User1Handler).Build(), () => { });
-        var obs2 = _client.Subscribe(QueryOptions.Create("users2", User2Handler).Build(), () => { });
-        await Task.WhenAll(WaitUntil(obs1.Query, s => s.IsResolved), WaitUntil(obs2.Query, s => s.IsResolved));
-        Assert.Equal("u1", obs1.Query.Data);
-        Assert.Equal("u2", obs2.Query.Data);
-        _client.Invalidate(UsersKey);
-        await Task.WhenAll(WaitUntil(obs1.Query, s => s.IsResolved), WaitUntil(obs2.Query, s => s.IsResolved));
-        Assert.Equal("u1", obs1.Query.Data);
-        Assert.Equal("u2", obs2.Query.Data);
+        var users = new Counter();
+        var user1 = new Counter();
+        var user2 = new Counter();
+        var unrelated = new Counter();
+        using var usersObserver = _client.Subscribe(
+            QueryOptions.Create(ValueTuple.Create("users"), _ => Task.FromResult($"users-{users.Increment()}")).Build(), () => { });
+        using var user1Observer = _client.Subscribe(
+            QueryOptions.Create(("users", 1), _ => Task.FromResult($"user1-{user1.Increment()}")).Build(), () => { });
+        using var user2Observer = _client.Subscribe(
+            QueryOptions.Create(("users", 2), _ => Task.FromResult($"user2-{user2.Increment()}")).Build(), () => { });
+        using var unrelatedObserver = _client.Subscribe(
+            QueryOptions.Create(ValueTuple.Create("users2"), _ => Task.FromResult($"users2-{unrelated.Increment()}")).Build(), () => { });
+        Assert.Equal([1, 1, 1, 1], new[] { users.Value, user1.Value, user2.Value, unrelated.Value });
+
+        _client.Invalidate(ValueTuple.Create("users"));
+
+        Assert.Equal([2, 2, 2, 1], new[] { users.Value, user1.Value, user2.Value, unrelated.Value });
+        Assert.Equal("user1-2", user1Observer.Query.Data);
+
+        _client.Invalidate(("users", 1));
+
+        Assert.Equal([2, 3, 2, 1], new[] { users.Value, user1.Value, user2.Value, unrelated.Value });
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task GarbageCollection_Removes_State_After_TTL()
     {
         var options = new RevalQueryOptions();
         options.CacheOptions = options.CacheOptions with { GcTime = TimeSpan.Zero };
-        var gcCollector = new TtlQueryGarbageCollector(options);
-        var client = new RevalClient(_serviceProvider, options, evictionPolicy: gcCollector);
+        await using var gcCollector = new TtlQueryGarbageCollector(options);
+        using var client = new RevalClient(_serviceProvider, options, evictionPolicy: gcCollector);
 
         var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
 
         var observer = client.Subscribe(queryOptions, () => { });
-        await WaitUntil(observer.Query, s => s.IsResolved);
+        Assert.True(observer.Query.IsResolved);
         observer.Dispose();
         gcCollector.CollectExpiredEntries();
-        var found = client.FindQuery(Key);
-        Assert.Null(found);
+
+        Assert.Null(client.FindQuery(Key));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Resubscribe_Cancels_Eviction()
     {
         var options = new RevalQueryOptions();
-        options.CacheOptions = options.CacheOptions with { GcTime = TimeSpan.FromSeconds(10) };
-        var gcCollector = new TtlQueryGarbageCollector(options);
-        var client = new RevalClient(_serviceProvider, options, evictionPolicy: gcCollector);
+        options.CacheOptions = options.CacheOptions with { GcTime = TimeSpan.Zero };
+        await using var gcCollector = new TtlQueryGarbageCollector(options);
+        using var client = new RevalClient(_serviceProvider, options, evictionPolicy: gcCollector);
+        var evicted = new List<ITuple>();
+        gcCollector.OnEvictionRequired += evicted.Add;
 
         var queryOptions = QueryOptions.Create(Key, ResultHandler).Build();
 
         var observer = client.Subscribe(queryOptions, () => { });
-        await WaitUntil(observer.Query, s => s.IsResolved);
+        Assert.True(observer.Query.IsResolved);
         observer.Dispose();
-        client.Subscribe(queryOptions, () => { });
+        using var resubscribed = client.Subscribe(queryOptions, () => { });
         gcCollector.CollectExpiredEntries();
-        var found = client.FindQuery(Key);
-        Assert.NotNull(found);
+
+        Assert.Empty(evicted);
+        Assert.NotNull(client.FindQuery(Key));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task RevalClient_Cancel_AbortsFetch()
     {
-        var queryOptions = QueryOptions.Create(Key, CancelableHandler).Build();
+        var handler = new GatedHandler<string>();
+        var queryOptions = QueryOptions.Create(Key, handler.Handle).Build();
 
-        var observer = _client.Subscribe(queryOptions, () => { });
-        await WaitUntil(observer.Query, s => s.IsFetching);
-        await _client.CancelAsync(Key);
-        await WaitUntil(observer.Query, s => s.IsIdle);
+        using var observer = _client.Subscribe(queryOptions, () => { });
+        Assert.Equal(1, handler.Calls);
+        Assert.True(observer.Query.IsFetching);
+
+        await _client.CancelAsync(Key).WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(handler.Cancelled(0).IsCompleted);
         Assert.True(observer.Query.IsIdle);
+        Assert.True(observer.Query.IsPending);
+        Assert.Null(observer.Query.Data);
+        Assert.Null(observer.Query.Exception);
+        Assert.Equal(1, handler.Calls);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Plugin_Throws_On_NonStatic_Handler()
     {
         _options.QueryPluginsPipeline.Add(new QueryPluginHandlersStatelessValidation());
@@ -120,16 +150,16 @@ public class RevalClientTests
         Assert.Throws<InvalidOperationException>(() => _client.Subscribe(queryOptions, () => { }));
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Plugin_Allows_Static_Handler()
     {
         _options.QueryPluginsPipeline.Add(new QueryPluginHandlersStatelessValidation());
         var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
-        var observer = _client.Subscribe(queryOptions, () => { });
+        using var observer = _client.Subscribe(queryOptions, () => { });
         Assert.NotNull(observer);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void QueryOptions_Create_With_String_Key_Succeeds()
     {
         var queryOptions = QueryOptions.Create(Key, StaticHandler).Build();
@@ -140,44 +170,6 @@ public class RevalClientTests
     private static Task<string> StaticHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
         => Task.FromResult("ok");
 
-    private static async Task WaitUntil<T>(T state, Func<T, bool> predicate) where T : IObservableQueryState
-    {
-        if (predicate(state)) return;
-        var tcs = new TaskCompletionSource();
-        Action handler = () => { if (predicate(state)) tcs.TrySetResult(); };
-        state.OnChanged += handler;
-        try
-        {
-            await tcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        }
-        finally
-        {
-            state.OnChanged -= handler;
-        }
-    }
-
     private static Task<string> ResultHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
         => Task.FromResult("result");
-
-    private static Task<string> UniqueResultHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult($"res{Guid.NewGuid()}");
-
-    private static Task<string> User1Handler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult("u1");
-
-    private static Task<string> User2Handler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-        => Task.FromResult("u2");
-
-    private static async Task<string> CancelableHandler(QueryHandlerExecutionContext<ValueTuple<string>> ctx)
-    {
-        try
-        {
-            await Task.Delay(1000, ctx.CancellationToken ?? default);
-            return "completed";
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-    }
 }

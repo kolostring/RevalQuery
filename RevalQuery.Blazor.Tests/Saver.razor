@@ -14,7 +14,7 @@
     public MutationState<Req, string>? Last;
     MutationState<Req, string> Mut => Last = Reval.Mutation(Handler(Label));
     MutationOptionsBuilder<Req, string> Handler(string label) =>
-        MutationOptions.Create<Req, string>(async _ => { await Gate; return label; });
+        MutationOptions.Create<Req, string>(async context => { await Gate.WaitAsync(context.CancellationToken); return label; });
     Task Save() => (Last ?? throw new InvalidOperationException()).ExecuteAsync(new Req("x"));
     public sealed record Req(string Name);
 }

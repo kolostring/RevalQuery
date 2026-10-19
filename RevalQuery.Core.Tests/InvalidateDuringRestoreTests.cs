@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -10,87 +11,74 @@ namespace RevalQuery.Core.Tests;
 
 public class InvalidateDuringRestoreTests
 {
-    private sealed class GatedPersistence(PersistedQuery<string> entry) : IQueryPersistence
-    {
-        public readonly SemaphoreSlim LoadGate = new(0);
-        public readonly TaskCompletionSource LoadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly FakeTimeProvider _clock = new();
+    private PersistedQuery<string> Fresh => new("from-disk", new QueryFreshness(_clock.GetUtcNow()));
 
-        public async ValueTask<PersistedQuery<TRes>?> LoadAsync<TRes>(ITuple key, CancellationToken ct = default)
-        {
-            LoadStarted.TrySetResult();
-            await LoadGate.WaitAsync(ct);
-            return (PersistedQuery<TRes>)(object)entry;
-        }
 
-        public ValueTask SaveAsync<TRes>(ITuple key, PersistedQuery<TRes> entry, CancellationToken ct = default)
-            => ValueTask.CompletedTask;
-    }
-
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task An_Invalidation_During_A_Restore_Survives_When_Nothing_Can_Fetch_Yet()
     {
-        var handlerCalls = 0;
-
-        var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
-
-        var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new RevalClient(sp, new RevalQueryOptions(), persistence: persistence);
+        var calls = new Counter();
+        using var persistence = new GatedPersistence();
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
         var options = QueryOptions.Create<string>("unobserved", _ =>
             {
-                Interlocked.Increment(ref handlerCalls);
+                calls.Increment();
                 return Task.FromResult("from-network");
             })
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(10)))
             .Build();
 
         client.GetOrCreateQuery(options);
+        var state = client.FindQuery<string>("unobserved")!;
 
-        await persistence.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         client.Invalidate("unobserved");
 
-        persistence.LoadGate.Release();
-        await client.FindQuery<string>("unobserved")!.RestoreCompleted.WaitAsync(TimeSpan.FromSeconds(2));
+        persistence.ReleaseLoad(Fresh);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(0, handlerCalls);
+        Assert.Equal(0, calls.Value);
+        Assert.True(state.IsInvalidated);
 
         using var observer = client.Subscribe(options, () => { });
 
-        await TestUtils.WaitUntilAsync(() => Volatile.Read(ref handlerCalls) == 1);
+        Assert.Equal(1, calls.Value);
         Assert.Equal("from-network", observer.Query.Data);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Invalidating_While_A_Restore_Is_In_Flight_Still_Refetches()
     {
-        var handlerCalls = 0;
-
-        var persistence = new GatedPersistence(new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)));
-
-        var sp = new ServiceCollection().BuildServiceProvider();
-        using var client = new RevalClient(sp, new RevalQueryOptions(), persistence: persistence);
+        var calls = new Counter();
+        using var persistence = new GatedPersistence();
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
         var options = QueryOptions.Create<string>("gated", _ =>
             {
-                Interlocked.Increment(ref handlerCalls);
+                calls.Increment();
                 return Task.FromResult("from-network");
             })
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(10)))
             .Build();
 
-        var observer = client.Subscribe(options, () => { });
+        using var observer = client.Subscribe(options, () => { });
+        var state = client.FindQuery<string>("gated")!;
 
-        await persistence.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         client.Invalidate("gated");
 
-        persistence.LoadGate.Release();
+        Assert.True(state.IsRestoring);
+        Assert.Equal(1, calls.Value);
+        Assert.Equal("from-network", state.Data);
 
-        await Task.Delay(400);
+        persistence.ReleaseLoad(Fresh);
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.True(handlerCalls > 0,
-            $"invalidation was lost across the restore; handler ran {handlerCalls} times");
-        Assert.Equal("from-network", observer.Query.Data);
+        Assert.Equal("from-network", state.Data);
+        Assert.Equal(1, calls.Value);
     }
 }

@@ -1,0 +1,5 @@
+# Tests that still read real time, each with the ticket that removes the entry.
+# Format: <file> <member>  # <ticket>
+# The check fails on a hit not listed here and on an entry that no longer hits.
+#
+# Empty: every time-driven test runs on a FakeTimeProvider. Do not add entries; fix the test.

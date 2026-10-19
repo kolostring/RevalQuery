@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Persistence;
@@ -13,7 +14,9 @@ namespace RevalQuery.Core.Tests;
 
 public class PersistenceTests
 {
-    [Fact]
+    private readonly FakeTimeProvider _clock = new();
+
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task SuccessfulFetch_Is_Saved_With_Its_Timestamp()
     {
         var persistence = new InMemoryPersistence();
@@ -27,51 +30,57 @@ public class PersistenceTests
         Assert.Equal(state.LastUpdatedAt, entry.Freshness.LastUpdatedAt);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task PersistedData_Is_Restored_Before_The_Fetch_Lands()
     {
-        var fetchedAt = DateTimeOffset.UtcNow.AddHours(-3);
-        var persistence = new InMemoryPersistence();
-        persistence.Write(ValueTuple.Create("restored"), new PersistedQuery<string>("from-disk", new QueryFreshness(fetchedAt)));
-
+        var fetchedAt = _clock.GetUtcNow().AddHours(-3);
+        using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
-        using var handlerGate = new SemaphoreSlim(0);
-
-        var options = QueryOptions.Create<string>("restored", async ctx =>
-        {
-            await handlerGate.WaitAsync(ctx.CancellationToken ?? CancellationToken.None);
-            return "from-network";
-        }).Build();
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("restored", handler.Handle).Build();
 
         var observer = client.Subscribe(options, () => { });
+        var state = client.FindQuery<string>("restored")!;
+        await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
-        await TestUtils.WaitForStateAsync(observer.Query, s => s.IsResolved);
+        Assert.True(state.IsRestoring);
+        Assert.Equal(0, handler.Calls);
 
-        Assert.Equal("from-disk", observer.Query.Data);
-        Assert.Equal(fetchedAt, observer.Query.LastUpdatedAt);
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(fetchedAt)));
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
-        handlerGate.Release();
-        await TestUtils.WaitForStateAsync(observer.Query, s => s.IsIdle && s.LastUpdatedAt > fetchedAt);
-        Assert.Equal("from-network", observer.Query.Data);
+        Assert.Equal("from-disk", state.Data);
+        Assert.Equal(fetchedAt, state.LastUpdatedAt);
+        Assert.True(state.IsResolved);
+        Assert.True(state.IsFetching);
+        Assert.True(handler.Started(0).IsCompleted);
+
+        handler.Release(0, "from-network");
+        await Signals.UntilAsync(state, s => s.IsIdle && s.Data == "from-network", TestContext.Current.CancellationToken);
+
+        Assert.True(state.LastUpdatedAt > fetchedAt);
+        observer.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Fetch_That_Already_Landed_Is_Not_Overwritten_By_The_Load()
     {
-        var persistence = new SlowPersistence(
-            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))));
-
+        using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
 
-        await ClientFetch(client, "raced", "from-network");
+        var state = await ClientFetch(client, "raced", "from-network");
+        var landedAt = state.LastUpdatedAt;
 
-        await persistence.AllowLoad();
+        Assert.True(state.IsRestoring);
 
-        Assert.Equal("from-network", ((RevalQuery.Core.Query.QueryState<ValueTuple<string>, string>)
-            client.FindQuery("raced")!).Data);
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow().AddHours(-3))));
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("from-network", state.Data);
+        Assert.Equal(landedAt, state.LastUpdatedAt);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Failing_Adapter_Leaves_The_Query_Working()
     {
         using var client = NewClient(new ThrowingPersistence());
@@ -80,9 +89,12 @@ public class PersistenceTests
 
         Assert.Equal("from-handler", state.Data);
         Assert.True(state.IsResolved);
+
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.False(state.IsRestoring);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void Persistence_Is_Optional_In_DI()
     {
         var sp = new ServiceCollection().AddRevalQuery().BuildServiceProvider();
@@ -91,7 +103,7 @@ public class PersistenceTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<RevalClient>());
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Registered_Adapter_Is_Picked_Up_By_The_Client()
     {
         var persistence = new InMemoryPersistence();
@@ -108,8 +120,8 @@ public class PersistenceTests
         Assert.NotNull(persistence.Read<string>(ValueTuple.Create("wired")));
     }
 
-    private static RevalClient NewClient(IQueryPersistence persistence) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+    private RevalClient NewClient(IQueryPersistence persistence) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 
     private static async Task<RevalQuery.Core.Query.QueryState<ValueTuple<string>, string>> ClientFetch(
         RevalClient client, string key, string result)
@@ -136,36 +148,6 @@ public class PersistenceTests
             Write(key, entry);
             return default;
         }
-    }
-
-    private sealed class SlowPersistence(PersistedQuery<string> stored) : IQueryPersistence
-    {
-        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource _loadReturned = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public async Task AllowLoad()
-        {
-            _gate.TrySetResult();
-            await _loadReturned.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            await Task.Delay(50);
-        }
-
-        public async ValueTask<PersistedQuery<TRes>?> LoadAsync<TRes>(ITuple key, CancellationToken ct = default)
-        {
-            await _gate.Task;
-
-            try
-            {
-                return (PersistedQuery<TRes>?)(object)stored;
-            }
-            finally
-            {
-                _loadReturned.TrySetResult();
-            }
-        }
-
-        public ValueTask SaveAsync<TRes>(ITuple key, PersistedQuery<TRes> entry, CancellationToken ct = default) =>
-            default;
     }
 
     private sealed class ThrowingPersistence : IQueryPersistence

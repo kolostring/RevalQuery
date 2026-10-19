@@ -1,11 +1,13 @@
 ﻿using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Caching;
 using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Caching.Eviction;
 using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Query;
 using RevalQuery.Core.Query.Execution;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Registry;
@@ -14,58 +16,86 @@ namespace RevalQuery.Core.Tests;
 
 public class ReviewFindingsTests
 {
-    [Fact]
-    public async Task An_Observer_That_Throws_Does_Not_Wedge_The_Query()
+    private readonly FakeTimeProvider _clock = new();
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void An_Observer_That_Throws_Does_Not_Wedge_The_Query()
     {
         using var client = NewClient();
-        var calls = 0;
+        var calls = new Counter();
 
         var options = QueryOptions.Create("wedged", _ =>
         {
-            Interlocked.Increment(ref calls);
+            calls.Increment();
             return Task.FromResult("ok");
         }).Build();
 
         using var observer = client.Subscribe(options, () => throw new ObjectDisposedException("circuit"));
 
-        await WaitUntil(() => Volatile.Read(ref calls) == 1);
+        Assert.Equal(1, calls.Value);
+        Assert.True(observer.Query.IsIdle);
 
         client.Invalidate("wedged");
-        await WaitUntil(() => Volatile.Read(ref calls) == 2);
 
-        Assert.Equal(2, Volatile.Read(ref calls));
-        Assert.True(client.FindQuery("wedged")!.IsIdle);
+        Assert.Equal(2, calls.Value);
+        Assert.True(observer.Query.IsIdle);
+        Assert.True(observer.Query.IsResolved);
     }
 
-    [Fact]
-    public async Task QueryAsync_Does_Not_Return_Data_It_Never_Fetched()
+    // The invariant in the name is held by RevalClient.RunAndReleaseAsync, which retries on
+    // FetchOutcome.NotRun when the worker is released between PrepareRun and RunAsync. No user
+    // code runs in that window, so no test through the client can open it. This covers the
+    // worker half: a released worker runs nothing and reports NotRun. The client-level retry is
+    // a documented limitation, not tested.
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Released_Worker_Reports_NotRun_Rather_Than_Data_It_Never_Fetched()
     {
-        using var client = NewClient();
+        var calls = new Counter();
+        var state = new QueryState<ValueTuple<string>, string>(
+            ValueTuple.Create("released"),
+            _ =>
+            {
+                calls.Increment();
+                return Task.FromResult("value");
+            },
+            null, null, null);
+        var worker = new QueryWorker<ValueTuple<string>, string>(new RevalQueryOptions { TimeProvider = _clock }, new ServiceCollection().BuildServiceProvider(), state);
 
-        var options = QueryOptions.Create("released", async ctx =>
-        {
-            await Task.Delay(30, ctx.CancellationToken ?? CancellationToken.None);
-            return "value";
-        }).Build();
+        worker.Dispose();
 
-        var fetch = client.QueryAsync(options);
-        await Task.Delay(5);
-        TestUtils.Discard(client.QueryAsync(options));
-
-        Assert.Equal("value", await fetch);
+        Assert.Equal(FetchOutcome.NotRun, await worker.RunAsync().WaitAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, calls.Value);
+        Assert.Null(state.Data);
     }
 
-    [Fact]
-    public async Task Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling()
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Second_QueryAsync_Joins_The_Fetch_Already_Running()
     {
         using var client = NewClient();
-        var calls = 0;
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("released", handler.Handle).Build();
 
-        var options = QueryOptions.Create("polled", _ =>
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult("ok");
-        }).ConfigureFetch(f => f.RefetchInterval(TimeSpan.FromMilliseconds(30))).Build();
+        var fetch = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
+
+        var second = client.QueryAsync(options, TestContext.Current.CancellationToken);
+        Assert.Equal(1, handler.Calls);
+
+        handler.Release(0, "value");
+
+        Assert.Equal("value", await fetch.WaitAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("value", await second.WaitAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void Resubscribing_While_The_Previous_Observer_Leaves_Keeps_Polling()
+    {
+        var interval = TimeSpan.FromSeconds(10);
+        using var client = NewClient();
+        var calls = new Counter();
+
+        var options = QueryOptions.Create("polled", _ => Task.FromResult($"ok-{calls.Increment()}"))
+            .ConfigureFetch(f => f.RefetchInterval(interval)).Build();
 
         for (var round = 0; round < 20; round++)
         {
@@ -75,81 +105,46 @@ public class ReviewFindingsTests
             second.Dispose();
         }
 
-        var observer = client.Subscribe(options, () => { });
-        var before = Volatile.Read(ref calls);
-
-        await WaitUntil(() => Volatile.Read(ref calls) >= before + 3);
-
-        Assert.True(Volatile.Read(ref calls) >= before + 3, "polling stopped after the churn");
-        observer.Dispose();
-    }
-
-    [Fact]
-    public async Task Fresh_Persisted_Data_Suppresses_The_Fetch()
-    {
-        var persistence = new StubPersistence(
-            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow)), loadDelayMs: 30);
-        using var client = NewClient(persistence);
-
-        var calls = 0;
-        var options = QueryOptions.Create("fresh", _ =>
-        {
-            Interlocked.Increment(ref calls);
-            return Task.FromResult("from-network");
-        }).ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5))).Build();
-
         using var observer = client.Subscribe(options, () => { });
+        var before = calls.Value;
 
-        await WaitUntil(() => observer.Query.IsResolved);
-        await Task.Delay(100);
+        _clock.Advance(interval);
+        _clock.Advance(interval);
+        _clock.Advance(interval);
 
-        Assert.Equal("from-disk", observer.Query.Data);
-        Assert.Equal(0, Volatile.Read(ref calls));
+        Assert.Equal(before + 3, calls.Value);
     }
 
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Stale_Persisted_Data_Still_Refetches()
     {
-        var persistence = new StubPersistence(
-            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))), loadDelayMs: 30);
+        var storedAt = _clock.GetUtcNow().AddHours(-3);
+        using var persistence = new GatedPersistence();
         using var client = NewClient(persistence);
+        var handler = new GatedHandler<string>();
 
-        var options = QueryOptions.Create("stale", _ => Task.FromResult("from-network"))
+        var options = QueryOptions.Create("stale", handler.Handle)
             .ConfigureFetch(f => f.StaleTime(TimeSpan.FromMinutes(5)))
             .Build();
 
         using var observer = client.Subscribe(options, () => { });
+        var state = client.FindQuery<string>("stale")!;
 
-        await WaitUntil(() => observer.Query.Data == "from-network");
+        persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(storedAt)));
+        await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(150);
+        Assert.Equal("from-disk", state.Data);
+        Assert.Equal(storedAt, state.LastUpdatedAt);
+        Assert.True(state.IsFetching);
+        Assert.True(handler.Started(0).IsCompleted);
 
-        Assert.Equal("from-network", observer.Query.Data);
+        handler.Release(0, "from-network");
+        await Signals.UntilAsync(state, s => s.IsIdle && s.Data == "from-network", TestContext.Current.CancellationToken);
 
-        Assert.True(observer.Query.LastUpdatedAt > DateTimeOffset.UtcNow.AddMinutes(-1));
+        Assert.True(state.LastUpdatedAt > storedAt);
     }
 
-    [Fact]
-    public async Task A_Late_Restore_Never_Overwrites_A_Landed_Fetch()
-    {
-        var persistence = new StubPersistence(
-            new PersistedQuery<string>("from-disk", new QueryFreshness(DateTimeOffset.UtcNow.AddHours(-3))),
-            loadDelayMs: 120);
-        using var client = NewClient(persistence);
-
-        var options = QueryOptions.Create("late", _ => Task.FromResult("from-network")).Build();
-
-        await client.QueryAsync(options);
-        var landedAt = client.FindQuery("late")!.LastUpdatedAt;
-
-        await Task.Delay(250);
-
-        var state = client.FindQuery<string>("late")!;
-        Assert.Equal("from-network", state.Data);
-        Assert.Equal(landedAt, state.LastUpdatedAt);
-    }
-
-    [Fact]
+    [Fact(Timeout = HangGuardMilliseconds)]
     public void An_Overfull_Death_Row_Evicts_Rather_Than_Forgetting()
     {
         var options = new RevalQueryOptions
@@ -169,24 +164,6 @@ public class ReviewFindingsTests
         policy.Dispose();
     }
 
-    private static RevalClient NewClient(IQueryPersistence? persistence = null) =>
-        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
-
-    private static async Task WaitUntil(Func<bool> predicate, int timeoutMs = 3000)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (!predicate() && DateTime.UtcNow < deadline) await Task.Delay(5);
-    }
-
-    private sealed class StubPersistence(PersistedQuery<string> stored, int loadDelayMs = 0) : IQueryPersistence
-    {
-        public async ValueTask<PersistedQuery<TRes>?> LoadAsync<TRes>(ITuple key, CancellationToken ct = default)
-        {
-            if (loadDelayMs > 0) await Task.Delay(loadDelayMs, ct);
-            return (PersistedQuery<TRes>?)(object)stored;
-        }
-
-        public ValueTask SaveAsync<TRes>(ITuple key, PersistedQuery<TRes> entry, CancellationToken ct = default) =>
-            default;
-    }
+    private RevalClient NewClient(IQueryPersistence? persistence = null) =>
+        new(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions { TimeProvider = _clock }, persistence: persistence);
 }

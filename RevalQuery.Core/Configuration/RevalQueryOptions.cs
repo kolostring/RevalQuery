@@ -29,4 +29,11 @@ public class RevalQueryOptions
     /// Default retry options for all queries and mutations.
     /// </summary>
     public CoreRetryOptions RetryOptions { get; set; } = CoreRetryOptions.QueryDefault;
+
+    /// <summary>
+    /// The clock the library reads the current time from, for staleness and for the
+    /// timestamp a fetch is persisted with. Defaults to <see cref="TimeProvider.System"/>;
+    /// supply a fake one, such as <c>FakeTimeProvider</c>, to drive time from a test.
+    /// </summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 }
