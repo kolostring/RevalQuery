@@ -96,22 +96,4 @@ public class OnMutateResultTests
         Assert.Equal("undo-a", seenResolved);
         Assert.Equal("undo-a", seenSettled);
     }
-
-    [Fact(Timeout = HangGuardMilliseconds)]
-    public async Task When_OnMutate_Throws_The_Typed_Exception_And_Settled_Callbacks_Run_With_Default()
-    {
-        using var client = NewClient();
-        var seen = new ConcurrentQueue<string>();
-
-        var options = MutationOptions.Create<Req, string>(_ => Task.FromResult("never"))
-            .OnMutate<int>(_ => throw new InvalidOperationException())
-            .OnException(ctx => { seen.Enqueue("exception:" + ctx.OnMutateResult); return Task.CompletedTask; })
-            .OnSettled(ctx => { seen.Enqueue("settled:" + ctx.OnMutateResult); return Task.CompletedTask; })
-            .Build();
-
-        await client.CreateMutation(options, () => { }).State
-            .ExecuteAsync(new Req("a"), TestContext.Current.CancellationToken);
-
-        Assert.Equal(["exception:0", "settled:0"], seen.ToArray());
-    }
 }

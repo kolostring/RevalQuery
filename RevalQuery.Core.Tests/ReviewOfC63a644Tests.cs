@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
+using RevalQuery.Core.Mutation.Options;
 using RevalQuery.Core.Query.Options;
 using RevalQuery.Core.Query;
 
@@ -102,5 +104,23 @@ public class ReviewOfC63a644Tests
         await fetchSaved.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(["set", "fetched"], order);
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task When_OnMutate_Throws_The_Typed_Exception_And_Settled_Callbacks_Run_With_Default()
+    {
+        using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions());
+        var seen = new ConcurrentQueue<string>();
+
+        var options = MutationOptions.Create<string, string>(_ => Task.FromResult("never"))
+            .OnMutate<int>(_ => throw new InvalidOperationException())
+            .OnException(ctx => { seen.Enqueue("exception:" + ctx.OnMutateResult); return Task.CompletedTask; })
+            .OnSettled(ctx => { seen.Enqueue("settled:" + ctx.OnMutateResult); return Task.CompletedTask; })
+            .Build();
+
+        await client.CreateMutation(options, () => { }).State
+            .ExecuteAsync("a", TestContext.Current.CancellationToken);
+
+        Assert.Equal(["exception:0", "settled:0"], seen.ToArray());
     }
 }
