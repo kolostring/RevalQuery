@@ -323,16 +323,14 @@ public sealed class RevalClient : IDisposable
         QueryState<TKey, TRes> state;
         lock (_gate) state = GetOrCreateQueryLocked(options);
 
-        var freshness = state.ApplySet(next, updatedAt);
+        state.ApplySet(next, updatedAt, SaveOf(state, next));
 
-        AfterSet(state, next, freshness);
+        AfterSet(state);
     }
 
-    private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state, TRes data, QueryFreshness freshness)
+    private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state)
         where TKey : ITuple
     {
-        SaveSet(state, data, freshness);
-
         NotifyChangedSafely(state);
 
         // A set can create a query nobody observes, which then needs the same eviction a
@@ -341,15 +339,16 @@ public sealed class RevalClient : IDisposable
     }
 
     /// <summary>
-    /// Queues the save of a set behind the query's earlier ones, so the store ends holding the
-    /// last set. A failed save is swallowed, as a fetch's is.
+    /// Describes the save of a set, for the query to queue in the step that applies it, so the
+    /// store ends holding the last set. A failed save is swallowed, as a fetch's is. Null when
+    /// there is no persistence.
     /// </summary>
-    private void SaveSet<TKey, TRes>(QueryState<TKey, TRes> state, TRes data, QueryFreshness freshness)
+    private Func<QueryFreshness, Func<Task>>? SaveOf<TKey, TRes>(QueryState<TKey, TRes> state, TRes data)
         where TKey : ITuple
     {
-        if (_persistence is null) return;
+        if (_persistence is null) return null;
 
-        state.EnqueueSave(async () =>
+        return freshness => async () =>
         {
             try
             {
@@ -358,7 +357,7 @@ public sealed class RevalClient : IDisposable
             catch
             {
             }
-        });
+        };
     }
 
     /// <summary>

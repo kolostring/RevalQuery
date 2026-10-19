@@ -304,16 +304,24 @@ public sealed class QueryState<TKey, TResponse>(
     /// <param name="data">The fetched data.</param>
     public void ApplyFetched(TResponse data)
     {
-        lock (_dataGate)
-        {
-            Data = data;
-            Exception = null;
-            Status = QueryStatus.Resolved;
-            _lastUpdatedAt = _timeProvider.GetUtcNow();
-            _hasSettled = true;
+        lock (_dataGate) ApplyResolvedLocked(data, null);
+    }
 
-            _isInvalidated = false;
-        }
+    /// <summary>
+    /// The one place resolved data is recorded: the data, the resolved status, a cleared error
+    /// and invalidated flag, the moment the data was current and the settled mark. A fetch and
+    /// a set both end here, so they cannot disagree about what resolving means. The caller
+    /// holds the data gate.
+    /// </summary>
+    private void ApplyResolvedLocked(TResponse data, DateTimeOffset? updatedAt)
+    {
+        Data = data;
+        Exception = null;
+        Status = QueryStatus.Resolved;
+        _lastUpdatedAt = updatedAt ?? _timeProvider.GetUtcNow();
+        _hasSettled = true;
+
+        _isInvalidated = false;
     }
 
     /// <summary>
@@ -342,22 +350,28 @@ public sealed class QueryState<TKey, TResponse>(
     /// invalidated flag, and the moment the data was current, which is now unless the caller
     /// knows better. Counts as settled, so a restore still reading the store is refused.
     /// </summary>
+    /// <remarks>
+    /// The save is queued in the same step as the apply, so of two concurrent sets the one
+    /// applied last is the one saved last.
+    /// </remarks>
     /// <param name="data">The data to set.</param>
     /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <param name="save">Builds the save from the freshness the set recorded, or null to save
+    /// nothing. Runs inside the step, so it must be quick and must not throw.</param>
     /// <returns>The freshness the set recorded, read in the same step as the data.</returns>
-    internal QueryFreshness ApplySet(TResponse data, DateTimeOffset? updatedAt)
+    internal QueryFreshness ApplySet(
+        TResponse data,
+        DateTimeOffset? updatedAt,
+        Func<QueryFreshness, Func<Task>>? save = null)
     {
         lock (_dataGate)
         {
-            Data = data;
-            Exception = null;
-            Status = QueryStatus.Resolved;
-            _lastUpdatedAt = updatedAt ?? _timeProvider.GetUtcNow();
-            _hasSettled = true;
+            ApplyResolvedLocked(data, updatedAt);
 
-            _isInvalidated = false;
+            var freshness = new QueryFreshness(_lastUpdatedAt, _isInvalidated);
+            if (save is not null) EnqueueSave(save(freshness));
 
-            return new QueryFreshness(_lastUpdatedAt, _isInvalidated);
+            return freshness;
         }
     }
 
