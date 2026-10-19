@@ -6,13 +6,21 @@ namespace RevalQuery.Core.Tests;
 
 public class ReadOnlyQueryStateTests
 {
-    public static TheoryData<Type> QueryStateTypes =>
-    [
-        typeof(IObservableQueryState),
-        typeof(IQueryState),
-        typeof(IQueryState<>),
-        typeof(QueryState<,>),
-    ];
+    // Discovered rather than listed, so a public state type added later is covered without
+    // anyone remembering to name it here.
+    private static IEnumerable<Type> PublicQueryStateTypes =>
+        typeof(IObservableQueryState).Assembly.GetExportedTypes()
+            .Where(typeof(IObservableQueryState).IsAssignableFrom);
+
+    public static TheoryData<Type> QueryStateTypes => [.. PublicQueryStateTypes];
+
+    [Fact]
+    public void Discovery_Finds_The_Known_Query_State_Types()
+    {
+        Assert.Superset(
+            new HashSet<Type> { typeof(IObservableQueryState), typeof(IQueryState), typeof(IQueryState<>), typeof(QueryState<,>) },
+            PublicQueryStateTypes.ToHashSet());
+    }
 
     [Theory]
     [MemberData(nameof(QueryStateTypes))]
