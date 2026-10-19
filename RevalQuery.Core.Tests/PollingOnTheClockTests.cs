@@ -80,7 +80,7 @@ public class PollingOnTheClockTests
             .ConfigureFetch(f => f.RefetchInterval(Interval))
             .Build();
         using var client = NewClient();
-        var state = client.GetOrCreateQuery(options);
+        var state = client.GetOrCreateState(options);
         IDisposable? second = null;
         state.OnLastSubscriberRemoved += _ => second ??= client.Subscribe(options, () => { });
         var first = client.Subscribe(options, () => { });

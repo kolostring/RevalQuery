@@ -57,7 +57,7 @@ public class PrerenderTransferTests
         SubscribeRestored(RevalClient client, QueryOptions<ValueTuple<string>, Widget> options)
     {
         var observer = client.Subscribe(options, () => { });
-        var state = client.FindQuery<Widget>("widget")!;
+        var state = client.StateOf<Widget>("widget");
         await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         return (observer, state);
@@ -303,7 +303,7 @@ public class PrerenderTransferTests
             .Build();
 
         var observer = client.Subscribe(options, () => { });
-        await client.FindQuery<Widget, TKey>(key)!.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
+        await client.StateOf<Widget, TKey>(key).RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
         var name = observer.Query.Data?.Name;
         observer.Dispose();
 

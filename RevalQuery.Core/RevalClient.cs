@@ -79,7 +79,7 @@ public sealed class RevalClient : IDisposable
     /// Won't start fetching - prefer Subscribe() for component usage.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
+    public IQueryState<TRes> GetOrCreateQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions
     ) where TKey : ITuple
     {
@@ -270,7 +270,7 @@ public sealed class RevalClient : IDisposable
     /// Returns null if not found, or if the query was registered with a different result type.
     /// </summary>
     /// <param name="keySegments">The key to find.</param>
-    public QueryState<TKey, TRes>? FindQuery<TRes, TKey>(TKey keySegments) where TKey : ITuple
+    public IQueryState<TRes>? FindQuery<TRes, TKey>(TKey keySegments) where TKey : ITuple
     {
         return FindQuery(keySegments) as QueryState<TKey, TRes>;
     }
@@ -287,7 +287,7 @@ public sealed class RevalClient : IDisposable
     /// Returns null if not found, or if the query was registered with a different result type.
     /// </summary>
     /// <param name="key">The string key.</param>
-    public QueryState<ValueTuple<string>, TRes>? FindQuery<TRes>(string key) =>
+    public IQueryState<TRes>? FindQuery<TRes>(string key) =>
         FindQuery<TRes, ValueTuple<string>>(ValueTuple.Create(key));
 
     /// <summary>

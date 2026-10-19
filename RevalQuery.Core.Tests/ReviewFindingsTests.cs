@@ -128,7 +128,7 @@ public class ReviewFindingsTests
             .Build();
 
         using var observer = client.Subscribe(options, () => { });
-        var state = client.FindQuery<string>("stale")!;
+        var state = client.StateOf<string>("stale");
 
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(storedAt)));
         await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);

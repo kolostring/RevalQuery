@@ -15,18 +15,22 @@ public class CancellationTests
 
         try
         {
-            var observer = client.Subscribe(QueryOptions.Create("ignored", handler.Handle).Build(), () => { });
-            Assert.Equal(1, handler.Calls);
+            var options = QueryOptions.Create("ignored", handler.Handle).Build();
+            var seeding = client.QueryAsync(options, TestContext.Current.CancellationToken);
+            handler.Release(0, "first");
+            Assert.Equal("first", await seeding);
+
+            var observer = client.Subscribe(options, () => { });
+            Assert.Equal(2, handler.Calls);
 
             observer.Query.Cancel();
-            observer.Query.Data = "optimistic";
 
             Assert.True(observer.Query.IsFetching);
 
-            handler.Release(0, "from-network");
+            handler.Release(1, "from-network");
             await client.CancelAsync("ignored").WaitAsync(TestContext.Current.CancellationToken);
 
-            Assert.Equal("optimistic", observer.Query.Data);
+            Assert.Equal("first", observer.Query.Data);
             Assert.False(observer.Query.IsException);
         }
         finally

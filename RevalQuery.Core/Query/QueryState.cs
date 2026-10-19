@@ -57,22 +57,22 @@ public sealed class QueryState<TKey, TResponse>(
     /// <summary>
     /// The fetched data. Null when pending or on error.
     /// </summary>
-    public TResponse? Data { get; set; }
+    public TResponse? Data { get; internal set; }
 
     /// <summary>
     /// The exception when query failed (Status == QueryStatus.Exception).
     /// </summary>
-    public Exception? Exception { get; set; }
+    public Exception? Exception { get; internal set; }
 
     /// <summary>
     /// The data state: Pending, Resolved, or Exception.
     /// </summary>
-    public QueryStatus Status { get; set; } = QueryStatus.Pending;
+    public QueryStatus Status { get; internal set; } = QueryStatus.Pending;
 
     /// <summary>
     /// The network activity state: Idle or Fetching.
     /// </summary>
-    public FetchStatus FetchStatus { get; set; } = FetchStatus.Idle;
+    public FetchStatus FetchStatus { get; internal set; } = FetchStatus.Idle;
 
     /// <summary>
     /// The async handler function that fetches the data.
@@ -83,17 +83,17 @@ public sealed class QueryState<TKey, TResponse>(
     /// <summary>
     /// Per-query fetch options (RefetchInterval, StaleTime).
     /// </summary>
-    public FetchOptions? FetchOptions { get; set; } = fetchOptions;
+    public FetchOptions? FetchOptions { get; internal set; } = fetchOptions;
 
     /// <summary>
     /// Per-query retry options (Retry count, delay calculator).
     /// </summary>
-    public RetryOptions? RetryOptions { get; set; } = retryOptions;
+    public RetryOptions? RetryOptions { get; internal set; } = retryOptions;
 
     /// <summary>
     /// Per-query cache options (GcTime).
     /// </summary>
-    public CacheOptions? CacheOptions { get; set; } = cacheOptions;
+    public CacheOptions? CacheOptions { get; internal set; } = cacheOptions;
 
     private readonly List<IQueryObserver> _observers = [];
     private readonly object _observersGate = new();

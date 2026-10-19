@@ -1,3 +1,8 @@
+using System.Runtime.CompilerServices;
+using RevalQuery.Core;
+using RevalQuery.Core.Query;
+using RevalQuery.Core.Query.Options;
+
 namespace RevalQuery.TestKit;
 
 /// <summary>
@@ -44,4 +49,40 @@ public static class Kit
             }
         }
     }
+
+    /// <summary>
+    /// The concrete state of the query under a string key, for the members a test waits on that
+    /// <c>IQueryState</c> does not expose, such as <c>RestoreCompleted</c>.
+    /// </summary>
+    /// <typeparam name="TRes">The query's result type.</typeparam>
+    /// <param name="client">The client holding the query.</param>
+    /// <param name="key">The query's single-segment key.</param>
+    /// <exception cref="InvalidOperationException">No query of that result type is under the key.</exception>
+    public static QueryState<ValueTuple<string>, TRes> StateOf<TRes>(this RevalClient client, string key) =>
+        client.StateOf<TRes, ValueTuple<string>>(ValueTuple.Create(key));
+
+    /// <summary>
+    /// The concrete state of the query under a key, for the members a test waits on that
+    /// <c>IQueryState</c> does not expose, such as <c>RestoreCompleted</c>.
+    /// </summary>
+    /// <typeparam name="TRes">The query's result type.</typeparam>
+    /// <typeparam name="TKey">The key's tuple type.</typeparam>
+    /// <param name="client">The client holding the query.</param>
+    /// <param name="key">The query's key.</param>
+    /// <exception cref="InvalidOperationException">No query of that result type is under the key.</exception>
+    public static QueryState<TKey, TRes> StateOf<TRes, TKey>(this RevalClient client, TKey key) where TKey : ITuple =>
+        client.FindQuery<TRes, TKey>(key) as QueryState<TKey, TRes>
+        ?? throw new InvalidOperationException($"No {typeof(TRes).Name} query under {key}.");
+
+    /// <summary>
+    /// <c>GetOrCreateQuery</c>, returning the concrete state for the members a test waits on that
+    /// <c>IQueryState</c> does not expose.
+    /// </summary>
+    /// <typeparam name="TKey">The key's tuple type.</typeparam>
+    /// <typeparam name="TRes">The query's result type.</typeparam>
+    /// <param name="client">The client to create the query in.</param>
+    /// <param name="options">The query's options.</param>
+    public static QueryState<TKey, TRes> GetOrCreateState<TKey, TRes>(
+        this RevalClient client, QueryOptions<TKey, TRes> options) where TKey : ITuple =>
+        (QueryState<TKey, TRes>)client.GetOrCreateQuery(options);
 }

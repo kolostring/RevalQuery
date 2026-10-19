@@ -89,7 +89,7 @@ public class GatedPersistenceTests
         var handler = new GatedHandler<string>();
         using var client = new RevalClient(new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), new ManualEviction(), persistence);
         client.Subscribe(QueryOptions.Create("a", handler.Handle).ConfigureFetch(f => f.NeverStale()).Build(), () => { });
-        var state = client.FindQuery<string>("a")!;
+        var state = client.StateOf<string>("a");
 
         await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
         Assert.True(state.IsRestoring);
