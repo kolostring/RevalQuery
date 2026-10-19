@@ -302,10 +302,25 @@ public sealed class QueryState<TKey, TResponse>(
     /// Records the result of a successful fetch: the data, the moment it arrived, and the
     /// resolved status, as one step so a concurrent restore cannot land between them.
     /// </summary>
+    /// <remarks>
+    /// The save is queued in the same step as the write, on the query's one save queue, so the
+    /// store ends holding what the query ended holding, whether a fetch or a set wrote last.
+    /// </remarks>
     /// <param name="data">The fetched data.</param>
-    public void ApplyFetched(TResponse data)
+    /// <param name="save">Builds the save from the freshness the fetch recorded, or null to
+    /// save nothing. Runs inside the step, so it must be quick and must not throw.</param>
+    /// <returns>A task that completes when the save has run, or a completed task when there is
+    /// none. It never faults.</returns>
+    public Task ApplyFetched(TResponse data, Func<QueryFreshness, Func<Task>>? save = null)
     {
-        lock (_dataGate) ApplyResolvedLocked(data, null);
+        lock (_dataGate)
+        {
+            ApplyResolvedLocked(data, null);
+
+            return save is null
+                ? Task.CompletedTask
+                : EnqueueSave(save(new QueryFreshness(_lastUpdatedAt, _isInvalidated)));
+        }
     }
 
     /// <summary>

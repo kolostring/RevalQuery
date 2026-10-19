@@ -72,4 +72,35 @@ public class ReviewOfC63a644Tests
         Assert.Equal(2, runs);
         Assert.Equal("base-two-one", client.FindQuery<string>("rerun")!.Data);
     }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Fetchs_Save_Queues_Behind_An_Earlier_Set_In_The_Same_Step_As_Its_Write()
+    {
+        var state = new QueryState<ValueTuple<string>, string>(
+            ValueTuple.Create("fetch-queue"), _ => Task.FromResult("unused"), null, null, null);
+
+        var order = new List<string>();
+        var setGate = new Gate();
+        var fetchStarted = false;
+
+        state.ApplySet("set", null, _ => async () =>
+        {
+            await setGate.Task;
+            order.Add("set");
+        });
+
+        var fetchSaved = state.ApplyFetched("fetched", _ => () =>
+        {
+            fetchStarted = true;
+            order.Add("fetched");
+            return Task.CompletedTask;
+        });
+
+        Assert.False(fetchStarted);
+
+        setGate.Open();
+        await fetchSaved.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["set", "fetched"], order);
+    }
 }
