@@ -109,8 +109,8 @@ public sealed class MutationExceptionContext<TParams, TOnMutateResult>
     /// <summary>What the handler threw.</summary>
     public required Exception Exception { get; init; }
 
-    /// <summary>What <c>OnMutate</c> returned for this run.</summary>
-    public required TOnMutateResult OnMutateResult { get; init; }
+    /// <summary>What <c>OnMutate</c> returned for this run, or <c>default</c> when <c>OnMutate</c> threw before returning. Check for <c>default</c> before using it.</summary>
+    public required TOnMutateResult? OnMutateResult { get; init; }
 
     /// <summary>The client, for cancelling, setting and invalidating queries.</summary>
     public required RevalClient Client { get; init; }
@@ -133,8 +133,8 @@ public sealed class MutationSettledContext<TParams, TRes, TOnMutateResult>
     /// <summary>What the handler threw, or <c>null</c> when it succeeded.</summary>
     public Exception? Exception { get; init; }
 
-    /// <summary>What <c>OnMutate</c> returned for this run.</summary>
-    public required TOnMutateResult OnMutateResult { get; init; }
+    /// <summary>What <c>OnMutate</c> returned for this run, or <c>default</c> when <c>OnMutate</c> threw before returning. Check for <c>default</c> before using it.</summary>
+    public required TOnMutateResult? OnMutateResult { get; init; }
 
     /// <summary>The client, for cancelling, setting and invalidating queries.</summary>
     public required RevalClient Client { get; init; }

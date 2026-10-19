@@ -267,7 +267,7 @@ and `Error` is now `Exception`. See the `mutation-state-implements-imutationstat
 | `.OnException((ex, p) => ...)` | `.OnException(ctx => ...)`; `ctx.Exception`, `ctx.Params`, `ctx.Client` |
 | `.OnSettled((res, ex, p) => ...)` | `.OnSettled(ctx => ...)`; `ctx.Result`, `ctx.Exception`, `ctx.Params`, `ctx.Client` |
 | The same positional callbacks in per-call `MutateOptions` | The same contexts as the options callbacks |
-| A rollback value kept in a component field | `.OnMutate(async ctx => rollback)`: the returned value reaches the later callbacks as `ctx.OnMutateResult`, kept per run |
+| A rollback value kept in a component field | `.OnMutate(async ctx => rollback)`: the returned value reaches the later callbacks as `ctx.OnMutateResult`, kept per run. It is `default` in `OnException` and `OnSettled` when `OnMutate` threw, so a rollback checks first |
 | The mutation handler's context had `Params`, `ServiceProvider`, `CancellationToken` | It also carries `Client` |
 
 A callback chained onto a builder replaces the one already there. `Reval.Mutation` takes the
@@ -316,7 +316,9 @@ public static class TodoMutations
         })
         .OnException(static ctx =>
         {
-            ctx.Client.SetQueryData(TodoQueries.Options().Build(), ctx.OnMutateResult);
+            // default when OnMutate threw before it had changed anything.
+            if (ctx.OnMutateResult is not null)
+                ctx.Client.SetQueryData(TodoQueries.Options().Build(), ctx.OnMutateResult);
             return Task.CompletedTask;
         })
         .OnSettled(static ctx =>
