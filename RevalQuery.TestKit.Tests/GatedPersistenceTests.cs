@@ -71,6 +71,38 @@ public class GatedPersistenceTests
     }
 
     [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Held_Save_Is_Recorded_Only_When_Released()
+    {
+        using var persistence = new GatedPersistence();
+        persistence.HoldSaves();
+        var ct = TestContext.Current.CancellationToken;
+
+        var save = persistence.SaveAsync(Key, Entry("held"), ct).AsTask();
+        await persistence.SaveStarted(0).WaitAsync(ct);
+
+        Assert.False(save.IsCompleted);
+        Assert.Empty(persistence.Saves);
+
+        persistence.ReleaseSave();
+        await save.WaitAsync(ct);
+
+        Assert.Single(persistence.Saves);
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Failed_Save_Throws_Once_And_Is_Not_Recorded()
+    {
+        using var persistence = new GatedPersistence();
+        var ct = TestContext.Current.CancellationToken;
+        persistence.FailNextSave(new IOException("disk full"));
+
+        await Assert.ThrowsAsync<IOException>(() => persistence.SaveAsync(Key, Entry("lost"), ct).AsTask());
+        await persistence.SaveAsync(Key, Entry("kept"), ct);
+
+        Assert.Single(persistence.Saves);
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
     public async Task Disposing_Releases_Pending_And_Later_Loads_With_Nothing()
     {
         var persistence = new GatedPersistence();

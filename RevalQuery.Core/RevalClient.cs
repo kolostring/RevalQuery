@@ -323,18 +323,42 @@ public sealed class RevalClient : IDisposable
         QueryState<TKey, TRes> state;
         lock (_gate) state = GetOrCreateQueryLocked(options);
 
-        state.ApplySet(next, updatedAt);
+        var freshness = state.ApplySet(next, updatedAt);
 
-        AfterSet(state);
+        AfterSet(state, next, freshness);
     }
 
-    private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state, TRes data, QueryFreshness freshness)
+        where TKey : ITuple
     {
+        SaveSet(state, data, freshness);
+
         NotifyChangedSafely(state);
 
         // A set can create a query nobody observes, which then needs the same eviction a
         // QueryAsync leaves behind.
         ReleaseIfUnobserved(state);
+    }
+
+    /// <summary>
+    /// Queues the save of a set behind the query's earlier ones, so the store ends holding the
+    /// last set. A failed save is swallowed, as a fetch's is.
+    /// </summary>
+    private void SaveSet<TKey, TRes>(QueryState<TKey, TRes> state, TRes data, QueryFreshness freshness)
+        where TKey : ITuple
+    {
+        if (_persistence is null) return;
+
+        state.EnqueueSave(async () =>
+        {
+            try
+            {
+                await _persistence.SaveAsync(state.Key, new PersistedQuery<TRes>(data, freshness));
+            }
+            catch
+            {
+            }
+        });
     }
 
     /// <summary>

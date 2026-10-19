@@ -295,4 +295,75 @@ public class SetQueryDataTests
         Assert.False(state.IsRestoring);
         Assert.Equal(1, _calls.Value);
     }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Set_Is_Saved_With_The_Freshness_It_Recorded()
+    {
+        using var persistence = new GatedPersistence();
+        using var client = NewClient(persistence);
+        var updatedAt = _clock.GetUtcNow().AddHours(-1);
+
+        client.SetQueryData(Options(), "seeded", updatedAt);
+        var save = await persistence.Saved(0).WaitAsync(TestContext.Current.CancellationToken);
+
+        var entry = Assert.IsType<PersistedQuery<string>>(save.Entry);
+        Assert.Equal("seeded", entry.Data);
+        Assert.Equal(updatedAt, entry.Freshness.LastUpdatedAt);
+        Assert.False(entry.Freshness.IsInvalidated);
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Second_Set_Is_Saved_After_The_First_Even_While_The_First_Is_Held()
+    {
+        using var persistence = new GatedPersistence();
+        persistence.HoldSaves();
+        using var client = NewClient(persistence);
+        var ct = TestContext.Current.CancellationToken;
+
+        client.SetQueryData(Options(), "optimistic");
+        await persistence.SaveStarted(0).WaitAsync(ct);
+        client.SetQueryData(Options(), "rolled-back");
+
+        Assert.Equal("rolled-back", client.FindQuery<string>("set")!.Data);
+        Assert.Empty(persistence.Saves);
+
+        persistence.ReleaseSave();
+        await persistence.Saved(0).WaitAsync(ct);
+        persistence.ReleaseSave();
+        await persistence.Saved(1).WaitAsync(ct);
+
+        Assert.Equal(
+            ["optimistic", "rolled-back"],
+            persistence.Saves.Select(s => ((PersistedQuery<string>)s.Entry).Data));
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public void A_Set_Does_Not_Wait_On_The_Store()
+    {
+        using var persistence = new GatedPersistence();
+        persistence.HoldSaves();
+        using var client = NewClient(persistence);
+
+        client.SetQueryData(Options(), "now");
+
+        Assert.Equal("now", client.FindQuery<string>("set")!.Data);
+    }
+
+    [Fact(Timeout = HangGuardMilliseconds)]
+    public async Task A_Failed_Save_Is_Swallowed_The_Set_Stands_And_The_Queue_Goes_On()
+    {
+        using var persistence = new GatedPersistence();
+        persistence.FailNextSave(new IOException("disk full"));
+        using var client = NewClient(persistence);
+        var ct = TestContext.Current.CancellationToken;
+
+        client.SetQueryData(Options(), "kept");
+        client.SetQueryData(Options(), "later");
+        var save = await persistence.Saved(0).WaitAsync(ct);
+
+        Assert.Equal("later", ((PersistedQuery<string>)save.Entry).Data);
+        var state = client.FindQuery<string>("set")!;
+        Assert.Equal("later", state.Data);
+        Assert.True(state.IsResolved);
+    }
 }
