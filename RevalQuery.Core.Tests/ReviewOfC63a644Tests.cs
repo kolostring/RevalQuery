@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using RevalQuery.Core.Abstractions.Persistence;
 using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Mutation.Options;
@@ -76,34 +77,47 @@ public class ReviewOfC63a644Tests
     }
 
     [Fact(Timeout = HangGuardMilliseconds)]
-    public async Task A_Fetchs_Save_Queues_Behind_An_Earlier_Set_In_The_Same_Step_As_Its_Write()
+    public async Task A_Fetchs_Save_Queues_Ahead_Of_A_Later_Set_In_The_Order_The_Writes_Were_Applied()
     {
-        var state = new QueryState<ValueTuple<string>, string>(
-            ValueTuple.Create("fetch-queue"), _ => Task.FromResult("unused"), null, null, null);
+        var ct = TestContext.Current.CancellationToken;
+        using var persistence = new GatedPersistence();
+        using var client = new RevalClient(
+            new ServiceCollection().BuildServiceProvider(), new RevalQueryOptions(), persistence: persistence);
+        var handler = new GatedHandler<string>();
+        var options = QueryOptions.Create("fetch-queue", handler.Handle).Build();
 
-        var order = new List<string>();
-        var setGate = new Gate();
-        var fetchStarted = false;
+        var fetch = client.QueryAsync(options, ct);
+        await handler.Started(0).WaitAsync(ct);
 
-        state.ApplySet("set", null, _ => async () =>
+        // Parks the fetching thread inside the notification that follows the fetch's write, so
+        // the set below is applied after the fetch wrote and before the fetch went on. What the
+        // fetch does with its save from there is exactly what the fix moved.
+        var state = client.FindQuery<string>("fetch-queue")!;
+        var parked = new Gate();
+        var resume = new Gate();
+        var claimed = 0;
+        state.OnChanged += () =>
         {
-            await setGate.Task;
-            order.Add("set");
-        });
+            if (state.Data != "fetched" || Interlocked.Exchange(ref claimed, 1) == 1) return;
+            parked.Open();
+            resume.Task.Wait(ct);
+        };
 
-        var fetchSaved = state.ApplyFetched("fetched", _ => () =>
-        {
-            fetchStarted = true;
-            order.Add("fetched");
-            return Task.CompletedTask;
-        });
+        handler.Release(0, "fetched");
+        await parked.Task.WaitAsync(ct);
 
-        Assert.False(fetchStarted);
+        client.SetQueryData(options, "set");
+        await persistence.SaveStarted(0).WaitAsync(ct);
 
-        setGate.Open();
-        await fetchSaved.WaitAsync(TestContext.Current.CancellationToken);
+        resume.Open();
+        await fetch.WaitAsync(ct);
+        await persistence.Saved(1).WaitAsync(ct);
 
-        Assert.Equal(["set", "fetched"], order);
+        // The registry ended on the set, so the store must too: the fetch's write was applied
+        // first, so its save reaches the store first.
+        Assert.Equal("set", state.Data);
+        var stored = persistence.Saves.Select(save => ((PersistedQuery<string>)save.Entry).Data).ToArray();
+        Assert.Equal(["fetched", "set"], stored);
     }
 
     [Fact(Timeout = HangGuardMilliseconds)]
