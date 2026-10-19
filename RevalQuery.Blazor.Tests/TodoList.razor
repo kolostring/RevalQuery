@@ -1,0 +1,6 @@
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
+<p class="todos">@string.Join(",", Todos.Data ?? [])</p>
+@code {
+    IQueryState<List<string>> Todos => Reval.Query(TodoRecipe.Todos());
+}

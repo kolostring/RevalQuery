@@ -26,7 +26,8 @@ public class RevalQueryOptions
     public CoreFetchOptions FetchOptions { get; set; } = CoreFetchOptions.Default;
 
     /// <summary>
-    /// Default retry options for all queries and mutations.
+    /// Default retry options for queries. Mutations default to no retries and ignore this setting;
+    /// a mutation retries only through its own <c>ConfigureRetry</c>.
     /// </summary>
     public CoreRetryOptions RetryOptions { get; set; } = CoreRetryOptions.QueryDefault;
 

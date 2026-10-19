@@ -256,40 +256,86 @@ logs any mutation can take the interface instead of naming both type parameters.
 names the concrete type and `IQueryState` already use: `IsError` is now `IsException`, `IsSuccess` is now `IsResolved`
 and `Error` is now `Exception`. See the `mutation-state-implements-imutationstate` ADR.
 
+### Breaking changes since the last release
+
+| Before | After |
+|--------|-------|
+| `query.Data = x` on the result of `FindQuery` / `GetOrCreateQuery` | `Client.SetQueryData(options, x)`. The setters on `Data`, `Exception`, `Status`, `FetchStatus` and the option records are gone |
+| `FindQuery` / `GetOrCreateQuery` return `QueryState<TKey, TRes>` | they return `IQueryState<TRes>` (`IQueryState` for the untyped `FindQuery`), which is read-only |
+| `.OnMutate(async TParams p => ...)` | `.OnMutate(async ctx => ...)`; `ctx.Params`, `ctx.Client` |
+| `.OnResolved((res, p) => ...)` | `.OnResolved(ctx => ...)`; `ctx.Result`, `ctx.Params`, `ctx.Client` |
+| `.OnException((ex, p) => ...)` | `.OnException(ctx => ...)`; `ctx.Exception`, `ctx.Params`, `ctx.Client` |
+| `.OnSettled((res, ex, p) => ...)` | `.OnSettled(ctx => ...)`; `ctx.Result`, `ctx.Exception`, `ctx.Params`, `ctx.Client` |
+| The same positional callbacks in per-call `MutateOptions` | The same contexts as the options callbacks |
+| A rollback value kept in a component field | `.OnMutate(async ctx => rollback)`: the returned value reaches the later callbacks as `ctx.OnMutateResult`, kept per run |
+| The mutation handler's context had `Params`, `ServiceProvider`, `CancellationToken` | It also carries `Client` |
+
+A callback chained onto a builder replaces the one already there. `Reval.Mutation` takes the
+builder from `.OnMutate<T>(...)` through `.Build()`, because a generic call cannot infer its type
+arguments through the builder's implicit conversion.
+
 ---
 
 ## Optimistic updates
 
-Writing the expected result into the query before the server confirms it. `IQueryState<T>.Data`
-has a setter, so the write itself is a plain assignment. The part that needs care is the
-refetch that may already be in flight: started before the mutation, it lands after it and
-overwrites what you just wrote.
+Writing the expected result into the query before the server confirms it. The write goes through
+`RevalClient.SetQueryData`, which records it the way a fetch records data: under the query's lock,
+as resolved, fresh as of now, and with every observer told, so every component watching the key
+re-renders, not just the one that ran the mutation. A set never starts a fetch and never cancels
+one. The part that needs care is the refetch that may already be in flight: started before the
+mutation, it lands after it and overwrites what you just wrote.
 
 `RevalClient.CancelAsync` is the answer. It stops the in-flight fetch of every query under the
 key prefix and completes once they have unwound, so once it returns nothing a cancelled fetch
 produces can still reach the query. A handler that ignored its `CancellationToken` and returned
 a value anyway has that value discarded.
 
-```csharp
-MutationState<Todo, Todo> AddTodoMutation => Reval.Mutation(
-    MutationOptions.Create<Todo, Todo>(
-        async static ctx => await ctx.ServiceProvider
-            .GetRequiredService<ITodoService>().AddAsync(ctx.Params, ctx.CancellationToken))
-    .OnMutate(async ctx =>
-    {
-        // Nothing in flight can overwrite the write below once this returns.
-        await ctx.Client.CancelAsync(TodoQueries.Key);
+The recipe is a factory. Every callback gets the client in its context, so nothing is injected,
+and what `OnMutate` returns is kept per run as `OnMutateResult`, so two overlapping runs each
+roll back their own change.
 
-        var todos = ctx.Client.FindQuery<List<Todo>>(TodoQueries.Key)!;
-        _rollback = todos.Data;
-        todos.Data = [.. todos.Data ?? [], ctx.Params];
-    })
-    .OnException(async ctx =>
-    {
-        ctx.Client.FindQuery<List<Todo>>(TodoQueries.Key)!.Data = _rollback;
-    })
-    .OnSettled(async ctx => ctx.Client.Invalidate(TodoQueries.Key))
-);
+```csharp
+public static class TodoMutations
+{
+    public static MutationOptionsBuilder<Todo, Todo, List<Todo>> Add() =>
+        MutationOptions.Create<Todo, Todo>(
+            async static ctx => await ctx.ServiceProvider
+                .GetRequiredService<ITodoService>().AddAsync(ctx.Params, ctx.CancellationToken))
+        .OnMutate(async static ctx =>
+        {
+            // Nothing in flight can overwrite the set below once this returns.
+            await ctx.Client.CancelAsync(TodoQueries.Key);
+
+            List<Todo> previous = [];
+            ctx.Client.SetQueryData(TodoQueries.Options().Build(), current =>
+            {
+                previous = current ?? [];
+                return [.. previous, ctx.Params];
+            });
+            return previous; // the rollback value, for this run only
+        })
+        .OnException(static ctx =>
+        {
+            ctx.Client.SetQueryData(TodoQueries.Options().Build(), ctx.OnMutateResult);
+            return Task.CompletedTask;
+        })
+        .OnSettled(static ctx =>
+        {
+            ctx.Client.Invalidate(TodoQueries.Key);
+            return Task.CompletedTask;
+        });
+}
+```
+
+`TodoQueries` is a query factory like the one in the next section: `Key` is the todo list's
+key and `Options()` returns its `QueryOptionsBuilder<ValueTuple<string>, List<Todo>>`.
+The options passed to `SetQueryData` apply only when the set creates the query. The updater
+returns `null` to set nothing.
+
+In the component:
+
+```csharp
+MutationState<Todo, Todo> Add => Reval.Mutation(TodoMutations.Add().Build());
 ```
 
 A cancelled query keeps the data it already had and records no error, so the optimistic value
@@ -335,6 +381,31 @@ IQueryState<User> User => Reval.Query(
 
 ```csharp
 Client.Invalidate(UserQueries.GetKey(userId));
+```
+
+### Mutation factories
+
+A mutation is defined the same way. Every callback and the handler receive the client in their
+context, so a static factory can cancel, set and invalidate without injection. The factory
+returns the builder and defines what the mutation always does; see `TodoMutations.Add()` in
+[Optimistic updates](#optimistic-updates).
+
+```csharp
+MutationState<Todo, Todo> Add => Reval.Mutation(TodoMutations.Add().Build());
+```
+
+A callback chained onto the factory's builder **replaces** the one the factory set, and takes
+over everything that callback did: a component that chains its own `OnSettled` drops the
+factory's `Invalidate` unless it repeats it. Extras that should run alongside the factory belong
+in per-call callbacks, which run after the options' callbacks and only for the latest run:
+
+```csharp
+await Add.ExecuteAsync(todo, ct, new MutateOptions<Todo, Todo>(
+    OnResolved: ctx =>
+    {
+        navigation.NavigateTo($"/todos/{ctx.Result.Id}");
+        return Task.CompletedTask;
+    }));
 ```
 
 Benefits:
