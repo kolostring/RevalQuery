@@ -227,12 +227,16 @@ public sealed class MutationOptionsBuilder<TParams, TRes, TOnMutateResult> where
             Client = ctx.Client
         };
 
+    // OnMutate that threw leaves no result, and a missing result is default, never a cast.
+    private static TOnMutateResult? Untyped(object? result) =>
+        result is null ? default : (TOnMutateResult)result;
+
     private static MutationExceptionContext<TParams, TOnMutateResult> Typed(
         MutationExceptionContext<TParams> ctx) => new()
         {
             Params = ctx.Params,
             Exception = ctx.Exception,
-            OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
+            OnMutateResult = Untyped(ctx.OnMutateResult),
             Client = ctx.Client
         };
 
@@ -242,7 +246,7 @@ public sealed class MutationOptionsBuilder<TParams, TRes, TOnMutateResult> where
             Params = ctx.Params,
             Result = ctx.Result,
             Exception = ctx.Exception,
-            OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
+            OnMutateResult = Untyped(ctx.OnMutateResult),
             Client = ctx.Client
         };
 

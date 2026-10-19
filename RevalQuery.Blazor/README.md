@@ -267,12 +267,12 @@ and `Error` is now `Exception`. See the `mutation-state-implements-imutationstat
 | `.OnException((ex, p) => ...)` | `.OnException(ctx => ...)`; `ctx.Exception`, `ctx.Params`, `ctx.Client` |
 | `.OnSettled((res, ex, p) => ...)` | `.OnSettled(ctx => ...)`; `ctx.Result`, `ctx.Exception`, `ctx.Params`, `ctx.Client` |
 | The same positional callbacks in per-call `MutateOptions` | The same contexts as the options callbacks |
-| A rollback value kept in a component field | `.OnMutate(async ctx => rollback)`: the returned value reaches the later callbacks as `ctx.OnMutateResult`, kept per run |
+| A rollback value kept in a component field | `.OnMutate(async ctx => rollback)`: the returned value reaches the later callbacks as `ctx.OnMutateResult`, kept per run. It is `default` in `OnException` and `OnSettled` when `OnMutate` threw, so a rollback checks first |
 | The mutation handler's context had `Params`, `ServiceProvider`, `CancellationToken` | It also carries `Client` |
 
 A callback chained onto a builder replaces the one already there. `Reval.Mutation` takes the
-builder from `.OnMutate<T>(...)` through `.Build()`, because a generic call cannot infer its type
-arguments through the builder's implicit conversion.
+builder from `.OnMutate<T>(...)` as is. Per-call callbacks (`MutateOptions`) see `ctx.OnMutateResult`
+as `object?`, so one that reads it casts it; rollback belongs in the factory's callbacks.
 
 ---
 
@@ -316,7 +316,9 @@ public static class TodoMutations
         })
         .OnException(static ctx =>
         {
-            ctx.Client.SetQueryData(TodoQueries.Options().Build(), ctx.OnMutateResult);
+            // default when OnMutate threw before it had changed anything.
+            if (ctx.OnMutateResult is not null)
+                ctx.Client.SetQueryData(TodoQueries.Options().Build(), ctx.OnMutateResult);
             return Task.CompletedTask;
         })
         .OnSettled(static ctx =>
@@ -335,7 +337,7 @@ returns `null` to set nothing.
 In the component:
 
 ```csharp
-MutationState<Todo, Todo> Add => Reval.Mutation(TodoMutations.Add().Build());
+MutationState<Todo, Todo> Add => Reval.Mutation(TodoMutations.Add());
 ```
 
 A cancelled query keeps the data it already had and records no error, so the optimistic value
@@ -391,7 +393,7 @@ returns the builder and defines what the mutation always does; see `TodoMutation
 [Optimistic updates](#optimistic-updates).
 
 ```csharp
-MutationState<Todo, Todo> Add => Reval.Mutation(TodoMutations.Add().Build());
+MutationState<Todo, Todo> Add => Reval.Mutation(TodoMutations.Add());
 ```
 
 A callback chained onto the factory's builder **replaces** the one the factory set, and takes

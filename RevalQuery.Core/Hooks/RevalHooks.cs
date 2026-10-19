@@ -243,6 +243,26 @@ public sealed class RevalHooks
         where TParams : class =>
         Mutation((file, line), builder.Build());
 
+    /// <summary>
+    /// Reads a mutation, keyed by the call site, from a builder that knows what
+    /// <c>OnMutate</c> returns, so a factory that ends in the typed builder is passed as is.
+    /// </summary>
+    /// <remarks>Per-call callbacks of the returned mutation see the OnMutate result as <c>object?</c>.</remarks>
+    /// <typeparam name="TParams">The parameters type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <typeparam name="TOnMutateResult">What <c>OnMutate</c> returns.</typeparam>
+    /// <param name="builder">Mutation configuration, rebuilt by this render.</param>
+    /// <param name="file">Filled in by the compiler.</param>
+    /// <param name="line">Filled in by the compiler.</param>
+    /// <exception cref="InvalidOperationException">The hooks were released.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public MutationState<TParams, TRes> Mutation<TParams, TRes, TOnMutateResult>(
+        MutationOptionsBuilder<TParams, TRes, TOnMutateResult> builder,
+        [CallerFilePath] string file = "",
+        [CallerLineNumber] int line = 0)
+        where TParams : class =>
+        Mutation((file, line), builder.Build());
+
     /// <summary>Reads a mutation under an explicit key instead of the call site.</summary>
     /// <param name="key">Identity of the mutation, compared by value.</param>
     /// <param name="options">Mutation configuration, rebuilt by this render.</param>
@@ -292,6 +312,20 @@ public sealed class RevalHooks
     /// <summary>Reads a mutation under an explicit key, from a builder.</summary>
     /// <inheritdoc cref="Mutation{TParams, TRes}(object, MutationOptions{TParams, TRes})"/>
     public MutationState<TParams, TRes> Mutation<TParams, TRes>(object key, MutationOptionsBuilder<TParams, TRes> builder)
+        where TParams : class =>
+        Mutation(key, builder.Build());
+
+    /// <summary>Reads a mutation under an explicit key, from a builder that knows what <c>OnMutate</c> returns.</summary>
+    /// <typeparam name="TParams">The parameters type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <typeparam name="TOnMutateResult">What <c>OnMutate</c> returns.</typeparam>
+    /// <param name="key">Identity of the mutation, compared by value.</param>
+    /// <param name="builder">Mutation configuration, rebuilt by this render.</param>
+    /// <exception cref="InvalidOperationException">The hooks were released.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public MutationState<TParams, TRes> Mutation<TParams, TRes, TOnMutateResult>(
+        object key,
+        MutationOptionsBuilder<TParams, TRes, TOnMutateResult> builder)
         where TParams : class =>
         Mutation(key, builder.Build());
 

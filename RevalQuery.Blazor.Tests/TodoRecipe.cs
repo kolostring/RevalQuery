@@ -32,7 +32,8 @@ public static class TodoRecipe
             })
             .OnException(static ctx =>
             {
-                ctx.Client.SetQueryData(Todos().Build(), ctx.OnMutateResult);
+                // default when OnMutate threw before it had changed anything.
+                if (ctx.OnMutateResult is not null) ctx.Client.SetQueryData(Todos().Build(), ctx.OnMutateResult);
                 return Task.CompletedTask;
             })
             .OnSettled(static ctx =>
