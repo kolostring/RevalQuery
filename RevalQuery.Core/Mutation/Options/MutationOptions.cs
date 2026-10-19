@@ -1,4 +1,5 @@
 using RevalQuery.Core.Configuration.Options;
+using RevalQuery.Core.Mutation.Callbacks;
 using RevalQuery.Core.Mutation.Execution;
 
 namespace RevalQuery.Core.Mutation.Options;
@@ -9,10 +10,10 @@ namespace RevalQuery.Core.Mutation.Options;
 public sealed record MutationOptions<TParams, TRes>(
     Func<MutationHandlerExecutionContext<TParams>, Task<TRes>> Handler,
     RetryOptions? Retry = null,
-    Func<TParams, Task>? OnMutate = null,
-    Func<TRes, TParams, Task>? OnResolved = null,
-    Func<Exception, TParams, Task>? OnException = null,
-    Func<TRes?, Exception?, TParams, Task>? OnSettled = null
+    Func<MutationContext<TParams>, Task>? OnMutate = null,
+    Func<MutationResolvedContext<TParams, TRes>, Task>? OnResolved = null,
+    Func<MutationExceptionContext<TParams>, Task>? OnException = null,
+    Func<MutationSettledContext<TParams, TRes>, Task>? OnSettled = null
 ) where TParams : class;
 
 /// <summary>
@@ -35,10 +36,10 @@ public sealed class MutationOptionsBuilder<TParams, TRes> where TParams : class
 {
     private readonly Func<MutationHandlerExecutionContext<TParams>, Task<TRes>> _handler;
     private RetryOptions? _retry;
-    private Func<TParams, Task>? _onMutate;
-    private Func<TRes, TParams, Task>? _onResolved;
-    private Func<Exception, TParams, Task>? _onException;
-    private Func<TRes?, Exception?, TParams, Task>? _onSettled;
+    private Func<MutationContext<TParams>, Task>? _onMutate;
+    private Func<MutationResolvedContext<TParams, TRes>, Task>? _onResolved;
+    private Func<MutationExceptionContext<TParams>, Task>? _onException;
+    private Func<MutationSettledContext<TParams, TRes>, Task>? _onSettled;
 
     /// <summary>
     /// Creates a builder for a mutation driven by the given handler.
@@ -61,36 +62,36 @@ public sealed class MutationOptionsBuilder<TParams, TRes> where TParams : class
     }
 
     /// <summary>
-    /// Callback fired before mutation executes.
+    /// Callback fired before mutation executes. Replaces any callback already set on this builder.
     /// </summary>
-    public MutationOptionsBuilder<TParams, TRes> OnMutate(Func<TParams, Task> callback)
+    public MutationOptionsBuilder<TParams, TRes> OnMutate(Func<MutationContext<TParams>, Task> callback)
     {
         _onMutate = callback;
         return this;
     }
 
     /// <summary>
-    /// Callback fired when mutation succeeds.
+    /// Callback fired when mutation succeeds. Replaces any callback already set on this builder.
     /// </summary>
-    public MutationOptionsBuilder<TParams, TRes> OnResolved(Func<TRes, TParams, Task> callback)
+    public MutationOptionsBuilder<TParams, TRes> OnResolved(Func<MutationResolvedContext<TParams, TRes>, Task> callback)
     {
         _onResolved = callback;
         return this;
     }
 
     /// <summary>
-    /// Callback fired when mutation fails.
+    /// Callback fired when mutation fails. Replaces any callback already set on this builder.
     /// </summary>
-    public MutationOptionsBuilder<TParams, TRes> OnException(Func<Exception, TParams, Task> callback)
+    public MutationOptionsBuilder<TParams, TRes> OnException(Func<MutationExceptionContext<TParams>, Task> callback)
     {
         _onException = callback;
         return this;
     }
 
     /// <summary>
-    /// Callback fired when mutation completes (success or failure).
+    /// Callback fired when mutation completes (success or failure). Replaces any callback already set on this builder.
     /// </summary>
-    public MutationOptionsBuilder<TParams, TRes> OnSettled(Func<TRes?, Exception?, TParams, Task> callback)
+    public MutationOptionsBuilder<TParams, TRes> OnSettled(Func<MutationSettledContext<TParams, TRes>, Task> callback)
     {
         _onSettled = callback;
         return this;

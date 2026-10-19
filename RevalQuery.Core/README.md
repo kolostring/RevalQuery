@@ -233,9 +233,9 @@ Configuration for write operations. Supports callbacks.
 var mutationOptions = MutationOptions.Create<CreateUserRequest, User>(
     async static ctx => await ctx.ServiceProvider.GetRequiredService<IUserService>().CreateAsync(ctx.Params)
 )
-.OnResolved(async (user, req) => Console.WriteLine($"Created {user.Name}"))
-.OnException(async (ex, req) => Console.WriteLine($"Error: {ex.Message}"))
-.OnSettled(async (data, ex, req) => Console.WriteLine("Mutation complete"))
+.OnResolved(async ctx => Console.WriteLine($"Created {ctx.Result.Name}"))
+.OnException(async ctx => Console.WriteLine($"Error: {ctx.Exception.Message}"))
+.OnSettled(async ctx => Console.WriteLine("Mutation complete"))
 .ConfigureRetry(r => r.Retry(3));
 ```
 
