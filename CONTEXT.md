@@ -41,6 +41,12 @@ never learned anything. Distinct from abandoning a wait, where the caller stops
 listening and the fetch runs on.
 _Avoid_: Abort, stop, kill, interrupt
 
+**Set**:
+Replacing a query's data from outside a fetch. The data counts as fresh data that arrived
+now, and the real source never hears of it. The third way a query gets data, alongside
+fetching and restoring.
+_Avoid_: Write, update, patch, seed
+
 ### Writes
 
 **Mutation**:
