@@ -256,6 +256,88 @@ public sealed class RevalClient : IDisposable
     }
 
     /// <summary>
+    /// Sets a query's data to <paramref name="data"/>, as data that arrived now.
+    /// </summary>
+    /// <remarks>See <see cref="SetQueryData{TKey, TRes}(QueryOptions{TKey, TRes}, Func{TRes, TRes}, Nullable{DateTimeOffset})"/>.</remarks>
+    /// <typeparam name="TKey">The key type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="queryOptions">Query configuration, applied only if this call creates the query.</param>
+    /// <param name="data">The data to set.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public void SetQueryData<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions,
+        TRes data,
+        DateTimeOffset? updatedAt = null)
+        where TKey : ITuple
+    {
+        ArgumentNullException.ThrowIfNull(data);
+
+        SetQueryData(queryOptions, _ => data, updatedAt);
+    }
+
+    /// <summary>
+    /// Sets a query's data to what <paramref name="updater"/> returns, and tells every observer.
+    /// </summary>
+    /// <remarks>
+    /// <para>Synchronous: the query is resolved, fresh and notified when this returns. The
+    /// updater gets the data the query holds, or null when it holds none, and returning null
+    /// sets nothing and creates nothing.</para>
+    /// <para>The data is recorded the way a fetch records its result, as one step: data,
+    /// resolved status, no error, no invalidation, and a timestamp of now or
+    /// <paramref name="updatedAt"/>, so staleness is judged from that moment. A query that does
+    /// not exist is created from <paramref name="queryOptions"/>, which apply only then, as with
+    /// <see cref="QueryAsync{TKey, TRes}"/>.</para>
+    /// <para>A set never starts a fetch and never cancels one. Call
+    /// <see cref="CancelAsync(ITuple)"/> first to stop an in-flight fetch from overwriting the
+    /// set. A restore still reading the store is refused when it answers.</para>
+    /// <para>The updater runs outside the query's lock, so two concurrent sets of one key can
+    /// both read the same current data.</para>
+    /// </remarks>
+    /// <typeparam name="TKey">The key type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="queryOptions">Query configuration, applied only if this call creates the query.</param>
+    /// <param name="updater">Derives the new data from the current data, or null to set nothing.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public void SetQueryData<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions,
+        Func<TRes?, TRes?> updater,
+        DateTimeOffset? updatedAt = null)
+        where TKey : ITuple
+    {
+        ArgumentNullException.ThrowIfNull(updater);
+
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        QueryState<TKey, TRes>? existing;
+        lock (_gate)
+        {
+            ThrowIfDisposedLocked();
+            existing = _registry.PeekNode(options.Key)?.State as QueryState<TKey, TRes>;
+        }
+
+        var next = updater(existing is null ? default : existing.ReadData());
+        if (next is null) return;
+
+        QueryState<TKey, TRes> state;
+        lock (_gate) state = GetOrCreateQueryLocked(options);
+
+        state.ApplySet(next, updatedAt);
+
+        AfterSet(state);
+    }
+
+    private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state) where TKey : ITuple
+    {
+        NotifyChangedSafely(state);
+
+        // A set can create a query nobody observes, which then needs the same eviction a
+        // QueryAsync leaves behind.
+        ReleaseIfUnobserved(state);
+    }
+
+    /// <summary>
     /// Finds an existing query state by key.
     /// Returns null if not found.
     /// </summary>

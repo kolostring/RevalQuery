@@ -269,11 +269,8 @@ public sealed class QueryState<TKey, TResponse>(
     /// <list type="number">
     /// <item>A query whose clock has never been set is stale, so a static query still fetches
     /// the first time. TanStack's equivalent rung tests for the absence of data rather than of
-    /// a timestamp. The two agree everywhere but one path: <see cref="Data"/> is publicly
-    /// settable and the optimistic-update pattern writes it without touching the clock, so a
-    /// static query holding only an optimistic value is stale here and fresh there. Refetching
-    /// an unconfirmed value is the better answer, and the mutation invalidates on settle
-    /// anyway.</item>
+    /// a timestamp. The two agree, because every way of putting data into a query, a fetch, a
+    /// restore and a set, moves the clock. The rung stays as written.</item>
     /// <item>A static query is otherwise fresh, asked before invalidation so that
     /// <see cref="NotifyInvalidated"/> cannot drag it into a refetch. This is the whole
     /// difference between static and a very long <see cref="CoreFetchOptions.StaleTime"/>.</item>
@@ -311,6 +308,36 @@ public sealed class QueryState<TKey, TResponse>(
             Exception = null;
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = _timeProvider.GetUtcNow();
+            _hasSettled = true;
+
+            _isInvalidated = false;
+        }
+    }
+
+    /// <summary>
+    /// Reads the data under the same gate that writes it, so an updater sees a value that was
+    /// whole at some moment rather than one a concurrent write is halfway through.
+    /// </summary>
+    internal TResponse? ReadData()
+    {
+        lock (_dataGate) return Data;
+    }
+
+    /// <summary>
+    /// Records data a user set, as one step: the data, the resolved status, a cleared error and
+    /// invalidated flag, and the moment the data was current, which is now unless the caller
+    /// knows better. Counts as settled, so a restore still reading the store is refused.
+    /// </summary>
+    /// <param name="data">The data to set.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    internal void ApplySet(TResponse data, DateTimeOffset? updatedAt)
+    {
+        lock (_dataGate)
+        {
+            Data = data;
+            Exception = null;
+            Status = QueryStatus.Resolved;
+            _lastUpdatedAt = updatedAt ?? _timeProvider.GetUtcNow();
             _hasSettled = true;
 
             _isInvalidated = false;
