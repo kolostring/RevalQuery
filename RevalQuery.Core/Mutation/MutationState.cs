@@ -48,6 +48,8 @@ public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse
     {
         private MutationOptions<TParams, TResponse> _current = options;
 
+        public object? OnMutateResult { get; set; }
+
         public MutationOptions<TParams, TResponse> Current
         {
             get => Volatile.Read(ref _current);
@@ -160,7 +162,8 @@ public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse
 
         try
         {
-            await (run.Current.OnMutate?.Invoke(new MutationContext<TParams> { Params = variables, Client = _client }) ?? Task.CompletedTask);
+            if (run.Current.OnMutate is { } onMutate)
+                run.OnMutateResult = await onMutate(new MutationContext<TParams> { Params = variables, Client = _client });
 
             var ctx = new MutationHandlerExecutionContext<TParams>
             {
@@ -190,11 +193,11 @@ public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse
                 }
             }
 
-            await (run.Current.OnResolved?.Invoke(Resolved(variables, resolved)) ?? Task.CompletedTask);
+            await (run.Current.OnResolved?.Invoke(Resolved(run, variables, resolved)) ?? Task.CompletedTask);
 
             if (isLatestMutation)
             {
-                await (mutateOptions?.OnResolved?.Invoke(Resolved(variables, resolved)) ?? Task.CompletedTask);
+                await (mutateOptions?.OnResolved?.Invoke(Resolved(run, variables, resolved)) ?? Task.CompletedTask);
             }
         }
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
@@ -225,11 +228,11 @@ public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse
                 }
             }
 
-            await (run.Current.OnException?.Invoke(Failed(variables, ex)) ?? Task.CompletedTask);
+            await (run.Current.OnException?.Invoke(Failed(run, variables, ex)) ?? Task.CompletedTask);
 
             if (isLatestMutation)
             {
-                await (mutateOptions?.OnException?.Invoke(Failed(variables, ex)) ?? Task.CompletedTask);
+                await (mutateOptions?.OnException?.Invoke(Failed(run, variables, ex)) ?? Task.CompletedTask);
             }
         }
         finally
@@ -245,10 +248,10 @@ public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse
             {
                 if (!isMutationCancelled)
                 {
-                    await (run.Current.OnSettled?.Invoke(Settled(variables, settledData, settledException)) ?? Task.CompletedTask);
+                    await (run.Current.OnSettled?.Invoke(Settled(run, variables, settledData, settledException)) ?? Task.CompletedTask);
 
                     if (shouldFireOnSettled)
-                        await (mutateOptions?.OnSettled?.Invoke(Settled(variables, settledData, settledException)) ?? Task.CompletedTask);
+                        await (mutateOptions?.OnSettled?.Invoke(Settled(run, variables, settledData, settledException)) ?? Task.CompletedTask);
                 }
             }
             finally
@@ -263,14 +266,14 @@ public sealed class MutationState<TParams, TResponse> : IMutationState<TResponse
         }
     }
 
-    private MutationResolvedContext<TParams, TResponse> Resolved(TParams variables, TResponse result) =>
-        new() { Params = variables, Result = result, Client = _client };
+    private MutationResolvedContext<TParams, TResponse> Resolved(RunOptions run, TParams variables, TResponse result) =>
+        new() { Params = variables, Result = result, OnMutateResult = run.OnMutateResult, Client = _client };
 
-    private MutationExceptionContext<TParams> Failed(TParams variables, Exception exception) =>
-        new() { Params = variables, Exception = exception, Client = _client };
+    private MutationExceptionContext<TParams> Failed(RunOptions run, TParams variables, Exception exception) =>
+        new() { Params = variables, Exception = exception, OnMutateResult = run.OnMutateResult, Client = _client };
 
-    private MutationSettledContext<TParams, TResponse> Settled(TParams variables, TResponse? result, Exception? exception) =>
-        new() { Params = variables, Result = result, Exception = exception, Client = _client };
+    private MutationSettledContext<TParams, TResponse> Settled(RunOptions run, TParams variables, TResponse? result, Exception? exception) =>
+        new() { Params = variables, Result = result, Exception = exception, OnMutateResult = run.OnMutateResult, Client = _client };
 
     internal void SetOptions(MutationOptions<TParams, TResponse> options)
     {
