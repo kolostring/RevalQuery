@@ -23,10 +23,10 @@ public class MutationSetOptionsTests
         Func<MutationHandlerExecutionContext<Req>, Task<string>> handler)
     {
         return MutationOptions.Create<Req, string>(handler)
-            .OnMutate(p => { log.Enqueue($"{label}:mutate:{p.Name}"); return Task.CompletedTask; })
-            .OnResolved((_, p) => { log.Enqueue($"{label}:resolved:{p.Name}"); return Task.CompletedTask; })
-            .OnException((_, p) => { log.Enqueue($"{label}:exception:{p.Name}"); return Task.CompletedTask; })
-            .OnSettled((_, _, p) => { log.Enqueue($"{label}:settled:{p.Name}"); return Task.CompletedTask; })
+            .OnMutate(c => { log.Enqueue($"{label}:mutate:{c.Params.Name}"); return Task.CompletedTask; })
+            .OnResolved(c => { log.Enqueue($"{label}:resolved:{c.Params.Name}"); return Task.CompletedTask; })
+            .OnException(c => { log.Enqueue($"{label}:exception:{c.Params.Name}"); return Task.CompletedTask; })
+            .OnSettled(c => { log.Enqueue($"{label}:settled:{c.Params.Name}"); return Task.CompletedTask; })
             .Build();
     }
 
@@ -62,8 +62,8 @@ public class MutationSetOptionsTests
         var observer = client.CreateMutation(
             MutationOptions.Create<Req, string>(h.Handle)
                 .ConfigureRetry(r => r.Retry(0))
-                .OnMutate(p => { log.Enqueue($"old:mutate:{p.Name}"); return Task.CompletedTask; })
-                .OnException((_, p) => { log.Enqueue($"old:exception:{p.Name}"); return Task.CompletedTask; })
+                .OnMutate(c => { log.Enqueue($"old:mutate:{c.Params.Name}"); return Task.CompletedTask; })
+                .OnException(c => { log.Enqueue($"old:exception:{c.Params.Name}"); return Task.CompletedTask; })
                 .Build(),
             () => { });
 
@@ -174,8 +174,8 @@ public class MutationSetOptionsTests
         var run = observer.State.ExecuteAsync(
             new Req("a"),
             mutateOptions: new MutateOptions<Req, string>(
-                OnResolved: (_, p) => { log.Enqueue($"call:resolved:{p.Name}"); return Task.CompletedTask; },
-                OnSettled: (_, _, p) => { log.Enqueue($"call:settled:{p.Name}"); return Task.CompletedTask; }), ct: TestContext.Current.CancellationToken);
+                OnResolved: c => { log.Enqueue($"call:resolved:{c.Params.Name}"); return Task.CompletedTask; },
+                OnSettled: c => { log.Enqueue($"call:settled:{c.Params.Name}"); return Task.CompletedTask; }), ct: TestContext.Current.CancellationToken);
         await h.Started(0).WaitAsync(TestContext.Current.CancellationToken);
 
         observer.SetOptions(Logging("new", log, _ => Task.FromResult("unused")));

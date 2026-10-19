@@ -133,9 +133,9 @@ else
             .Create<AddReviewParams, Review>(
                 async static ctx => await CatalogService.AddReviewAsync(
                     ctx.Params.ProductId, ctx.Params.Review, ctx.CancellationToken))
-            .OnResolved((_, parameters) =>
+            .OnResolved(ctx =>
             {
-                Client.Invalidate(("reviews", parameters.ProductId));
+                ctx.Client.Invalidate(("reviews", ctx.Params.ProductId));
                 return Task.CompletedTask;
             }));
 }

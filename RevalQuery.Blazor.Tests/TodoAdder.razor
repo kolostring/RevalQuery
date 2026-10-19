@@ -1,0 +1,9 @@
+@inject RevalHooks Reval
+<RevalRenderer Component="this" Hooks="Reval" />
+<button @onclick="Add">add</button>
+<p class="status">@Mutation.Status</p>
+@code {
+    MutationState<string, string>? _last;
+    MutationState<string, string> Mutation => _last = Reval.Mutation(TodoRecipe.AddTodo());
+    Task Add() => (_last ?? throw new InvalidOperationException()).ExecuteAsync("new");
+}

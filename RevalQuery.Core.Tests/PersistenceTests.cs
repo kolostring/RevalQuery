@@ -40,7 +40,7 @@ public class PersistenceTests
         var options = QueryOptions.Create("restored", handler.Handle).Build();
 
         var observer = client.Subscribe(options, () => { });
-        var state = client.FindQuery<string>("restored")!;
+        var state = client.StateOf<string>("restored");
         await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsRestoring);
@@ -128,7 +128,7 @@ public class PersistenceTests
     {
         var options = QueryOptions.Create(key, _ => Task.FromResult(result)).Build();
         await client.QueryAsync(options);
-        return client.FindQuery<string>(key)!;
+        return client.StateOf<string>(key);
     }
 
     private sealed class InMemoryPersistence : IQueryPersistence

@@ -6,7 +6,7 @@ namespace RevalQuery.Core.Mutation.Callbacks;
 /// <typeparam name="TParams">Parameters type.</typeparam>
 /// <typeparam name="TResponse">Response type.</typeparam>
 public sealed record MutateOptions<TParams, TResponse>(
-    Func<TResponse, TParams, Task>? OnResolved = null,
-    Func<Exception, TParams, Task>? OnException = null,
-    Func<TResponse?, Exception?, TParams, Task>? OnSettled = null
+    Func<MutationResolvedContext<TParams, TResponse>, Task>? OnResolved = null,
+    Func<MutationExceptionContext<TParams>, Task>? OnException = null,
+    Func<MutationSettledContext<TParams, TResponse>, Task>? OnSettled = null
 );

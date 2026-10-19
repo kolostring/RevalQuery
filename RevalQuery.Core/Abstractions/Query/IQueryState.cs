@@ -115,10 +115,10 @@ public interface IQueryState<TData> : IQueryState
     /// <summary>
     /// The query result data. Null when pending or on error (unless previously cached).
     /// </summary>
-    TData? Data { get; set; }
+    TData? Data { get; }
 
     /// <summary>
     /// The exception if the query failed (QueryStatus.Exception).
     /// </summary>
-    Exception? Exception { get; set; }
+    Exception? Exception { get; }
 }

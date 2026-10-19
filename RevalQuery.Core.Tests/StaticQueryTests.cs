@@ -95,7 +95,7 @@ public class StaticQueryTests
         var calls = new Counter();
         using var client = NewClient();
 
-        var state = client.GetOrCreateQuery(Options("marked-static", neverStale: true, calls));
+        var state = client.GetOrCreateState(Options("marked-static", neverStale: true, calls));
         using var observer = client.Subscribe(Options("marked-static", neverStale: true, calls), () => { });
         Assert.True(observer.Query.IsResolved);
 
@@ -126,7 +126,7 @@ public class StaticQueryTests
         var calls = new Counter();
         using var client = NewClient();
 
-        var state = client.GetOrCreateQuery(Options("clock", neverStale: true, calls));
+        var state = client.GetOrCreateState(Options("clock", neverStale: true, calls));
         using var observer = client.Subscribe(Options("clock", neverStale: true, calls), () => { });
         Assert.True(observer.Query.IsResolved);
 

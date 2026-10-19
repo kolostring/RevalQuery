@@ -62,8 +62,8 @@ public class HandlerCancellationTests
         var observer = client.CreateMutation(
             MutationOptions.Create<Req, string>(_ => Task.FromException<string>(new TaskCanceledException("timed out")))
                 .ConfigureRetry(retry => retry.Retry(0))
-                .OnException((_, _) => { exceptions++; return Task.CompletedTask; })
-                .OnSettled((_, _, _) => { settled++; return Task.CompletedTask; })
+                .OnException(_ => { exceptions++; return Task.CompletedTask; })
+                .OnSettled(_ => { settled++; return Task.CompletedTask; })
                 .Build(),
             () => { });
 
@@ -91,7 +91,7 @@ public class HandlerCancellationTests
                     await hold.Task.WaitAsync(ctx.CancellationToken);
                     return "unreachable";
                 })
-                .OnSettled((_, _, _) => { settled++; return Task.CompletedTask; })
+                .OnSettled(_ => { settled++; return Task.CompletedTask; })
                 .Build(),
             () => notifications++);
 

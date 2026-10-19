@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using RevalQuery.Core;
 using RevalQuery.Core.Abstractions.Caching;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query;
@@ -43,7 +44,7 @@ public sealed class Fx : IDisposable
             return $"item{id}";
         }).ConfigureFetch(f => f.StaleTime(Stale));
 
-    public QueryState<ValueTuple<string, int>, string>? State(int id) =>
+    public IQueryState<string>? State(int id) =>
         Client.FindQuery<string, ValueTuple<string, int>>(("detail", id));
 
     public bool Observed(int id) => State(id)?.HasObservers == true;

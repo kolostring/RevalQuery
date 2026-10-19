@@ -38,7 +38,7 @@ public class RestoreBoundaryTests
     private static (QueryState<ValueTuple<string>, string> State, Watcher Watcher) Watch(
         RevalClient client, QueryOptions<ValueTuple<string>, string> options)
     {
-        var state = client.GetOrCreateQuery(options);
+        var state = client.GetOrCreateState(options);
         var watcher = new Watcher();
         client.Subscribe(options, () => watcher.Record(state));
         return (state, watcher);
@@ -147,7 +147,7 @@ public class RestoreBoundaryTests
             return Task.FromResult("from-network");
         }).Build();
 
-        var state = client.GetOrCreateQuery(options);
+        var state = client.GetOrCreateState(options);
         persistence.ReleaseLoad();
         await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
@@ -189,7 +189,7 @@ public class RestoreBoundaryTests
 
         var options = QueryOptions.Create<string>("none", _ => Task.FromResult("from-network")).Build();
 
-        var state = client.GetOrCreateQuery(options);
+        var state = client.GetOrCreateState(options);
         var observer = client.Subscribe(options, () => { });
 
         Assert.False(state.IsRestoring);

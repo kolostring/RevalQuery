@@ -79,7 +79,7 @@ public sealed class RevalClient : IDisposable
     /// Won't start fetching - prefer Subscribe() for component usage.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public QueryState<TKey, TRes> GetOrCreateQuery<TKey, TRes>(
+    public IQueryState<TRes> GetOrCreateQuery<TKey, TRes>(
         QueryOptions<TKey, TRes> queryOptions
     ) where TKey : ITuple
     {
@@ -256,6 +256,120 @@ public sealed class RevalClient : IDisposable
     }
 
     /// <summary>
+    /// Sets a query's data to <paramref name="data"/>, as data that arrived now.
+    /// </summary>
+    /// <remarks>See <see cref="SetQueryData{TKey, TRes}(QueryOptions{TKey, TRes}, Func{TRes, TRes}, Nullable{DateTimeOffset})"/>.</remarks>
+    /// <typeparam name="TKey">The key type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="queryOptions">Query configuration, applied only if this call creates the query.</param>
+    /// <param name="data">The data to set.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public void SetQueryData<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions,
+        TRes data,
+        DateTimeOffset? updatedAt = null)
+        where TKey : ITuple
+    {
+        ArgumentNullException.ThrowIfNull(data);
+
+        SetQueryData(queryOptions, _ => data, updatedAt);
+    }
+
+    /// <summary>
+    /// Sets a query's data to what <paramref name="updater"/> returns, and tells every observer.
+    /// </summary>
+    /// <remarks>
+    /// <para>Synchronous: the query is resolved, fresh and notified when this returns. The
+    /// updater gets the data the query holds, or null when it holds none, and returning null
+    /// sets nothing and creates nothing.</para>
+    /// <para>The data is recorded the way a fetch records its result, as one step: data,
+    /// resolved status, no error, no invalidation, and a timestamp of now or
+    /// <paramref name="updatedAt"/>, so staleness is judged from that moment. A query that does
+    /// not exist is created from <paramref name="queryOptions"/>, which apply only then, as with
+    /// <see cref="QueryAsync{TKey, TRes}"/>.</para>
+    /// <para>A set never starts a fetch and never cancels one. Call
+    /// <see cref="CancelAsync(ITuple)"/> first to stop an in-flight fetch from overwriting the
+    /// set. A restore still reading the store is refused when it answers.</para>
+    /// <para>The updater runs outside the query's lock. If the data was written in the
+    /// meantime (another set, a fetch landing, a restore), the result is discarded and the
+    /// updater runs again on the newer data, so concurrent updaters of one key all take effect.
+    /// The updater may therefore run more than once per call and must be a pure function of its
+    /// input, without side effects.</para>
+    /// </remarks>
+    /// <typeparam name="TKey">The key type.</typeparam>
+    /// <typeparam name="TRes">The response type.</typeparam>
+    /// <param name="queryOptions">Query configuration, applied only if this call creates the query.</param>
+    /// <param name="updater">Derives the new data from the current data, or null to set nothing.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public void SetQueryData<TKey, TRes>(
+        QueryOptions<TKey, TRes> queryOptions,
+        Func<TRes?, TRes?> updater,
+        DateTimeOffset? updatedAt = null)
+        where TKey : ITuple
+    {
+        ArgumentNullException.ThrowIfNull(updater);
+
+        var options = _defaultOptions.QueryPluginsPipeline.HandleQueryOptions(queryOptions);
+
+        while (true)
+        {
+            QueryState<TKey, TRes>? existing;
+            lock (_gate)
+            {
+                ThrowIfDisposedLocked();
+                existing = _registry.PeekNode(options.Key)?.State as QueryState<TKey, TRes>;
+            }
+
+            var (current, version) = existing is null ? (default, 0L) : existing.ReadData();
+
+            var next = updater(current);
+            if (next is null) return;
+
+            QueryState<TKey, TRes> state;
+            lock (_gate) state = GetOrCreateQueryLocked(options);
+
+            if (state.TryApplySet(next, updatedAt, version, SaveOf(state, next)) is null) continue;
+
+            AfterSet(state);
+            return;
+        }
+    }
+
+    private void AfterSet<TKey, TRes>(QueryState<TKey, TRes> state)
+        where TKey : ITuple
+    {
+        NotifyChangedSafely(state);
+
+        // A set can create a query nobody observes, which then needs the same eviction a
+        // QueryAsync leaves behind.
+        ReleaseIfUnobserved(state);
+    }
+
+    /// <summary>
+    /// Describes the save of a set, for the query to queue in the step that applies it, so the
+    /// store ends holding the last set. A failed save is swallowed, as a fetch's is. Null when
+    /// there is no persistence.
+    /// </summary>
+    private Func<QueryFreshness, Func<Task>>? SaveOf<TKey, TRes>(QueryState<TKey, TRes> state, TRes data)
+        where TKey : ITuple
+    {
+        if (_persistence is null) return null;
+
+        return freshness => async () =>
+        {
+            try
+            {
+                await _persistence.SaveAsync(state.Key, new PersistedQuery<TRes>(data, freshness));
+            }
+            catch
+            {
+            }
+        };
+    }
+
+    /// <summary>
     /// Finds an existing query state by key.
     /// Returns null if not found.
     /// </summary>
@@ -270,7 +384,7 @@ public sealed class RevalClient : IDisposable
     /// Returns null if not found, or if the query was registered with a different result type.
     /// </summary>
     /// <param name="keySegments">The key to find.</param>
-    public QueryState<TKey, TRes>? FindQuery<TRes, TKey>(TKey keySegments) where TKey : ITuple
+    public IQueryState<TRes>? FindQuery<TRes, TKey>(TKey keySegments) where TKey : ITuple
     {
         return FindQuery(keySegments) as QueryState<TKey, TRes>;
     }
@@ -287,7 +401,7 @@ public sealed class RevalClient : IDisposable
     /// Returns null if not found, or if the query was registered with a different result type.
     /// </summary>
     /// <param name="key">The string key.</param>
-    public QueryState<ValueTuple<string>, TRes>? FindQuery<TRes>(string key) =>
+    public IQueryState<TRes>? FindQuery<TRes>(string key) =>
         FindQuery<TRes, ValueTuple<string>>(ValueTuple.Create(key));
 
     /// <summary>
@@ -433,7 +547,7 @@ public sealed class RevalClient : IDisposable
         lock (_gate) ThrowIfDisposedLocked();
 
         return new MutationObserver<TParams, TRes>(
-            new MutationState<TParams, TRes>(options, _serviceProvider, _defaultOptions.TimeProvider),
+            new MutationState<TParams, TRes>(options, _serviceProvider, this, _defaultOptions.TimeProvider),
             onStateHasChanged);
     }
 

@@ -40,7 +40,7 @@ public class ReviewOfA700df3Tests
 
         await Assert.ThrowsAnyAsync<Exception>(() => client.QueryAsync(options, TestContext.Current.CancellationToken));
 
-        var state = client.FindQuery<string>("failed")!;
+        var state = client.StateOf<string>("failed");
         Assert.True(state.IsException);
         Assert.True(state.IsRestoring);
 
@@ -88,7 +88,7 @@ public class ReviewOfA700df3Tests
         Assert.Equal(1, handler.Calls);
 
         persistence.ReleaseLoad(new PersistedQuery<string>("from-disk", new QueryFreshness(_clock.GetUtcNow())));
-        var state = client.FindQuery<string>("racing")!;
+        var state = client.StateOf<string>("racing");
         await state.RestoreCompleted.WaitAsync(TestContext.Current.CancellationToken);
 
         Assert.True(state.IsResolved);

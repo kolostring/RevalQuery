@@ -26,7 +26,7 @@ public class LoadingDuringRestoreTests
             .Build();
 
         var observer = client.Subscribe(options, () => { });
-        var state = client.FindQuery<string>("restoring")!;
+        var state = client.StateOf<string>("restoring");
 
         await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 

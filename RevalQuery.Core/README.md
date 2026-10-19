@@ -171,11 +171,14 @@ otherwise land after it and overwrite the optimistic value:
 ```csharp
 // Stop anything in flight first, and wait for it to unwind. Once this returns, no result
 // from a cancelled fetch can still reach the query.
-await client.CancelAsync(("todos",));
+await client.CancelAsync("todos");
 
-var todos = client.FindQuery<List<Todo>>(("todos",))!;
-var previous = todos.Data;
-todos.Data = [.. previous!, newTodo];
+List<Todo> previous = [];
+client.SetQueryData(todoOptions, current =>
+{
+    previous = current ?? [];
+    return [.. previous, newTodo];
+});
 
 try
 {
@@ -183,14 +186,22 @@ try
 }
 catch
 {
-    todos.Data = previous;
+    client.SetQueryData(todoOptions, previous);
     throw;
 }
 finally
 {
-    client.Invalidate(("todos",));
+    client.Invalidate("todos");
 }
 ```
+
+`todoOptions` is the `QueryOptions<ValueTuple<string>, List<Todo>>` for the `"todos"` key, and
+applies only when the set creates the query. `SetQueryData` records the data as a fetch would,
+resolved and fresh as of now, and notifies every observer. The updater may run more than once:
+it runs outside the query's lock, and when another write lands on the key meanwhile, the set
+runs it again on the newer data. Keep it pure apart from capturing a value whose last write
+wins (as `previous` above does), and do no I/O or anything else that cannot repeat. For a mutation defined in a factory,
+with the rollback kept per run, see the Blazor README's "Optimistic updates".
 
 `IQueryState.Cancel()` is the low-level trigger for one query. It returns immediately without
 waiting for the fetch to unwind.
@@ -233,9 +244,9 @@ Configuration for write operations. Supports callbacks.
 var mutationOptions = MutationOptions.Create<CreateUserRequest, User>(
     async static ctx => await ctx.ServiceProvider.GetRequiredService<IUserService>().CreateAsync(ctx.Params)
 )
-.OnResolved(async (user, req) => Console.WriteLine($"Created {user.Name}"))
-.OnException(async (ex, req) => Console.WriteLine($"Error: {ex.Message}"))
-.OnSettled(async (data, ex, req) => Console.WriteLine("Mutation complete"))
+.OnResolved(async ctx => Console.WriteLine($"Created {ctx.Result.Name}"))
+.OnException(async ctx => Console.WriteLine($"Error: {ctx.Exception.Message}"))
+.OnSettled(async ctx => Console.WriteLine("Mutation complete"))
 .ConfigureRetry(r => r.Retry(3));
 ```
 
@@ -310,7 +321,7 @@ services.AddRevalQuery(options =>
         Static: false
     );
 
-    // Default retry options: three retries after a failure, so up to four calls
+    // Default retry options for queries: three retries after a failure, so up to four calls
     options.RetryOptions = new CoreRetryOptions(3, attempt => TimeSpan.FromSeconds(attempt));
 
     // Cache TTL options

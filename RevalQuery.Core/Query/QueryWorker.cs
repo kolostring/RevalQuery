@@ -379,6 +379,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         var fetched = default(TRes);
         var succeeded = false;
         var cancelled = false;
+        var saved = Task.CompletedTask;
 
         try
         {
@@ -402,7 +403,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
 
             fetchCts.Token.ThrowIfCancellationRequested();
 
-            Query.ApplyFetched(fetched);
+            saved = Query.ApplyFetched(fetched, SaveOf(fetched));
             succeeded = true;
         }
         catch (OperationCanceledException) when (fetchCts.IsCancellationRequested)
@@ -423,7 +424,7 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
             NotifyChangedSafely();
         }
 
-        if (succeeded) await SavePersistedAsync(fetched!);
+        if (succeeded) await saved;
 
         return cancelled ? FetchOutcome.Cancelled : FetchOutcome.Settled;
     }
@@ -439,17 +440,20 @@ public sealed class QueryWorker<TKey, TRes> : IQueryWorker where TKey : ITuple
         }
     }
 
-    private async Task SavePersistedAsync(TRes data)
+    private Func<QueryFreshness, Func<Task>>? SaveOf(TRes data)
     {
-        if (_persistence is null) return;
+        if (_persistence is null) return null;
 
-        try
+        return freshness => async () =>
         {
-            await _persistence.SaveAsync(Query.Key, new PersistedQuery<TRes>(data, Query.Freshness));
-        }
-        catch
-        {
-        }
+            try
+            {
+                await _persistence.SaveAsync(Query.Key, new PersistedQuery<TRes>(data, freshness));
+            }
+            catch
+            {
+            }
+        };
     }
 
     /// <summary>

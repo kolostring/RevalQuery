@@ -57,22 +57,22 @@ public sealed class QueryState<TKey, TResponse>(
     /// <summary>
     /// The fetched data. Null when pending or on error.
     /// </summary>
-    public TResponse? Data { get; set; }
+    public TResponse? Data { get; internal set; }
 
     /// <summary>
     /// The exception when query failed (Status == QueryStatus.Exception).
     /// </summary>
-    public Exception? Exception { get; set; }
+    public Exception? Exception { get; internal set; }
 
     /// <summary>
     /// The data state: Pending, Resolved, or Exception.
     /// </summary>
-    public QueryStatus Status { get; set; } = QueryStatus.Pending;
+    public QueryStatus Status { get; internal set; } = QueryStatus.Pending;
 
     /// <summary>
     /// The network activity state: Idle or Fetching.
     /// </summary>
-    public FetchStatus FetchStatus { get; set; } = FetchStatus.Idle;
+    public FetchStatus FetchStatus { get; internal set; } = FetchStatus.Idle;
 
     /// <summary>
     /// The async handler function that fetches the data.
@@ -83,21 +83,24 @@ public sealed class QueryState<TKey, TResponse>(
     /// <summary>
     /// Per-query fetch options (RefetchInterval, StaleTime).
     /// </summary>
-    public FetchOptions? FetchOptions { get; set; } = fetchOptions;
+    public FetchOptions? FetchOptions { get; internal set; } = fetchOptions;
 
     /// <summary>
     /// Per-query retry options (Retry count, delay calculator).
     /// </summary>
-    public RetryOptions? RetryOptions { get; set; } = retryOptions;
+    public RetryOptions? RetryOptions { get; internal set; } = retryOptions;
 
     /// <summary>
     /// Per-query cache options (GcTime).
     /// </summary>
-    public CacheOptions? CacheOptions { get; set; } = cacheOptions;
+    public CacheOptions? CacheOptions { get; internal set; } = cacheOptions;
 
     private readonly List<IQueryObserver> _observers = [];
     private readonly object _observersGate = new();
     private readonly object _dataGate = new();
+    private readonly object _saveGate = new();
+    private Task _saveTail = Task.CompletedTask;
+    private long _dataVersion;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
@@ -269,11 +272,8 @@ public sealed class QueryState<TKey, TResponse>(
     /// <list type="number">
     /// <item>A query whose clock has never been set is stale, so a static query still fetches
     /// the first time. TanStack's equivalent rung tests for the absence of data rather than of
-    /// a timestamp. The two agree everywhere but one path: <see cref="Data"/> is publicly
-    /// settable and the optimistic-update pattern writes it without touching the clock, so a
-    /// static query holding only an optimistic value is stale here and fresh there. Refetching
-    /// an unconfirmed value is the better answer, and the mutation invalidates on settle
-    /// anyway.</item>
+    /// a timestamp. The two agree, because every way of putting data into a query, a fetch, a
+    /// restore and a set, moves the clock. The rung stays as written.</item>
     /// <item>A static query is otherwise fresh, asked before invalidation so that
     /// <see cref="NotifyInvalidated"/> cannot drag it into a refetch. This is the whole
     /// difference between static and a very long <see cref="CoreFetchOptions.StaleTime"/>.</item>
@@ -302,19 +302,128 @@ public sealed class QueryState<TKey, TResponse>(
     /// Records the result of a successful fetch: the data, the moment it arrived, and the
     /// resolved status, as one step so a concurrent restore cannot land between them.
     /// </summary>
+    /// <remarks>
+    /// The save is queued in the same step as the write, on the query's one save queue, so the
+    /// store ends holding what the query ended holding, whether a fetch or a set wrote last.
+    /// </remarks>
     /// <param name="data">The fetched data.</param>
-    public void ApplyFetched(TResponse data)
+    /// <param name="save">Builds the save from the freshness the fetch recorded, or null to
+    /// save nothing. Runs inside the step, so it must be quick and must not throw.</param>
+    /// <returns>A task that completes when the save has run, or a completed task when there is
+    /// none. It never faults.</returns>
+    public Task ApplyFetched(TResponse data, Func<QueryFreshness, Func<Task>>? save = null)
     {
         lock (_dataGate)
         {
-            Data = data;
-            Exception = null;
-            Status = QueryStatus.Resolved;
-            _lastUpdatedAt = _timeProvider.GetUtcNow();
-            _hasSettled = true;
+            ApplyResolvedLocked(data, null);
 
-            _isInvalidated = false;
+            return save is null
+                ? Task.CompletedTask
+                : EnqueueSave(save(new QueryFreshness(_lastUpdatedAt, _isInvalidated)));
         }
+    }
+
+    /// <summary>
+    /// The one place resolved data is recorded: the data, the resolved status, a cleared error
+    /// and invalidated flag, the moment the data was current and the settled mark. A fetch and
+    /// a set both end here, so they cannot disagree about what resolving means. The caller
+    /// holds the data gate.
+    /// </summary>
+    private void ApplyResolvedLocked(TResponse data, DateTimeOffset? updatedAt)
+    {
+        Data = data;
+        Exception = null;
+        Status = QueryStatus.Resolved;
+        _lastUpdatedAt = updatedAt ?? _timeProvider.GetUtcNow();
+        _hasSettled = true;
+        _dataVersion++;
+
+        _isInvalidated = false;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="save"/> after every save queued before it has finished, whether
+    /// those succeeded or not, so saves reach the store in the order they were queued. Returns
+    /// without waiting for it.
+    /// </summary>
+    /// <param name="save">The save. It must not throw.</param>
+    /// <returns>A task that completes when this save has run.</returns>
+    internal Task EnqueueSave(Func<Task> save)
+    {
+        lock (_saveGate)
+        {
+            return _saveTail = _saveTail.ContinueWith(
+                _ => save(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+        }
+    }
+
+    /// <summary>
+    /// Reads the data under the same gate that writes it, so an updater sees a value that was
+    /// whole at some moment rather than one a concurrent write is halfway through.
+    /// </summary>
+    internal (TResponse? Data, long Version) ReadData()
+    {
+        lock (_dataGate) return (Data, _dataVersion);
+    }
+
+    /// <summary>
+    /// Records data a user set, as one step: the data, the resolved status, a cleared error and
+    /// invalidated flag, and the moment the data was current, which is now unless the caller
+    /// knows better. Counts as settled, so a restore still reading the store is refused.
+    /// </summary>
+    /// <remarks>
+    /// The save is queued in the same step as the apply, so of two concurrent sets the one
+    /// applied last is the one saved last.
+    /// </remarks>
+    /// <param name="data">The data to set.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <param name="save">Builds the save from the freshness the set recorded, or null to save
+    /// nothing. Runs inside the step, so it must be quick and must not throw.</param>
+    /// <returns>The freshness the set recorded, read in the same step as the data.</returns>
+    internal QueryFreshness ApplySet(
+        TResponse data,
+        DateTimeOffset? updatedAt,
+        Func<QueryFreshness, Func<Task>>? save = null)
+    {
+        lock (_dataGate) return ApplySetLocked(data, updatedAt, save);
+    }
+
+    /// <summary>
+    /// Records data a user set only if the data is still the version the caller derived it
+    /// from. Every write to the data moves the version, so a false return means something
+    /// wrote between the read and now and the caller derives again from the newer data.
+    /// </summary>
+    /// <param name="data">The data to set.</param>
+    /// <param name="updatedAt">When the data was current, or null for now.</param>
+    /// <param name="expectedVersion">The version <see cref="ReadData"/> returned with the data
+    /// the caller derived <paramref name="data"/> from.</param>
+    /// <param name="save">As for <see cref="ApplySet"/>.</param>
+    /// <returns>The freshness the set recorded, or null when the data had moved.</returns>
+    internal QueryFreshness? TryApplySet(
+        TResponse data,
+        DateTimeOffset? updatedAt,
+        long expectedVersion,
+        Func<QueryFreshness, Func<Task>>? save = null)
+    {
+        lock (_dataGate)
+        {
+            if (_dataVersion != expectedVersion) return null;
+
+            return ApplySetLocked(data, updatedAt, save);
+        }
+    }
+
+    private QueryFreshness ApplySetLocked(
+        TResponse data,
+        DateTimeOffset? updatedAt,
+        Func<QueryFreshness, Func<Task>>? save)
+    {
+        ApplyResolvedLocked(data, updatedAt);
+
+        var freshness = new QueryFreshness(_lastUpdatedAt, _isInvalidated);
+        if (save is not null) EnqueueSave(save(freshness));
+
+        return freshness;
     }
 
     /// <summary>
@@ -359,6 +468,7 @@ public sealed class QueryState<TKey, TResponse>(
             Exception = null;
             Status = QueryStatus.Resolved;
             _lastUpdatedAt = freshness.LastUpdatedAt;
+            _dataVersion++;
 
             _isInvalidated |= freshness.IsInvalidated;
 

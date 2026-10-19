@@ -31,7 +31,7 @@ public class InvalidateDuringRestoreTests
             .Build();
 
         client.GetOrCreateQuery(options);
-        var state = client.FindQuery<string>("unobserved")!;
+        var state = client.StateOf<string>("unobserved");
 
         await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 
@@ -65,7 +65,7 @@ public class InvalidateDuringRestoreTests
             .Build();
 
         using var observer = client.Subscribe(options, () => { });
-        var state = client.FindQuery<string>("gated")!;
+        var state = client.StateOf<string>("gated");
 
         await persistence.LoadStarted.WaitAsync(TestContext.Current.CancellationToken);
 

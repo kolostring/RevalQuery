@@ -181,9 +181,10 @@ public class GatedHandlerTests
     {
         var handler = new GatedHandler<string>();
         using var cts = new CancellationTokenSource();
+        using var client = new RevalClient(Services, new RevalQuery.Core.Configuration.RevalQueryOptions());
 
         _ = handler.Handle(new MutationHandlerExecutionContext<Req>
-            { Params = new Req("a"), ServiceProvider = Services, CancellationToken = cts.Token });
+            { Params = new Req("a"), ServiceProvider = Services, Client = client, CancellationToken = cts.Token });
 
         await handler.Started(0).WaitAsync(TestContext.Current.CancellationToken);
         Assert.Equal(cts.Token, handler.Token(0));
