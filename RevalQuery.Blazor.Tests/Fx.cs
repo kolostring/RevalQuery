@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using RevalQuery.Core;
-using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Abstractions.Caching;
+using RevalQuery.Core.Abstractions.Query;
 using RevalQuery.Core.Configuration;
 using RevalQuery.Core.Configuration.Options;
 using RevalQuery.Core.Query;
