@@ -194,13 +194,7 @@ public sealed class MutationOptionsBuilder<TParams, TRes, TOnMutateResult> where
     public MutationOptionsBuilder<TParams, TRes, TOnMutateResult> OnResolved(
         Func<MutationResolvedContext<TParams, TRes, TOnMutateResult>, Task> callback)
     {
-        _onResolved = ctx => callback(new()
-        {
-            Params = ctx.Params,
-            Result = ctx.Result,
-            OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
-            Client = ctx.Client
-        });
+        _onResolved = ctx => callback(Typed(ctx));
         return this;
     }
 
@@ -210,13 +204,7 @@ public sealed class MutationOptionsBuilder<TParams, TRes, TOnMutateResult> where
     public MutationOptionsBuilder<TParams, TRes, TOnMutateResult> OnException(
         Func<MutationExceptionContext<TParams, TOnMutateResult>, Task> callback)
     {
-        _onException = ctx => callback(new()
-        {
-            Params = ctx.Params,
-            Exception = ctx.Exception,
-            OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
-            Client = ctx.Client
-        });
+        _onException = ctx => callback(Typed(ctx));
         return this;
     }
 
@@ -226,16 +214,37 @@ public sealed class MutationOptionsBuilder<TParams, TRes, TOnMutateResult> where
     public MutationOptionsBuilder<TParams, TRes, TOnMutateResult> OnSettled(
         Func<MutationSettledContext<TParams, TRes, TOnMutateResult>, Task> callback)
     {
-        _onSettled = ctx => callback(new()
+        _onSettled = ctx => callback(Typed(ctx));
+        return this;
+    }
+
+    private static MutationResolvedContext<TParams, TRes, TOnMutateResult> Typed(
+        MutationResolvedContext<TParams, TRes> ctx) => new()
+        {
+            Params = ctx.Params,
+            Result = ctx.Result,
+            OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
+            Client = ctx.Client
+        };
+
+    private static MutationExceptionContext<TParams, TOnMutateResult> Typed(
+        MutationExceptionContext<TParams> ctx) => new()
+        {
+            Params = ctx.Params,
+            Exception = ctx.Exception,
+            OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
+            Client = ctx.Client
+        };
+
+    private static MutationSettledContext<TParams, TRes, TOnMutateResult> Typed(
+        MutationSettledContext<TParams, TRes> ctx) => new()
         {
             Params = ctx.Params,
             Result = ctx.Result,
             Exception = ctx.Exception,
             OnMutateResult = (TOnMutateResult)ctx.OnMutateResult!,
             Client = ctx.Client
-        });
-        return this;
-    }
+        };
 
     /// <summary>
     /// Builds the MutationOptions.
