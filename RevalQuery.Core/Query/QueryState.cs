@@ -98,6 +98,8 @@ public sealed class QueryState<TKey, TResponse>(
     private readonly List<IQueryObserver> _observers = [];
     private readonly object _observersGate = new();
     private readonly object _dataGate = new();
+    private readonly object _saveGate = new();
+    private Task _saveTail = Task.CompletedTask;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private DateTimeOffset _lastUpdatedAt = DateTimeOffset.MinValue;
     private bool _hasSettled;
@@ -315,6 +317,18 @@ public sealed class QueryState<TKey, TResponse>(
     }
 
     /// <summary>
+    /// Runs <paramref name="save"/> after every save queued before it has finished, whether
+    /// those succeeded or not, so saves reach the store in the order they were queued. Returns
+    /// without waiting for it.
+    /// </summary>
+    /// <param name="save">The save. It must not throw.</param>
+    internal void EnqueueSave(Func<Task> save)
+    {
+        lock (_saveGate) _saveTail = _saveTail.ContinueWith(
+            _ => save(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default).Unwrap();
+    }
+
+    /// <summary>
     /// Reads the data under the same gate that writes it, so an updater sees a value that was
     /// whole at some moment rather than one a concurrent write is halfway through.
     /// </summary>
@@ -330,7 +344,8 @@ public sealed class QueryState<TKey, TResponse>(
     /// </summary>
     /// <param name="data">The data to set.</param>
     /// <param name="updatedAt">When the data was current, or null for now.</param>
-    internal void ApplySet(TResponse data, DateTimeOffset? updatedAt)
+    /// <returns>The freshness the set recorded, read in the same step as the data.</returns>
+    internal QueryFreshness ApplySet(TResponse data, DateTimeOffset? updatedAt)
     {
         lock (_dataGate)
         {
@@ -341,6 +356,8 @@ public sealed class QueryState<TKey, TResponse>(
             _hasSettled = true;
 
             _isInvalidated = false;
+
+            return new QueryFreshness(_lastUpdatedAt, _isInvalidated);
         }
     }
 
