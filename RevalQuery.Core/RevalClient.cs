@@ -433,7 +433,7 @@ public sealed class RevalClient : IDisposable
         lock (_gate) ThrowIfDisposedLocked();
 
         return new MutationObserver<TParams, TRes>(
-            new MutationState<TParams, TRes>(options, _serviceProvider, _defaultOptions.TimeProvider),
+            new MutationState<TParams, TRes>(options, _serviceProvider, this, _defaultOptions.TimeProvider),
             onStateHasChanged);
     }
 

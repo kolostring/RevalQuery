@@ -82,9 +82,9 @@ else
         MutationOptions
             .Create<AddItemParams, string>(
                 async static ctx => await TodoService.AddAsync(ctx.Params.Text, ctx.CancellationToken))
-            .OnResolved((_, _) =>
+            .OnResolved(ctx =>
             {
-                Client.Invalidate("todos");
+                ctx.Client.Invalidate("todos");
                 return Task.CompletedTask;
             }));
 }

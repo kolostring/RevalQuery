@@ -292,9 +292,9 @@ public class IssueReproductionTests
         RevalClient client, GatedHandler<string> handler, Settlements settlements) =>
         client.CreateMutation(
             MutationOptions.Create<Box, string>(handler.Handle)
-                .OnSettled((data, _, p) =>
+                .OnSettled(ctx =>
                 {
-                    settlements.Record(data, p.Name);
+                    settlements.Record(ctx.Result, ctx.Params.Name);
                     return Task.CompletedTask;
                 })
                 .Build(),

@@ -17,6 +17,11 @@ public sealed class MutationHandlerExecutionContext<TParams>
     public required IServiceProvider ServiceProvider { get; init; }
 
     /// <summary>
+    /// The client, for reading, setting and invalidating queries.
+    /// </summary>
+    public required RevalClient Client { get; init; }
+
+    /// <summary>
     /// Cancellation token for the current mutation operation.
     /// </summary>
     public CancellationToken CancellationToken { get; init; }

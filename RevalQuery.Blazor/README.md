@@ -188,8 +188,8 @@ MutationState<CreateUserRequest, User> CreateUserMutation => Reval.Mutation(
         async static ctx =>
             await ctx.ServiceProvider.GetRequiredService<IUserService>().CreateAsync(ctx.Params)
     )
-    .OnResolved(async (user, _) => Console.WriteLine($"Created {user.Name}"))
-    .OnException(async (ex, _) => Console.WriteLine($"Error: {ex.Message}"))
+    .OnResolved(async ctx => Console.WriteLine($"Created {ctx.Result.Name}"))
+    .OnException(async ctx => Console.WriteLine($"Error: {ctx.Exception.Message}"))
 );
 
 // Trigger mutation
@@ -275,20 +275,20 @@ MutationState<Todo, Todo> AddTodoMutation => Reval.Mutation(
     MutationOptions.Create<Todo, Todo>(
         async static ctx => await ctx.ServiceProvider
             .GetRequiredService<ITodoService>().AddAsync(ctx.Params, ctx.CancellationToken))
-    .OnMutate(async todo =>
+    .OnMutate(async ctx =>
     {
         // Nothing in flight can overwrite the write below once this returns.
-        await Client.CancelAsync(TodoQueries.Key);
+        await ctx.Client.CancelAsync(TodoQueries.Key);
 
-        var todos = Client.FindQuery<List<Todo>>(TodoQueries.Key)!;
+        var todos = ctx.Client.FindQuery<List<Todo>>(TodoQueries.Key)!;
         _rollback = todos.Data;
-        todos.Data = [.. todos.Data ?? [], todo];
+        todos.Data = [.. todos.Data ?? [], ctx.Params];
     })
-    .OnException(async (_, _) =>
+    .OnException(async ctx =>
     {
-        Client.FindQuery<List<Todo>>(TodoQueries.Key)!.Data = _rollback;
+        ctx.Client.FindQuery<List<Todo>>(TodoQueries.Key)!.Data = _rollback;
     })
-    .OnSettled(async (_, _, _) => Client.Invalidate(TodoQueries.Key))
+    .OnSettled(async ctx => ctx.Client.Invalidate(TodoQueries.Key))
 );
 ```
 
