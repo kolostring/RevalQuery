@@ -171,11 +171,14 @@ otherwise land after it and overwrite the optimistic value:
 ```csharp
 // Stop anything in flight first, and wait for it to unwind. Once this returns, no result
 // from a cancelled fetch can still reach the query.
-await client.CancelAsync(("todos",));
+await client.CancelAsync("todos");
 
-var todos = client.FindQuery<List<Todo>>(("todos",))!;
-var previous = todos.Data;
-todos.Data = [.. previous!, newTodo];
+List<Todo> previous = [];
+client.SetQueryData(todoOptions, current =>
+{
+    previous = current ?? [];
+    return [.. previous, newTodo];
+});
 
 try
 {
@@ -183,14 +186,19 @@ try
 }
 catch
 {
-    todos.Data = previous;
+    client.SetQueryData(todoOptions, previous);
     throw;
 }
 finally
 {
-    client.Invalidate(("todos",));
+    client.Invalidate("todos");
 }
 ```
+
+`todoOptions` is the `QueryOptions<ValueTuple<string>, List<Todo>>` for the `"todos"` key, and
+applies only when the set creates the query. `SetQueryData` records the data as a fetch would,
+resolved and fresh as of now, and notifies every observer. For a mutation defined in a factory,
+with the rollback kept per run, see the Blazor README's "Optimistic updates".
 
 `IQueryState.Cancel()` is the low-level trigger for one query. It returns immediately without
 waiting for the fetch to unwind.
@@ -310,7 +318,7 @@ services.AddRevalQuery(options =>
         Static: false
     );
 
-    // Default retry options: three retries after a failure, so up to four calls
+    // Default retry options for queries: three retries after a failure, so up to four calls
     options.RetryOptions = new CoreRetryOptions(3, attempt => TimeSpan.FromSeconds(attempt));
 
     // Cache TTL options

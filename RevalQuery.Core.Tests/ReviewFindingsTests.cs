@@ -42,11 +42,11 @@ public class ReviewFindingsTests
         Assert.True(observer.Query.IsResolved);
     }
 
-    // The invariant in the name is held by RevalClient.RunAndReleaseAsync, which retries on
-    // FetchOutcome.NotRun when the worker is released between PrepareRun and RunAsync. No user
-    // code runs in that window, so no test through the client can open it. This covers the
-    // worker half: a released worker runs nothing and reports NotRun. The client-level retry is
-    // a documented limitation, not tested.
+    // The invariant in the name is held by RevalClient.RunAndReleaseAsync, which throws an
+    // ObjectDisposedException on FetchOutcome.NotRun: a claimed worker is never released, so a
+    // run that did not happen means the client was disposed under it. No user code runs in that
+    // window, so no test through the client can open it. This covers the worker half: a released
+    // worker runs nothing and reports NotRun.
     [Fact(Timeout = HangGuardMilliseconds)]
     public async Task A_Released_Worker_Reports_NotRun_Rather_Than_Data_It_Never_Fetched()
     {
